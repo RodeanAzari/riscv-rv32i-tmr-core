@@ -4,14 +4,54 @@ on:
   push:
   pull_request:
 
+env:
+  # cocotb 2.x requires Verilator >= 5.036, newer than any apt package,
+  # so it is built from source and cached on this key.
+  VERILATOR_VERSION: v5.050
+
 jobs:
-  lint:
+  verilate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Verilator
+
+      - name: Cache Verilator
+        id: cache-verilator
+        uses: actions/cache@v4
+        with:
+          path: ~/verilator-install
+          key: verilator-${{ runner.os }}-${{ env.VERILATOR_VERSION }}
+
+      - name: Build Verilator
+        if: steps.cache-verilator.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y verilator
+          sudo apt-get install -y --no-install-recommends \
+            autoconf bison flex g++ help2man libfl-dev make perl zlib1g-dev
+          git clone --depth 1 --branch "$VERILATOR_VERSION" \
+            https://github.com/verilator/verilator.git /tmp/verilator
+          cd /tmp/verilator
+          autoconf
+          ./configure --prefix="$HOME/verilator-install"
+          make -j"$(nproc)"
+          make install
+
+      - name: Put Verilator on PATH
+        run: |
+          echo "$HOME/verilator-install/bin" >> "$GITHUB_PATH"
+
+      - name: Report Verilator version
+        run: verilator --version
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install cocotb
+        run: pip install -r tb/requirements.txt
+
       - name: Lint RTL
         run: make lint
+
+      - name: Run regression
+        run: make sim
