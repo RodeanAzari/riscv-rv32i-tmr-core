@@ -43,5 +43,5 @@ spike: sw/prog.elf
 .PHONY: clean
 clean:
 	$(MAKE) -C tb clean
-	rm -rf obj_dir
+	rm -rf obj_dir tb/dump.vcd
 	rm -f sw/prog.elf sw/prog.hex

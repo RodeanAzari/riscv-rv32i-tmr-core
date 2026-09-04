@@ -7,7 +7,13 @@ Full scope, phases, and deliverables: [CLAUDE.md](CLAUDE.md)
 
 ## Status
 
-Phase A — working core. Not yet implemented.
+Phase A — working core. PC and IF stage implemented; ID/EX/MEM/WB, hazard
+unit, and forwarding still to come.
+
+```
+make lint    # Verilator 5.050 lint, clean
+make sim     # cocotb 2.0.1 regression, 3/3 passing
+```
 
 ## Architecture
 
@@ -29,7 +35,15 @@ _TODO: measured numbers only — no results claimed until they are reproduced by
 
 ## Build
 
-_TODO: `make sim` / `make synth` / `make prog` once the toolchain is pinned._
+| Target | Does |
+|---|---|
+| `make lint` | Verilator lint of `rtl/` |
+| `make sim` | cocotb regression on Verilator |
+| `make sw` | Build `sw/*.c` to `.elf` / `.hex` with riscv32-unknown-elf-gcc |
+| `make spike` | Run the `.elf` on the spike reference model |
+
+Requires Verilator >= 5.036 (cocotb 2.x floor) and the cocotb venv at
+`~/cocotb-env`. Synthesis targets land in Phase D, once Vivado is installed.
 
 ## Repository layout
 

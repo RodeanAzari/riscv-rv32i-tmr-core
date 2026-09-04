@@ -13,23 +13,23 @@ syn/*.ip_user_files/
 syn/*.sim/
 
 # Simulation
-sim/work/
-sim/*.vcd
-sim/*.fst
-sim/*.wdb
-sim/xsim.dir/
-sim/obj_dir/
+sim_build/
+obj_dir/
+xsim.dir/
+*.vcd
+*.fst
+*.wdb
 *.vstf
+results.xml
 
 # Formal
 syn/*_formal/
 sby_*/
 
-# Python / cocotb
+# Python
 __pycache__/
 *.pyc
 .pytest_cache/
-results.xml
 
 # Build
 sw/*.o
