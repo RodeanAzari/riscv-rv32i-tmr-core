@@ -40,31 +40,52 @@ out-of-context synthesis and implementation of the core alone, no board-level
 top yet. Runs through `route_design` because post-synthesis timing is an
 estimate and post-route is measured.
 
-### Baseline, 2026-09-05 (PC + IF only, `xc7a100tcsg324-1`)
-
-| | |
-|---|---|
-| Constraint | 10.000 ns (100 MHz, the Arty's oscillator) |
-| WNS | +7.338 ns |
-| Fmax | 375.7 MHz |
-| LUT | 2 / 63,400 |
-| FF | 92 / 126,800 |
-| CARRY4 | 8 |
-| BRAM / DSP | 0 / 0 |
-
-The FF count is a useful correctness check on the flow: 3 x 32 = 96 registers
-in the RTL, minus 4 that constant-fold away because `pc[1:0]` and
-`if_id_pc[1:0]` are always zero on a `pc + 4` increment. 92 is right.
-
-**Fmax here is not a board number.** Out-of-context leaves `HD.CLK_SRC` unset,
-so Vivado cannot estimate clock delay or skew; read it as the logic limit. Its
-value is as a *tracking* baseline — re-run `make synth` as each pipeline stage
-lands and watch what the critical path does.
-
 ### Not started
 
 Everything else: ID, EX, MEM, WB, register file, hazard unit, forwarding,
 formal, UVM, TMR, hardware bring-up.
+
+---
+
+## Synthesis trend
+
+**This table is the one append-only thing in this file.** Everything else here
+is a snapshot of current reality; this is deliberately history, because the
+whole point is the deltas. Never rewrite a past row — if an old number turns
+out to be wrong, add a row saying so.
+
+Add a row after every RTL slice lands. `make synth`, then copy the numbers
+straight out of `docs/reports/summary_ooc.txt` — do not retype them from
+memory or from the terminal scrollback.
+
+All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
+(100 MHz, the Arty's oscillator), unless a row says otherwise.
+
+| Date | Slice | LUT | FF | CARRY4 | WNS (ns) | Fmax (MHz) | Δ Fmax |
+|---|---|---|---|---|---|---|---|
+| 2026-09-05 | PC + IF (43 lines) | 2 | 92 | 8 | +7.338 | 375.7 | — (baseline) |
+
+Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
+240 DSP.
+
+### Reading these numbers
+
+**Fmax here is not a board number.** Out-of-context leaves `HD.CLK_SRC` unset,
+so Vivado cannot estimate clock delay or skew. Read it as the core's logic
+limit. A real board number arrives with the Arty A7 top, and when it does it
+gets its own table rather than being mixed into this one — measurement
+conditions travel with the measurement or the measurement is worthless.
+
+The FF count doubles as a correctness check on the flow. The RTL has 3 x 32 =
+96 registers; 4 constant-fold away because `pc[1:0]` and `if_id_pc[1:0]` are
+always zero on a `pc + 4` increment. 92 is right, and the tools proving they
+understood the design is a good sign the flow is wired up correctly.
+
+Expect Fmax to fall sharply once there is an ALU. **That fall is the data.**
+A single number at the end of the project is a claim; a table showing what each
+pipeline stage cost in MHz and LUTs is evidence of engineering. It also
+localises regressions — if Fmax halves, the row tells you which slice did it,
+instead of bisecting months of commits.
 
 ---
 
@@ -177,6 +198,10 @@ worse than no file. Specifically:
 - Move items between "Implemented" and "Not started" as they land
 - Re-run `make lint` and `make sim` and record what actually happened, not what
   should have
+- **Run `make synth` and append a row to the synthesis trend table** after any
+  RTL change. Copy the numbers from `docs/reports/summary_ooc.txt`; commit the
+  regenerated reports in the same commit as the RTL that produced them, so a
+  report always matches the code beside it in history
 - Add decisions with their rationale, since the reasoning is the part that
   gets forgotten
 - Update the toolchain table when anything is installed or upgraded
@@ -185,4 +210,4 @@ worse than no file. Specifically:
 
 *Last updated: 2026-09-05 — Vivado 2025.2 ML Standard installed and verified,
 and `make synth` landed: out-of-context synth + impl of the core with committed
-reports. Baseline recorded above. Next slice is the ID stage.*
+reports. Synthesis trend table started. Next slice is the ID stage.*

@@ -39,6 +39,12 @@ project-name/
 
 Report **distributions, not averages**, wherever latency is involved: p50 / p99 / p99.9 / max. An average latency figure tells an HFT interviewer that you haven't thought about tail behavior, which is the entire problem in that industry.
 
+**Measure every increment, not just the finished thing.** Re-run the synthesis flow after each RTL slice lands and append a row to the trend table in `docs/PROGRESS.md`: date, slice, LUT/FF/CARRY, WNS, Fmax. One number at the end of the project is a claim. A table showing what each pipeline stage cost in MHz and LUTs is evidence you were engineering rather than hoping — and it is a far better interview answer than a single figure, because it means you can say *why* the number is what it is. It also localises regressions: if Fmax halves, the row tells you which change did it, instead of bisecting months of commits at the end.
+
+**Numbers come from generated files, never from typing.** The tool's own reports are the primary source and get committed (`docs/reports/`, regenerated in the same commit as the RTL that produced them, so a report always matches the code beside it in history). Tables in `README.md` and `docs/PROGRESS.md` are transcribed from those files, not from terminal scrollback or memory.
+
+**Every number carries its measurement conditions.** Part, clock constraint, and whether it is out-of-context or board-level. An out-of-context Fmax has no clock skew modelled and is not the same quantity as a post-implementation board number — mixing the two in one table is how an honest project starts telling lies. Different conditions, different table.
+
 ### 1.4 Commit hygiene
 
 Commit regularly with meaningful messages. A repo with 200 commits over six months tells a truthful story about sustained work. A repo with three commits titled "final" tells a different one.
