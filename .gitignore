@@ -11,6 +11,8 @@ syn/*.cache/
 syn/*.hw/
 syn/*.ip_user_files/
 syn/*.sim/
+syn/build/
+*.dcp
 
 # Simulation
 sim_build/

@@ -1,3 +1,8 @@
+Current state of the work — read this first:
+@docs/PROGRESS.md
+
+---
+
 ## 1. Standards that apply to every project
 
 These are what separate a portfolio from a pile of repos. Almost no student does these, which is exactly why they signal maturity.

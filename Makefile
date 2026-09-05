@@ -3,6 +3,7 @@
 #   make sim    cocotb regression on verilator (see tb/Makefile)
 #   make sw     build sw/*.c to .elf and .hex
 #   make spike  run the .elf on the spike reference model
+#   make synth  out-of-context synth + impl of the core, reports to docs/reports
 #   make clean
 
 XLEN_GCC := $(HOME)/riscv-toolchain/bin/riscv32-unknown-elf-gcc
@@ -39,9 +40,22 @@ sw/prog.hex: sw/prog.elf
 spike: sw/prog.elf
 	$(SPIKE) --isa=rv32i $<
 
+# --- synthesis -------------------------------------------------------------
+# Out-of-context: the core alone, no board-level top yet. See syn/synth_ooc.tcl
+# for why, and docs/vivado-setup.md for the environment the wrapper sets up.
+PART   ?= xc7a100tcsg324-1
+VIVADO := scripts/setup-vivado-env.sh vivado
+
+.PHONY: synth
+synth:
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART)
+
 # --- housekeeping ----------------------------------------------------------
 .PHONY: clean
 clean:
 	$(MAKE) -C tb clean
 	rm -rf obj_dir tb/dump.vcd
 	rm -f sw/prog.elf sw/prog.hex
+	rm -rf syn/build .Xil
+	rm -f vivado*.log vivado*.jou
