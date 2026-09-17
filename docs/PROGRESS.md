@@ -31,7 +31,7 @@ meaningful state.
 - IMEM is an **external port**, synchronous read, 1-cycle latency — matches
   BRAM timing on the Arty A7 so Phase D bring-up needs no rewrite
 - IF/ID resets to a NOP (`0x0000_0013`) so ID never sees X on cycle one
-  (heads off the X-propagation failure mode in plan §3.6)
+  (heads off the X-propagation failure mode in CLAUDE.md §9)
 - `if_id_pc_o` / `if_id_instr_o` exposed as outputs for ILA probing later
 
 `tb/cocotb/test_core.py` (59 lines) — 3 cocotb tests: reset state, PC sequencing,
@@ -102,7 +102,8 @@ instead of bisecting months of commits.
 | spike | — | `~/riscv-toolchain/bin/spike` |
 | gh CLI | 2.100.0 | `~/.local/bin/gh`, authed as RodeanAzari |
 | **Vivado** | 2025.2 | `~/Xilinx/2025.2/Vivado` — ML Standard, no license file. Run `vivado-env` first |
-| **yosys / SymbiYosys** | — | **not installed** — needed for Phase B |
+| **yosys / SymbiYosys** | — | **not installed** — needed for Phase B, and for the ASIC flow's synthesis step |
+| **OpenLane + Sky130** | — | **not installed** — needed closing Phase E (CLAUDE.md §6.4 run #1) |
 
 `~/.local/bin` is first on PATH, so the source-built Verilator shadows the
 Debian 5.032 package automatically.
@@ -143,7 +144,8 @@ Debian 5.032 package automatically.
 
 `.github/workflows/ci.yml`, single `verilate` job: builds Verilator 5.050 from
 source, caches it on key `verilator-Linux-v5.050`, installs cocotb from
-`tb/cocotb/requirements.txt`, then runs lint and sim.
+`tb/cocotb/requirements.txt`, then runs lint and sim. `make formal` joins this
+job in Phase B — yosys and SymbiYosys install in minutes on a hosted runner.
 
 First run took 11m53s (the compile). Cached runs should be under a minute.
 Bumping `VERILATOR_VERSION` forces a rebuild.
@@ -206,16 +208,32 @@ the honest answer rather than pretending it fits on a hosted one.
   sorted for reproducible ordering, and errors on an empty match, and
   `synth_ooc.tcl` additionally rejects any netlist containing a black box
   (`IS_BLACKBOX`, property name verified against Vivado rather than assumed).
+- **Hosted CI runs lint + sim + formal; synthesis stays local** (2026-09-17).
+  CLAUDE.md §4 previously demanded synth in CI, which this file already argued
+  against. The line that was missing is that **cost, not principle**, separates
+  them: yosys and SymbiYosys install in minutes and belong in CI from Phase B,
+  while Vivado's ~54 GB does not fit a hosted runner. Committed reports in
+  `docs/reports/` are the substitute; a self-hosted runner is the upgrade path.
+- **Measurement discipline restored to CLAUDE.md §10** (2026-09-17). The
+  rewrite deleted it, but `syn/synth_ooc.tcl` and this file's trend table both
+  rest on it. Three rules are back — measure every increment, numbers come from
+  generated files, conditions travel with the number. The fourth (p50/p99
+  latency distributions) stayed deleted: nothing here reports a latency
+  distribution, so it was framing borrowed from a different kind of project.
 
 ---
 
 ## Next up
 
 1. **ID stage + register file** — next slice of Phase A. Where load-use hazard
-   groundwork starts; plan §3.6 flags it as the thing students most often get
+   groundwork starts; CLAUDE.md §9 flags it as the thing students most often get
    wrong, so it wants directed tests before random ones. Re-run `make synth`
    after it lands to see what the register file does to the critical path.
-2. **Board-level top** — deferred until the core executes instructions:
+2. **RVFI plumbing** — CLAUDE.md §5.4 wants it from Phase A. Decide before the
+   ID slice, since RVFI needs rs1/rs2 address and data captured at ID and
+   carried to WB; building the ID/EX register without those fields means doing
+   that plumbing twice.
+3. **Board-level top** — deferred until the core executes instructions:
    `constr/arty_a7.xdc` pin constraints, a top with BRAM instruction memory and
    clocking, then `make prog`. Only then does Fmax become a board number.
 
@@ -240,6 +258,11 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-09-17 — reset and port-naming conventions aligned with
-CLAUDE.md §4, then the repo moved to the nested layout of §3 with recursive,
-fail-loud source globs and a black-box guard in the synthesis script.*
+*Last updated: 2026-09-17 — CLAUDE.md rewritten to a two-stage scope (Stage 1
+CPU, Phases A–E; Stage 2 SoC + accelerator + DMA/AXI, Phases F–H, plus an
+OpenLane ASIC flow run twice). Reset converted to synchronous active-high and
+ports given `_i`/`_o` suffixes to match its §4 coding standards. Repo moved to
+the nested layout with recursive, fail-loud source globs; missing Makefile
+targets added as phase-naming stubs; README, vivado-setup.md and the CI
+requirements path reconciled with the new spec. Next slice is the ID stage —
+decide the RVFI question before starting it.*

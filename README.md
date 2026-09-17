@@ -1,18 +1,27 @@
-# RISC-V RV32I Core — Formally Verified, Fault-Tolerant
+# RISC-V RV32I SoC — Formally Verified, Fault-Tolerant, with an ML Accelerator
 
-In-order 5-stage pipelined RV32I core targeting the Arty A7, with formal
-verification, a UVM environment, and a TMR variant with fault injection.
+An in-order 5-stage RV32I core in SystemVerilog targeting the Digilent Arty A7-100T,
+built in two stages: a formally verified, TMR'd, hardware-proven CPU, then an SoC
+adding an INT8 systolic-array accelerator, a descriptor-based DMA, and an AXI
+interconnect. The RTL is also taken through an open-source ASIC flow to GDSII.
 
-Full scope, phases, and deliverables: [CLAUDE.md](CLAUDE.md)
+Full scope, phases, and definitions of done: [CLAUDE.md](CLAUDE.md).
+Current state of the work: [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Status
 
-Phase A — working core. PC and IF stage implemented; ID/EX/MEM/WB, hazard
-unit, and forwarding still to come.
+**Stage 1, Phase A — working core. In progress.** PC and IF stage implemented;
+ID/EX/MEM/WB, the register file, hazard unit and forwarding still to come.
+
+| Stage | Phases | State |
+|---|---|---|
+| 1 — CPU | A–E | Phase A in progress |
+| 2 — SoC | F–H | Not started |
 
 ```
-make lint    # Verilator 5.050 lint, clean
+make lint    # Verilator 5.050 lint, zero warnings
 make sim     # cocotb 2.0.1 regression, 3/3 passing
+make synth   # out-of-context synth + P&R, reports to docs/reports/
 ```
 
 ## Architecture
@@ -21,39 +30,92 @@ _TODO: block diagram_
 
 ## Results
 
-_TODO: measured numbers only — no results claimed until they are reproduced by
-`make`._
+No result is claimed here until it is reproduced by `make` and transcribed from a
+committed report in [`docs/reports/`](docs/reports/). Dashes are honest.
+
+**Stage 1 — CPU.** Conditions travel with the number: an out-of-context Fmax models
+no clock skew and is not the same quantity as a board-level one, so the two never
+share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
 
 | Metric | Value |
 |---|---|
-| Fmax (Artix-7) | — |
-| LUT / FF / BRAM / DSP | — |
-| CPI (CoreMark / Dhrystone) | — |
-| Properties proven | — |
+| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 375.7 MHz *(PC + IF only)* |
+| Fmax, board-level | — |
+| LUT / FF / BRAM / DSP | 1 / 92 / 0 / 0 *(PC + IF only)* |
+| CPI / IPC (Dhrystone, CoreMark) | — |
+| Formal: properties proven, proof depth | — |
+| Bugs formal caught that simulation missed | — |
 | Functional coverage | — |
-| TMR fault detection / recovery | — |
+| TMR: fault detection / recovery rate | — |
+| TMR: area overhead / Fmax penalty | — |
+
+**Stage 2 — SoC.**
+
+| Metric | Value |
+|---|---|
+| GOPS (INT8) at achieved Fmax | — |
+| **Measured** PE utilization | — |
+| Speedup vs. software matmul | — |
+| DSP slices used vs. LUT-fabric MACs | — |
+| AXI outstanding depth / measured throughput | — |
+| SVA properties proven on AXI interfaces | — |
+
+**ASIC flow (OpenLane + Sky130).** Two runs: the bare core closing Phase E, the full
+SoC in Phase H. The delta between them is the result.
+
+| Metric | Run 1 (bare core) | Run 2 (full SoC) |
+|---|---|---|
+| Die area, cell count, utilization | — | — |
+| Post-layout Fmax | — | — |
+| Power estimate | — | — |
+| DRC / LVS clean | — | — |
+| Scan chains: count, coverage, area overhead | — | — |
 
 ## Build
 
-| Target | Does |
-|---|---|
-| `make lint` | Verilator lint of `rtl/` |
-| `make sim` | cocotb regression on Verilator |
-| `make sw` | Build `sw/*.c` to `.elf` / `.hex` with riscv32-unknown-elf-gcc |
-| `make spike` | Run the `.elf` on the spike reference model |
+Requires Verilator ≥ 5.036 (the cocotb 2.x floor) and cocotb; the repo expects a venv
+at `~/cocotb-env`, falling back to whatever `cocotb-config` is on `PATH`. Vivado 2025.2
+is needed for `make synth` — see [docs/vivado-setup.md](docs/vivado-setup.md).
 
-Requires Verilator >= 5.036 (cocotb 2.x floor) and the cocotb venv at
-`~/cocotb-env`. Synthesis targets land in Phase D, once Vivado is installed.
+| Target | Does | State |
+|---|---|---|
+| `make lint` | Verilator lint of `rtl/`, zero warnings | live |
+| `make sim` | cocotb regression on Verilator | live |
+| `make synth` | Out-of-context synth **and** P&R of the core, reports to `docs/reports/` | live |
+| `make sw` | Build `sw/**/*.c` to `.elf` / `.hex` | live, no sources yet |
+| `make spike` | Run the `.elf` on the spike reference model | live, no sources yet |
+| `make formal` | SymbiYosys, all properties | Phase B |
+| `make uvm` | UVM regression in XSim | Phase C |
+| `make impl` | Board-level P&R, emits bitstream | Phase D |
+| `make prog` | Program the board | Phase D |
+| `make asic` | OpenLane RTL-to-GDSII | Phase E, then H |
+
+Targets whose phase has not arrived print which phase they belong to and what they are
+waiting on, rather than failing with `No rule to make target`.
+
+`make synth` runs through place & route rather than stopping at synthesis, because
+post-synthesis timing is an estimate and post-route timing is measured.
 
 ## Repository layout
 
+Directories are created when they have something to hold, so this is the target shape
+rather than the current one — build scripts walk `rtl/` recursively and error on an
+empty match, so a new subdirectory needs no build change.
+
 | Path | Contents |
 |---|---|
-| `rtl/` | Synthesizable SystemVerilog only |
-| `tb/` | Testbenches (UVM / cocotb) |
+| `rtl/core/` | Pipeline stages, regfile, ALU, hazard unit |
+| `rtl/tmr/` | Triplicated wrapper + voter |
+| `rtl/accel/` | Systolic array (Stage 2) |
+| `rtl/bus/` | AXI interconnect, DMA (Stage 2) |
+| `rtl/periph/` | UART, timer |
+| `tb/cocotb/` | Python testbenches |
+| `tb/uvm/` | SystemVerilog UVM environment |
+| `tb/formal/` | SVA property files, SymbiYosys configs |
+| `sw/tests/` | C and assembly test programs |
+| `sw/model/` | Python/C++ golden reference models |
 | `sim/` | Simulation scripts, waveform configs |
-| `syn/` | Synthesis + implementation scripts (Tcl) |
+| `syn/` | Vivado Tcl scripts |
 | `constr/` | XDC timing/pin constraints |
-| `sw/` | Host software, drivers, reference models |
-| `docs/` | Design docs, coverage plans, timing reports |
+| `docs/` | Design docs, coverage plans, committed reports |
 | `scripts/` | Build automation |

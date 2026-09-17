@@ -55,3 +55,7 @@ jobs:
 
       - name: Run regression
         run: make sim
+
+      # make formal joins this job in Phase B. yosys and SymbiYosys install in
+      # a couple of minutes on a hosted runner, unlike Vivado -- see CLAUDE.md
+      # section 4 for why synthesis stays local with committed reports.

@@ -256,7 +256,7 @@ parts. Both Arty A7 devices resolve, with resources matching the datasheets:
 | `xc7a100tcsg324-1` | Arty A7-100T | 63,400 | 126,800 | 135 | 240 |
 
 Those LUT/FF/BRAM/DSP totals are the denominators for the utilization
-percentages the README has to report (plan §1.2), and the baseline the TMR
+percentages the README has to report (CLAUDE.md §10), and the baseline the TMR
 area-overhead number in Phase E is measured against.
 
 ---
@@ -321,19 +321,29 @@ final bitstream download needs the USB path.
 
 ## 7. After install — repo work to do
 
-Phase D scaffolding, none of which exists yet:
+Done (2026-09-05):
 
-- [ ] `scripts/setup-vivado-env.sh` — locate and source `settings64.sh`
-- [ ] `constr/arty_a7.xdc` — pin and timing constraints
-- [ ] `syn/synth.tcl` — synth → impl → bitstream, emitting timing and
-      utilization reports into `docs/`
-- [ ] `make synth` / `make prog` targets in the root `Makefile`
-- [ ] Add synthesis to `.github/workflows/ci.yml` *(only if a license-free
-      headless flow proves workable on a runner — likely not, Vivado is large
-      and slow; a self-hosted runner may be the honest answer)*
+- [x] `scripts/setup-vivado-env.sh` — locates and sources `settings64.sh` in a
+      subshell, applies the ncurses and locale fixups from §3
+- [x] `syn/synth_ooc.tcl` — out-of-context synth → opt → place → route, emitting
+      utilization, timing and a derived-Fmax summary into `docs/reports/`
+- [x] `make synth` target in the root `Makefile`
 
-Per §1.2 of the project plan, timing closure reports get **committed**, and the
-README carries **measured** Fmax and LUT/FF/BRAM/DSP numbers — not adjectives.
+Still outstanding, both Phase D:
+
+- [ ] `constr/arty_a7.xdc` — pin and timing constraints for a board-level top
+- [ ] `make impl` (board-level P&R → bitstream) and `make prog`, the latter
+      blocked on USB passthrough (§6)
+
+Synthesis is **deliberately not in hosted CI** — Vivado is too large for a
+GitHub-hosted runner. See CLAUDE.md §4: the substitute is that reports are
+committed to `docs/reports/` alongside the RTL that produced them. A self-hosted
+runner is the upgrade path if that stops being enough.
+
+Per CLAUDE.md §10's measurement discipline, timing closure reports get
+**committed**, and the README carries **measured** Fmax and LUT/FF/BRAM/DSP
+numbers — not adjectives — each one transcribed from a generated report rather
+than typed from memory.
 
 ---
 
