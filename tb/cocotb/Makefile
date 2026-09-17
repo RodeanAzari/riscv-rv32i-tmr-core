@@ -50,6 +50,7 @@ endif
 # expose. Each entry elaborates separately, so each needs its own build
 # directory and results file or they overwrite each other.
 TESTS ?= riscv_core:test_core \
+         riscv_alu:test_alu \
          riscv_regfile:test_regfile \
          riscv_decoder:test_decoder
 

@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — working core (IF and ID done; EX next)
+**Phase:** A — working core (IF, ID and EX done; MEM + WB next)
 
 ---
 
@@ -17,14 +17,14 @@ meaningful state.
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 28/28 passing across 3 toplevels (core, regfile, decoder) |
+| `make sim` | 63/63 passing across 4 toplevels (core, alu, regfile, decoder) |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | CI on push | green (lint + sim) |
 
 ### Implemented
 
-`rtl/core/riscv_core.sv` (130 lines) — IF (PC, fetch, IF/ID) and ID (decoder,
-register file, ID/EX).
+`rtl/core/riscv_core.sv` — IF (PC, fetch, IF/ID), ID (decoder, register file,
+ID/EX) and EX (operand selection, ALU, EX/MEM).
 
 - PC resets to `0x0000_0000`, advances `pc + 4`
 - **Synchronous, active-high `rst_i`** per CLAUDE.md §4 — flops map to FDRE/FDSE
@@ -40,10 +40,16 @@ register file, ID/EX).
   write enable lets synthesis delete the entire register file, which would make
   the area row above a fiction
 
-`rtl/core/riscv_decoder.sv` — register address extraction and immediate
-generation for all five RV32I immediate formats (I/S/B/U/J). Decodes only what
-the ID slice consumes; ALU/memory/writeback control arrives with EX, MEM and WB,
-because a control signal with no destination is dead logic.
+`rtl/core/riscv_decoder.sv` — register addresses, all five RV32I immediate
+formats (I/S/B/U/J), and the EX control signals. Memory and writeback control
+still waits for MEM and WB, on the same principle: a control signal with no
+destination is dead logic lint cannot tell apart from a mistake.
+
+`rtl/core/riscv_alu.sv` — the ten RV32I arithmetic/logic operations. Selected by
+the ISA's own `funct3` plus the ADD/SUB and SRL/SRA "alt" bit rather than a
+private enum, so there is no second copy of an encoding to drift, and no
+SystemVerilog package — which CLAUDE.md §4 flags as a Yosys risk that cannot be
+verified until SymbiYosys is installed in Phase B.
 
 `rtl/core/riscv_regfile.sv` — 32 x 32, two read ports, one write port.
 **No reset on the array, deliberately**, and the synthesis report confirms why:
@@ -64,9 +70,14 @@ estimate and post-route is measured.
 
 ### Not started
 
-EX (ALU, branch resolution, forwarding muxes), MEM, WB, the hazard unit and the
-load-use stall, the RVFI port itself, formal, UVM, TMR, hardware bring-up, and
-all of Stage 2.
+Branches and jumps, loads and stores, MEM, WB, the hazard unit and load-use
+stall, EX→EX and MEM→EX forwarding, the RVFI port itself, formal, UVM, TMR,
+hardware bring-up, and all of Stage 2.
+
+**Instructions not yet implemented decode inert** (`rd_we = 0`) rather than
+half-working. A branch or load that wrote a plausible-looking value would later
+surface as a riscv-formal mismatch that reads like a forwarding bug, sending the
+hunt to the wrong part of the design.
 
 ---
 
@@ -89,6 +100,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-09-05 | PC + IF (43 lines) | 2 | 92 | 8 | +7.338 | 375.7 | — (baseline) |
 | 2026-09-17 | Sync-high reset + `_i`/`_o` ports | 1 | 92 | 8 | +7.338 | 375.7 | 0.0 |
 | 2026-09-17 | ID: decode + regfile + ID/EX | 108 | 249 | 8 | +6.029 | 251.8 | −123.9 |
+| 2026-09-17 | EX: ALU + operand sel + EX/MEM | 592 | 352 | 24 | +3.095 | 144.8 | −107.0 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -270,21 +282,41 @@ the honest answer rather than pretending it fits on a hosted one.
   the trace flags. Verilator VPI array support is a known weak spot in cocotb
   (issues #1851, #3446, #3611). Anyone on 2.0.1 will see this the moment a
   register file appears, hence the pin in `tb/cocotb/requirements.txt`.
+- **EX slice excludes branches, loads/stores and forwarding** (2026-09-17). Not
+  laziness — each is blocked on something that does not exist yet. Forwarding
+  sources are the EX/MEM and MEM/WB registers, so there is literally nothing to
+  forward from. Branch resolution needs the flush machinery, which belongs with
+  the hazard unit. Loads and stores need MEM. Half a branch is worse than none,
+  so the unimplemented classes decode inert instead.
+- **The ALU is selected by `funct3` + `alt`, not a private opcode enum**
+  (2026-09-17). Using the ISA's own encoding means the decoder and the ALU
+  cannot drift out of step, because there is only one encoding. It also avoids a
+  SystemVerilog package, which §4 lists among the constructs to check against
+  Yosys before committing — and yosys is not installed until Phase B, so an
+  unverifiable construct was worth designing around rather than adopting.
+  The `alt` bit is where the classic decode bug lives: on OP-IMM it is `instr[30]`
+  **only** for the two shift forms. Everywhere else `instr[30]` is immediate bit
+  10, so forwarding it unconditionally turns `addi rd, rs1, -1` into a subtract —
+  wrong only for immediates with bit 10 set, which small positive random values
+  never produce. Directed tests cover it at both the decoder and the core level.
 
 ---
 
 ## Next up
 
-1. **EX stage** — ALU, branch resolution, and the forwarding muxes. Three
-   things land together here by necessity: EX→EX and MEM→EX forwarding, the
-   load-use stall (CLAUDE.md §9's most-botched case, so directed tests before
-   random), and the RVFI tap move — `rs1_rdata`/`rs2_rdata` must come from the
-   forwarding mux outputs, not the ID/EX register, or riscv-formal will report
-   what looks like a forwarding bug that is not one. See
-   [rvfi-plan.md](rvfi-plan.md).
-2. **Fold the temporary `wb_rd_*_i` port into WB** when WB exists, and delete
-   it from the core's interface.
-3. **Board-level top** — deferred until the core executes instructions:
+1. **MEM + WB** — data memory port (external, BRAM-shaped, like IMEM), load/store
+   alignment, the writeback mux and MEM/WB. This closes the loop: the register
+   file write port stops being the temporary `wb_rd_*_i` core port and becomes
+   internal, and the core executes its first instruction end to end.
+2. **Branches, jumps and the hazard unit** — branch resolution in EX with static
+   not-taken prediction, IF/ID and ID/EX flush on taken, EX→EX and MEM→EX
+   forwarding, and the load-use stall. CLAUDE.md §9 calls load-use the most
+   commonly botched case, so directed tests before random. The RVFI taps for
+   `rs1_rdata`/`rs2_rdata` move to the forwarding mux outputs in this slice —
+   see [rvfi-plan.md](rvfi-plan.md).
+3. **RVFI port + riscv-formal** — once WB retires instructions there is something
+   non-vacuous to prove. Needs yosys/SymbiYosys installed.
+4. **Board-level top** — deferred until the core executes instructions:
    `constr/arty_a7.xdc` pin constraints, a top with BRAM instruction memory and
    clocking, then `make prog`. Only then does Fmax become a board number.
 
@@ -309,9 +341,10 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-09-17 — ID slice landed: decoder, register file and the
-ID/EX register, with RVFI shadow fields carried from the start and the design
-written down in rvfi-plan.md first. 28 cocotb tests across three toplevels.
-Fmax fell 375.7 → 251.8 MHz, which is the register file arriving on the
-critical path and is the point of the trend table. Forced a cocotb upgrade to
-2.1.0 on the way — see the decision above. Next slice is EX.*
+*Last updated: 2026-09-17 — EX slice landed: ALU, operand selection and EX/MEM,
+plus the decoder control that feeds them. 63 tests across four toplevels, the
+ALU checked against an independent Python model on chosen corners rather than
+sampled randoms. Fmax 251.8 → 144.8 MHz; the critical path is now
+`id_ex_imm → ex_mem_alu_result`, 12 logic levels of which 8 are the CARRY4 chain
+of the 32-bit add/subtract. Next slice is MEM + WB, which closes the loop and
+retires the temporary wb_rd_*_i port.*

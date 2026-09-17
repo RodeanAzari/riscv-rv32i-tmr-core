@@ -10,10 +10,11 @@ Current state of the work: [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Status
 
-**Stage 1, Phase A — working core. In progress.** IF and ID implemented: PC,
-instruction fetch, decode with all five immediate formats, the register file,
-and the ID/EX pipeline register. EX, MEM, WB, the hazard unit and forwarding
-still to come.
+**Stage 1, Phase A — working core. In progress.** IF, ID and EX implemented:
+PC and fetch, decode with all five immediate formats, the register file, the
+ALU and its operand selection, and the IF/ID, ID/EX and EX/MEM pipeline
+registers. MEM, WB, branches and jumps, the hazard unit and forwarding still to
+come; instructions in those classes decode inert rather than half-working.
 
 | Stage | Phases | State |
 |---|---|---|
@@ -22,7 +23,7 @@ still to come.
 
 ```
 make lint    # Verilator 5.050 lint, zero warnings
-make sim     # cocotb 2.1.0 regression, 28/28 passing
+make sim     # cocotb 2.1.0 regression, 63/63 passing
 make synth   # out-of-context synth + P&R, reports to docs/reports/
 ```
 
@@ -41,9 +42,9 @@ share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
 
 | Metric | Value |
 |---|---|
-| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 251.8 MHz *(IF + ID only)* |
+| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 144.8 MHz *(IF + ID + EX only)* |
 | Fmax, board-level | — |
-| LUT / FF / BRAM / DSP | 108 / 249 / 0 / 0 *(IF + ID only)* |
+| LUT / FF / BRAM / DSP | 592 / 352 / 0 / 0 *(IF + ID + EX only)* |
 | CPI / IPC (Dhrystone, CoreMark) | — |
 | Formal: properties proven, proof depth | — |
 | Bugs formal caught that simulation missed | — |

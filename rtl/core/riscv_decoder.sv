@@ -1,15 +1,21 @@
-// RV32I instruction decode: register addresses and the immediate.
+// RV32I instruction decode: register addresses, the immediate, and the control
+// the EX stage consumes.
 //
-// Scope note: this decodes only what the ID slice consumes. The ALU operation,
-// memory controls and writeback select are decoded when EX, MEM and WB exist
-// to consume them -- a control signal with no destination is dead logic that
-// lint cannot distinguish from a mistake.
+// Scope note: memory and writeback control arrive with MEM and WB, for the same
+// reason ALU control was not here before EX existed -- a control signal with no
+// destination is dead logic that lint cannot tell apart from a mistake.
+//
+// Instructions whose stages do not exist yet (branches, jumps, loads, stores,
+// FENCE, ECALL, EBREAK) decode to rd_we_o = 0. They are inert rather than
+// wrong. That matters more than it sounds: a half-implemented instruction that
+// writes a plausible-looking value is exactly the kind of fault riscv-formal
+// will later report as a forwarding bug, sending the hunt to the wrong place.
 //
 // Register address fields sit at fixed positions in every RV32I format, so they
 // are extracted unconditionally. Whether a given instruction actually *uses*
-// rs1, rs2 or rd is a control question, answered in the EX slice. Reading a
-// field that the instruction ignores is harmless here: nothing acts on it yet,
-// and the register file has no side effects on read.
+// rs1, rs2 or rd is answered by rd_we_o and the operand selects below; reading
+// a field an instruction ignores is harmless, since the register file has no
+// side effects on read.
 module riscv_decoder #(
     parameter int unsigned XLEN   = 32,
     parameter int unsigned ADDR_W = 5
@@ -19,7 +25,15 @@ module riscv_decoder #(
     output logic [ADDR_W-1:0] rs1_addr_o,
     output logic [ADDR_W-1:0] rs2_addr_o,
     output logic [ADDR_W-1:0] rd_addr_o,
-    output logic [XLEN-1:0]   imm_o
+    output logic [XLEN-1:0]   imm_o,
+
+    // EX control
+    output logic [2:0]        funct3_o,
+    output logic              alu_alt_o,
+    output logic              alu_a_sel_pc_o,
+    output logic              alu_a_sel_zero_o,
+    output logic              alu_b_sel_imm_o,
+    output logic              rd_we_o
 );
 
   // RV32I major opcodes (CLAUDE.md §5.1)
@@ -28,9 +42,17 @@ module riscv_decoder #(
   localparam logic [6:0] OPCODE_JAL    = 7'b1101111;
   localparam logic [6:0] OPCODE_BRANCH = 7'b1100011;
   localparam logic [6:0] OPCODE_STORE  = 7'b0100011;
+  localparam logic [6:0] OPCODE_OP     = 7'b0110011;
+  localparam logic [6:0] OPCODE_OP_IMM = 7'b0010011;
+
+  localparam logic [2:0] F3_ADD_SUB = 3'b000;
+  localparam logic [2:0] F3_SLL     = 3'b001;
+  localparam logic [2:0] F3_SRL_SRA = 3'b101;
 
   logic [6:0] opcode;
+  logic [2:0] funct3;
   assign opcode = instr_i[6:0];
+  assign funct3 = instr_i[14:12];
 
   assign rs1_addr_o = instr_i[19:15];
   assign rs2_addr_o = instr_i[24:20];
@@ -65,6 +87,62 @@ module riscv_decoder #(
       OPCODE_BRANCH:            imm_o = imm_b_type;
       OPCODE_STORE:             imm_o = imm_s_type;
       default:                  imm_o = imm_i_type;
+    endcase
+  end
+
+  // The alt bit: SUB rather than ADD, SRA rather than SRL.
+  //
+  // For OP it is simply instr[30]. For OP-IMM it is instr[30] ONLY on the two
+  // shift funct3 values, and zero everywhere else -- because on a non-shift
+  // OP-IMM, instr[30] is not a mode bit at all, it is immediate bit 10.
+  //
+  // Get this wrong and `addi rd, rs1, -1` becomes a subtract: -1 encodes as
+  // instr[31:20] = 0xFFF, so instr[30] is set. The instruction still decodes,
+  // still writes a register, and produces a wrong answer only for negative
+  // immediates -- which is why small random test values do not find it.
+  logic op_imm_is_shift;
+  assign op_imm_is_shift = (funct3 == F3_SLL) || (funct3 == F3_SRL_SRA);
+
+  always_comb begin
+    // Safe defaults: compute ADD(0, imm) and write nothing. Any opcode not
+    // handled below is therefore inert.
+    funct3_o         = F3_ADD_SUB;
+    alu_alt_o        = 1'b0;
+    alu_a_sel_pc_o   = 1'b0;
+    alu_a_sel_zero_o = 1'b1;
+    alu_b_sel_imm_o  = 1'b1;
+    rd_we_o          = 1'b0;
+
+    case (opcode)
+      OPCODE_OP: begin
+        funct3_o         = funct3;
+        alu_alt_o        = instr_i[30];
+        alu_a_sel_zero_o = 1'b0;      // rs1
+        alu_b_sel_imm_o  = 1'b0;      // rs2
+        rd_we_o          = 1'b1;
+      end
+
+      OPCODE_OP_IMM: begin
+        funct3_o         = funct3;
+        alu_alt_o        = op_imm_is_shift && instr_i[30];
+        alu_a_sel_zero_o = 1'b0;      // rs1
+        rd_we_o          = 1'b1;
+      end
+
+      // rd = 0 + imm. Reusing ADD with a zeroed operand costs nothing and
+      // saves a pass-through path through the ALU.
+      OPCODE_LUI: begin
+        rd_we_o = 1'b1;
+      end
+
+      // rd = pc + imm
+      OPCODE_AUIPC: begin
+        alu_a_sel_pc_o   = 1'b1;
+        alu_a_sel_zero_o = 1'b0;
+        rd_we_o          = 1'b1;
+      end
+
+      default: ;  // inert: defaults above already write nothing
     endcase
   end
 

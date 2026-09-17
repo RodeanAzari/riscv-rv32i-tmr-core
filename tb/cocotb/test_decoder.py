@@ -179,3 +179,117 @@ async def test_shift_immediate_shamt_in_low_bits(dut):
     """
     await decode(dut, enc_i(0b0100000_11111, funct3=0b101))  # srai x0, x0, 31
     assert int(dut.imm_o.value) & 0x1F == 31
+
+
+# --- EX control ------------------------------------------------------------
+
+F3_ADD_SUB = 0b000
+F3_SLL     = 0b001
+F3_SRL_SRA = 0b101
+F3_XOR     = 0b100
+
+FUNCT7_ALT = 0b0100000   # the funct7 that selects SUB and SRA
+
+
+def enc_r(funct3, rs1=1, rs2=2, rd=3, funct7=0):
+    return (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) \
+        | (rd << 7) | OPCODE_OP
+
+
+@cocotb.test()
+async def test_op_sets_register_operands(dut):
+    """add rd, rs1, rs2 -- both operands from registers, writes rd."""
+    await decode(dut, enc_r(F3_ADD_SUB))
+    assert int(dut.rd_we_o.value) == 1
+    assert int(dut.alu_a_sel_zero_o.value) == 0
+    assert int(dut.alu_a_sel_pc_o.value) == 0
+    assert int(dut.alu_b_sel_imm_o.value) == 0
+    assert int(dut.funct3_o.value) == F3_ADD_SUB
+    assert int(dut.alu_alt_o.value) == 0
+
+
+@cocotb.test()
+async def test_op_sub_sets_alt(dut):
+    await decode(dut, enc_r(F3_ADD_SUB, funct7=FUNCT7_ALT))
+    assert int(dut.alu_alt_o.value) == 1, "sub did not set alt"
+
+
+@cocotb.test()
+async def test_op_sra_sets_alt(dut):
+    await decode(dut, enc_r(F3_SRL_SRA, funct7=FUNCT7_ALT))
+    assert int(dut.alu_alt_o.value) == 1, "sra did not set alt"
+    await decode(dut, enc_r(F3_SRL_SRA, funct7=0))
+    assert int(dut.alu_alt_o.value) == 0, "srl set alt"
+
+
+@cocotb.test()
+async def test_op_imm_takes_immediate_operand(dut):
+    await decode(dut, enc_i(5, funct3=F3_ADD_SUB))
+    assert int(dut.rd_we_o.value) == 1
+    assert int(dut.alu_b_sel_imm_o.value) == 1
+    assert int(dut.alu_a_sel_zero_o.value) == 0
+
+
+@cocotb.test()
+async def test_addi_negative_immediate_is_not_a_subtract(dut):
+    """The classic alt-bit bug.
+
+    -1 encodes as instr[31:20] = 0xFFF, so instr[30] is set. On OP-IMM that bit
+    is immediate bit 10, NOT a mode bit. A decoder that forwards instr[30] to
+    alt unconditionally turns `addi rd, rs1, -1` into a subtract -- and does so
+    only for immediates with bit 10 set, which small positive test values never
+    produce.
+    """
+    for imm in (-1, -2, -1024, 1024, 2047, -2048):
+        await decode(dut, enc_i(imm, funct3=F3_ADD_SUB))
+        assert int(dut.alu_alt_o.value) == 0, (
+            f"addi with imm={imm} decoded as a subtract"
+        )
+
+
+@cocotb.test()
+async def test_non_shift_op_imm_never_sets_alt(dut):
+    """Same trap for the other non-shift OP-IMM instructions."""
+    for funct3 in (F3_ADD_SUB, 0b010, 0b011, F3_XOR, 0b110, 0b111):
+        await decode(dut, enc_i(-1, funct3=funct3))
+        assert int(dut.alu_alt_o.value) == 0, f"funct3 {funct3:#05b} set alt"
+
+
+@cocotb.test()
+async def test_shift_immediate_does_use_instr30(dut):
+    """SRAI is the one OP-IMM form where instr[30] genuinely is a mode bit."""
+    await decode(dut, enc_i((FUNCT7_ALT << 5) | 4, funct3=F3_SRL_SRA))
+    assert int(dut.alu_alt_o.value) == 1, "srai did not set alt"
+    await decode(dut, enc_i(4, funct3=F3_SRL_SRA))
+    assert int(dut.alu_alt_o.value) == 0, "srli set alt"
+    await decode(dut, enc_i(4, funct3=F3_SLL))
+    assert int(dut.alu_alt_o.value) == 0, "slli set alt"
+
+
+@cocotb.test()
+async def test_lui_is_zero_plus_immediate(dut):
+    await decode(dut, enc_u(0x1234_5000))
+    assert int(dut.rd_we_o.value) == 1
+    assert int(dut.alu_a_sel_zero_o.value) == 1
+    assert int(dut.alu_b_sel_imm_o.value) == 1
+    assert int(dut.alu_alt_o.value) == 0
+    assert int(dut.funct3_o.value) == F3_ADD_SUB
+
+
+@cocotb.test()
+async def test_auipc_is_pc_plus_immediate(dut):
+    await decode(dut, enc_u(0x1234_5000, opcode=OPCODE_AUIPC))
+    assert int(dut.rd_we_o.value) == 1
+    assert int(dut.alu_a_sel_pc_o.value) == 1
+    assert int(dut.alu_a_sel_zero_o.value) == 0
+    assert int(dut.alu_b_sel_imm_o.value) == 1
+
+
+@cocotb.test()
+async def test_unimplemented_classes_are_inert(dut):
+    """Branches, jumps, loads and stores write no register until their stages
+    exist. Inert beats plausibly wrong -- a half-implemented instruction that
+    writes something is what riscv-formal would later blame on forwarding."""
+    for instr in (enc_b(8), enc_j(8), enc_i(4, opcode=OPCODE_LOAD), enc_s(4)):
+        await decode(dut, instr)
+        assert int(dut.rd_we_o.value) == 0, f"{instr:#010x} writes a register"
