@@ -10,7 +10,7 @@ Caveat: out-of-context, so HD.CLK_SRC is unset and Vivado cannot
 estimate clock delay or skew. Read Fmax as the core logic limit,
 not a board-level number -- that arrives with the Arty A7 top.
 
-LUT          2 /    63400  ( 0.00%)
+LUT          1 /    63400  ( 0.00%)
 FF          92 /   126800  ( 0.07%)
 BRAM         0 /      135  ( 0.00%)
 DSP          0 /      240  ( 0.00%)

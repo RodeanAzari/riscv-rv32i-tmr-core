@@ -26,11 +26,13 @@ meaningful state.
 `rtl/riscv_core.sv` (43 lines) — PC register and IF stage only.
 
 - PC resets to `0x0000_0000`, advances `pc + 4`
+- **Synchronous, active-high `rst_i`** per CLAUDE.md §4 — flops map to FDRE/FDSE
+  on their dedicated SR pin, with no inverter and no async recovery/removal arc
 - IMEM is an **external port**, synchronous read, 1-cycle latency — matches
   BRAM timing on the Arty A7 so Phase D bring-up needs no rewrite
 - IF/ID resets to a NOP (`0x0000_0013`) so ID never sees X on cycle one
   (heads off the X-propagation failure mode in plan §3.6)
-- `if_id_pc` / `if_id_instr` exposed as outputs for ILA probing later
+- `if_id_pc_o` / `if_id_instr_o` exposed as outputs for ILA probing later
 
 `tb/test_core.py` (59 lines) — 3 cocotb tests: reset state, PC sequencing,
 IF/ID capture against a 4-instruction program.
@@ -64,6 +66,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | Date | Slice | LUT | FF | CARRY4 | WNS (ns) | Fmax (MHz) | Δ Fmax |
 |---|---|---|---|---|---|---|---|
 | 2026-09-05 | PC + IF (43 lines) | 2 | 92 | 8 | +7.338 | 375.7 | — (baseline) |
+| 2026-09-17 | Sync-high reset + `_i`/`_o` ports | 1 | 92 | 8 | +7.338 | 375.7 | 0.0 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -77,7 +80,7 @@ gets its own table rather than being mixed into this one — measurement
 conditions travel with the measurement or the measurement is worthless.
 
 The FF count doubles as a correctness check on the flow. The RTL has 3 x 32 =
-96 registers; 4 constant-fold away because `pc[1:0]` and `if_id_pc[1:0]` are
+96 registers; 4 constant-fold away because `pc[1:0]` and `if_id_pc_o[1:0]` are
 always zero on a `pc + 4` increment. 92 is right, and the tools proving they
 understood the design is a good sign the flow is wired up correctly.
 
@@ -174,6 +177,24 @@ the honest answer rather than pretending it fits on a hosted one.
   name rather than burying it.
 - **Private until there's something to show**, then flip:
   `gh repo edit --visibility public`.
+- **Synchronous, active-high reset** (decided 2026-09-17). The core was written
+  with async active-low `rst_n`; CLAUDE.md §4 requires sync active-high `rst`,
+  so the RTL moved. Changed while the core was one file — reset convention is
+  viral, and every module, testbench and the Phase E TMR wrapper inherits it.
+  Confirmed in the synthesis report rather than assumed: the 92 flops went
+  FDCE/FDPE (async clear/preset) → FDRE/FDSE (sync reset/set), and one of the
+  two LUT1s disappeared with the active-low inverter. Zero timing cost — the
+  critical path is the `pc + 4` carry chain, which reset style does not touch.
+- **`_i`/`_o` suffixes on every port, clock and reset included** (2026-09-17).
+  CLAUDE.md §4 mandates the suffixes and carves out no exception, and the
+  convention it comes from (lowRISC/OpenTitan) suffixes `clk_i`/`rst_i` too.
+  Done in the same session as the reset change for the same reason: the port
+  list is one module long today. The **clock object stays named `clk`** while
+  the port is `clk_i` — `syn/synth_ooc.tcl` finds it with `get_clocks clk` and
+  every committed report identifies it that way, so a timing object should not
+  be renamed whenever RTL naming conventions shift. Verified the constraint
+  still binds: the timing report shows `clk` at 10.000 ns / 100 MHz, not the
+  empty-path fallback the script prints when `create_clock` matches nothing.
 
 ---
 
@@ -208,6 +229,7 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-09-05 — Vivado 2025.2 ML Standard installed and verified,
-and `make synth` landed: out-of-context synth + impl of the core with committed
-reports. Synthesis trend table started. Next slice is the ID stage.*
+*Last updated: 2026-09-17 — reset converted from asynchronous active-low to
+synchronous active-high, and every port given the `_i`/`_o` suffixes CLAUDE.md
+§4 requires. Verified in the synthesis report, not assumed: FDCE/FDPE became
+FDRE/FDSE and the active-low inverter LUT disappeared. Zero timing cost.*
