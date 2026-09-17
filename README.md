@@ -10,8 +10,10 @@ Current state of the work: [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Status
 
-**Stage 1, Phase A — working core. In progress.** PC and IF stage implemented;
-ID/EX/MEM/WB, the register file, hazard unit and forwarding still to come.
+**Stage 1, Phase A — working core. In progress.** IF and ID implemented: PC,
+instruction fetch, decode with all five immediate formats, the register file,
+and the ID/EX pipeline register. EX, MEM, WB, the hazard unit and forwarding
+still to come.
 
 | Stage | Phases | State |
 |---|---|---|
@@ -20,7 +22,7 @@ ID/EX/MEM/WB, the register file, hazard unit and forwarding still to come.
 
 ```
 make lint    # Verilator 5.050 lint, zero warnings
-make sim     # cocotb 2.0.1 regression, 3/3 passing
+make sim     # cocotb 2.1.0 regression, 28/28 passing
 make synth   # out-of-context synth + P&R, reports to docs/reports/
 ```
 
@@ -39,9 +41,9 @@ share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
 
 | Metric | Value |
 |---|---|
-| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 375.7 MHz *(PC + IF only)* |
+| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 251.8 MHz *(IF + ID only)* |
 | Fmax, board-level | — |
-| LUT / FF / BRAM / DSP | 1 / 92 / 0 / 0 *(PC + IF only)* |
+| LUT / FF / BRAM / DSP | 108 / 249 / 0 / 0 *(IF + ID only)* |
 | CPI / IPC (Dhrystone, CoreMark) | — |
 | Formal: properties proven, proof depth | — |
 | Bugs formal caught that simulation missed | — |
@@ -73,8 +75,10 @@ SoC in Phase H. The delta between them is the result.
 
 ## Build
 
-Requires Verilator ≥ 5.036 (the cocotb 2.x floor) and cocotb; the repo expects a venv
-at `~/cocotb-env`, falling back to whatever `cocotb-config` is on `PATH`. Vivado 2025.2
+Requires Verilator ≥ 5.036 (the cocotb 2.x floor) and **cocotb ≥ 2.1.0**; the repo
+expects a venv at `~/cocotb-env`, falling back to whatever `cocotb-config` is on
+`PATH`. The cocotb floor is not arbitrary — on 2.0.1, a register-file-sized array in
+the design corrupts Verilator's VPI layer and reading a top-level port segfaults. Vivado 2025.2
 is needed for `make synth` — see [docs/vivado-setup.md](docs/vivado-setup.md).
 
 | Target | Does | State |

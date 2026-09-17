@@ -1,0 +1,181 @@
+"""Decoder: register address extraction and immediate generation.
+
+Purely combinational, so there is no clock here -- drive instr_i, settle, check.
+
+The immediate cases deliberately sit on the boundaries CLAUDE.md 5.6 names:
+zero, maximum positive, maximum negative, and the bit either side of the sign
+change. An immediate decoder that drops the sign extension still passes on
+small positive values, which is most of what random stimulus produces.
+"""
+
+import cocotb
+from cocotb.triggers import Timer
+
+OPCODE_LOAD   = 0b0000011
+OPCODE_OP_IMM = 0b0010011
+OPCODE_STORE  = 0b0100011
+OPCODE_BRANCH = 0b1100011
+OPCODE_LUI    = 0b0110111
+OPCODE_AUIPC  = 0b0010111
+OPCODE_JAL    = 0b1101111
+OPCODE_OP     = 0b0110011
+
+MASK32 = 0xFFFF_FFFF
+
+
+def u32(value):
+    """Two's-complement 32-bit view of a Python int."""
+    return value & MASK32
+
+
+# --- instruction encoders --------------------------------------------------
+# Written from the RV32I spec rather than derived from the RTL, so a mistake in
+# the decoder's bit picking cannot cancel out against the same mistake here.
+
+def enc_i(imm, rs1=0, funct3=0, rd=0, opcode=OPCODE_OP_IMM):
+    return ((imm & 0xFFF) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
+
+
+def enc_s(imm, rs1=0, rs2=0, funct3=0, opcode=OPCODE_STORE):
+    return (((imm >> 5) & 0x7F) << 25) | (rs2 << 20) | (rs1 << 15) \
+        | (funct3 << 12) | ((imm & 0x1F) << 7) | opcode
+
+
+def enc_b(imm, rs1=0, rs2=0, funct3=0, opcode=OPCODE_BRANCH):
+    return (((imm >> 12) & 0x1) << 31) | (((imm >> 5) & 0x3F) << 25) \
+        | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) \
+        | (((imm >> 1) & 0xF) << 8) | (((imm >> 11) & 0x1) << 7) | opcode
+
+
+def enc_u(imm, rd=0, opcode=OPCODE_LUI):
+    return (imm & 0xFFFF_F000) | (rd << 7) | opcode
+
+
+def enc_j(imm, rd=0, opcode=OPCODE_JAL):
+    return (((imm >> 20) & 0x1) << 31) | (((imm >> 1) & 0x3FF) << 21) \
+        | (((imm >> 11) & 0x1) << 20) | (((imm >> 12) & 0xFF) << 12) \
+        | (rd << 7) | opcode
+
+
+async def decode(dut, instr):
+    dut.instr_i.value = instr
+    await Timer(1, unit="ns")
+
+
+# --- register fields -------------------------------------------------------
+
+@cocotb.test()
+async def test_register_fields(dut):
+    """rs1, rs2 and rd come from fixed positions in every format."""
+    # R-type with distinct, bit-pattern-distinguishable register numbers.
+    await decode(dut, enc_i(0, rs1=0b10101, rd=0b01010, opcode=OPCODE_OP)
+                 | (0b11111 << 20))
+    assert int(dut.rs1_addr_o.value) == 0b10101
+    assert int(dut.rs2_addr_o.value) == 0b11111
+    assert int(dut.rd_addr_o.value) == 0b01010
+
+
+@cocotb.test()
+async def test_register_fields_all_values(dut):
+    """Every register number decodes on every port -- catches stuck address bits."""
+    for reg in range(32):
+        await decode(dut, enc_i(0, rs1=reg, rd=reg, opcode=OPCODE_OP)
+                     | (reg << 20))
+        assert int(dut.rs1_addr_o.value) == reg, f"rs1 {reg}"
+        assert int(dut.rs2_addr_o.value) == reg, f"rs2 {reg}"
+        assert int(dut.rd_addr_o.value) == reg, f"rd {reg}"
+
+
+# --- immediates ------------------------------------------------------------
+
+@cocotb.test()
+async def test_i_immediate(dut):
+    """12-bit signed, range -2048..2047."""
+    for imm in (0, 1, -1, 2047, -2048, 42, -42):
+        await decode(dut, enc_i(imm))
+        assert int(dut.imm_o.value) == u32(imm), (
+            f"I-type {imm}: got {int(dut.imm_o.value):#010x}"
+        )
+
+
+@cocotb.test()
+async def test_i_immediate_sign_boundary(dut):
+    """2047 and -2048 are adjacent encodings but sit either side of zero."""
+    await decode(dut, enc_i(2047))
+    assert int(dut.imm_o.value) == 0x0000_07FF
+    await decode(dut, enc_i(-2048))
+    assert int(dut.imm_o.value) == 0xFFFF_F800, "sign extension dropped"
+
+
+@cocotb.test()
+async def test_s_immediate(dut):
+    """Same 12-bit range as I-type, but split across two instruction fields."""
+    for imm in (0, 1, -1, 2047, -2048, 1365, -1366):
+        await decode(dut, enc_s(imm))
+        assert int(dut.imm_o.value) == u32(imm), (
+            f"S-type {imm}: got {int(dut.imm_o.value):#010x}"
+        )
+
+
+@cocotb.test()
+async def test_b_immediate(dut):
+    """13-bit signed, always even -- bit 0 is not encoded."""
+    for imm in (0, 2, -2, 4094, -4096, 2048, -2048):
+        await decode(dut, enc_b(imm))
+        assert int(dut.imm_o.value) == u32(imm), (
+            f"B-type {imm}: got {int(dut.imm_o.value):#010x}"
+        )
+
+
+@cocotb.test()
+async def test_b_immediate_bit_zero_is_always_clear(dut):
+    """No B encoding can produce an odd offset."""
+    for imm in (2, -2, 4094, -4096):
+        await decode(dut, enc_b(imm))
+        assert int(dut.imm_o.value) & 1 == 0, "B-type produced an odd offset"
+
+
+@cocotb.test()
+async def test_u_immediate(dut):
+    """Upper 20 bits placed directly; low 12 bits zero. No sign extension."""
+    for imm in (0x0000_0000, 0xFFFF_F000, 0x1234_5000, 0x8000_0000):
+        await decode(dut, enc_u(imm))
+        assert int(dut.imm_o.value) == imm, (
+            f"U-type {imm:#010x}: got {int(dut.imm_o.value):#010x}"
+        )
+
+
+@cocotb.test()
+async def test_u_immediate_auipc_uses_same_form(dut):
+    """AUIPC shares the U format with LUI."""
+    await decode(dut, enc_u(0xABCD_E000, opcode=OPCODE_AUIPC))
+    assert int(dut.imm_o.value) == 0xABCD_E000
+
+
+@cocotb.test()
+async def test_j_immediate(dut):
+    """21-bit signed, always even."""
+    for imm in (0, 2, -2, 1048574, -1048576, 4096, -4096):
+        await decode(dut, enc_j(imm))
+        assert int(dut.imm_o.value) == u32(imm), (
+            f"J-type {imm}: got {int(dut.imm_o.value):#010x}"
+        )
+
+
+@cocotb.test()
+async def test_load_uses_i_form(dut):
+    """Loads are I-type even though they are not OP-IMM."""
+    await decode(dut, enc_i(-4, opcode=OPCODE_LOAD))
+    assert int(dut.imm_o.value) == u32(-4)
+
+
+@cocotb.test()
+async def test_shift_immediate_shamt_in_low_bits(dut):
+    """SLLI/SRLI/SRAI take shamt from the low 5 bits of the I immediate.
+
+    SRAI sets instr[30], which lands in the I immediate's bit 10. The decoder
+    does not mask it -- EX takes shamt from imm[4:0] and reads the mode bit
+    from the instruction -- so the check here is that the shamt bits survive.
+    """
+    await decode(dut, enc_i(0b0100000_11111, funct3=0b101))  # srai x0, x0, 31
+    assert int(dut.imm_o.value) & 0x1F == 31

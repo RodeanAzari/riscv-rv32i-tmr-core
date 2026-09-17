@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — working core (first slice done: PC + IF)
+**Phase:** A — working core (IF and ID done; EX next)
 
 ---
 
@@ -17,13 +17,14 @@ meaningful state.
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 3/3 passing |
+| `make sim` | 28/28 passing across 3 toplevels (core, regfile, decoder) |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | CI on push | green (lint + sim) |
 
 ### Implemented
 
-`rtl/core/riscv_core.sv` (43 lines) — PC register and IF stage only.
+`rtl/core/riscv_core.sv` (130 lines) — IF (PC, fetch, IF/ID) and ID (decoder,
+register file, ID/EX).
 
 - PC resets to `0x0000_0000`, advances `pc + 4`
 - **Synchronous, active-high `rst_i`** per CLAUDE.md §4 — flops map to FDRE/FDSE
@@ -32,10 +33,29 @@ meaningful state.
   BRAM timing on the Arty A7 so Phase D bring-up needs no rewrite
 - IF/ID resets to a NOP (`0x0000_0013`) so ID never sees X on cycle one
   (heads off the X-propagation failure mode in CLAUDE.md §9)
-- `if_id_pc_o` / `if_id_instr_o` exposed as outputs for ILA probing later
+- `if_id_pc_o` / `if_id_instr_o` / `id_ex_*` exposed as outputs for ILA probing
+  later, and carrying the RVFI shadow fields — see [rvfi-plan.md](rvfi-plan.md)
+- The register file write port is **temporarily** a core port (`wb_rd_*_i`). It
+  belongs to WB. Left as a port rather than tied off because a constant-zero
+  write enable lets synthesis delete the entire register file, which would make
+  the area row above a fiction
 
-`tb/cocotb/test_core.py` (59 lines) — 3 cocotb tests: reset state, PC sequencing,
-IF/ID capture against a 4-instruction program.
+`rtl/core/riscv_decoder.sv` — register address extraction and immediate
+generation for all five RV32I immediate formats (I/S/B/U/J). Decodes only what
+the ID slice consumes; ALU/memory/writeback control arrives with EX, MEM and WB,
+because a control signal with no destination is dead logic.
+
+`rtl/core/riscv_regfile.sv` — 32 x 32, two read ports, one write port.
+**No reset on the array, deliberately**, and the synthesis report confirms why:
+it inferred RAMD32/RAMS32 distributed RAM (44 LUTs), not the 992 flops a reset
+would have forced. x0 invariance and WB→ID write-first forwarding are both
+implemented here rather than in the surrounding pipeline, because both are
+formal properties in CLAUDE.md §5.5.
+
+`tb/cocotb/` — 28 tests across three toplevels: `test_core` (8), `test_regfile`
+(8), `test_decoder` (12). Submodules get their own toplevel rather than being
+poked through the core's hierarchy, so a unit test survives refactoring and can
+drive ports the core does not expose.
 
 `scripts/setup-vivado-env.sh`, `constr/core_ooc.xdc`, `syn/synth_ooc.tcl` —
 out-of-context synthesis and implementation of the core alone, no board-level
@@ -44,8 +64,9 @@ estimate and post-route is measured.
 
 ### Not started
 
-Everything else: ID, EX, MEM, WB, register file, hazard unit, forwarding,
-formal, UVM, TMR, hardware bring-up.
+EX (ALU, branch resolution, forwarding muxes), MEM, WB, the hazard unit and the
+load-use stall, the RVFI port itself, formal, UVM, TMR, hardware bring-up, and
+all of Stage 2.
 
 ---
 
@@ -67,6 +88,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 |---|---|---|---|---|---|---|---|
 | 2026-09-05 | PC + IF (43 lines) | 2 | 92 | 8 | +7.338 | 375.7 | — (baseline) |
 | 2026-09-17 | Sync-high reset + `_i`/`_o` ports | 1 | 92 | 8 | +7.338 | 375.7 | 0.0 |
+| 2026-09-17 | ID: decode + regfile + ID/EX | 108 | 249 | 8 | +6.029 | 251.8 | −123.9 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -97,7 +119,7 @@ instead of bisecting months of commits.
 | Tool | Version | Location |
 |---|---|---|
 | Verilator | 5.050 | `~/.local/bin/verilator` (built from source; tree at `~/.local/src/verilator`) |
-| cocotb | 2.0.1 | `~/cocotb-env` |
+| cocotb | 2.1.0 | `~/cocotb-env` |
 | riscv gcc | 16.1.0 | `~/riscv-toolchain/bin/riscv32-unknown-elf-gcc` |
 | spike | — | `~/riscv-toolchain/bin/spike` |
 | gh CLI | 2.100.0 | `~/.local/bin/gh`, authed as RodeanAzari |
@@ -148,6 +170,8 @@ source, caches it on key `verilator-Linux-v5.050`, installs cocotb from
 job in Phase B — yosys and SymbiYosys install in minutes on a hosted runner.
 
 First run took 11m53s (the compile). Cached runs should be under a minute.
+The regression is now three elaborations (core, regfile, decoder) rather than
+one; each gets its own build directory and results file.
 Bumping `VERILATOR_VERSION` forces a rebuild.
 
 **Not in CI:** synthesis. Vivado is large and slow; a self-hosted runner may be
@@ -220,19 +244,46 @@ the honest answer rather than pretending it fits on a hosted one.
   generated files, conditions travel with the number. The fourth (p50/p99
   latency distributions) stayed deleted: nothing here reports a latency
   distribution, so it was framing borrowed from a different kind of project.
+- **RVFI: design in now, connect the port at WB** (2026-09-17). CLAUDE.md §5.4
+  wants RVFI from Phase A. The shadow fields ride the pipeline registers from
+  this slice on, but the *port* waits for a retirement to report: with no WB,
+  `rvfi_valid` could only be tied low, and wiring riscv-formal to a core that
+  never retires makes every ISA property pass **vacuously** — the exact failure
+  §5.5 and §9 warn about. A green formal run that proves nothing is worse than
+  no run. Full reasoning and the per-field capture points in
+  [rvfi-plan.md](rvfi-plan.md); the one that bites is `rs1_rdata`/`rs2_rdata`,
+  whose taps must move to the forwarding-mux outputs when EX lands.
+- **Register file has no reset on the array** (2026-09-17). RV32I leaves x1–x31
+  undefined at reset, so resetting them buys nothing architecturally and costs
+  992 flops plus the loss of RAM inference. Measured rather than assumed: the
+  synthesis report shows RAMD32 x68 and RAMS32 x20 — 44 LUTs of distributed RAM
+  — and the FF count landed at 249, which is the pipeline registers alone. The
+  simulation cost is X on the read ports until a register is written; that is a
+  testbench problem, not a hardware one.
+- **cocotb 2.0.1 → 2.1.0** (2026-09-17). Forced, not cosmetic. Under 2.0.1,
+  adding the register file's 32 x 32 array made **reading a top-level output
+  port segfault** in the VPI layer. Reduced to a 15-line module with one array
+  and twelve 32-bit outputs: 12/12 reads on 2.1.0, 4/12 on 2.0.1, and the
+  crash point moved with unrelated build flags, which is what memory corruption
+  looks like. Ruled out first: our RTL (lint clean, generated C++ symmetric
+  across the ports), signal naming, port count, packed vs. unpacked array, and
+  the trace flags. Verilator VPI array support is a known weak spot in cocotb
+  (issues #1851, #3446, #3611). Anyone on 2.0.1 will see this the moment a
+  register file appears, hence the pin in `tb/cocotb/requirements.txt`.
 
 ---
 
 ## Next up
 
-1. **ID stage + register file** — next slice of Phase A. Where load-use hazard
-   groundwork starts; CLAUDE.md §9 flags it as the thing students most often get
-   wrong, so it wants directed tests before random ones. Re-run `make synth`
-   after it lands to see what the register file does to the critical path.
-2. **RVFI plumbing** — CLAUDE.md §5.4 wants it from Phase A. Decide before the
-   ID slice, since RVFI needs rs1/rs2 address and data captured at ID and
-   carried to WB; building the ID/EX register without those fields means doing
-   that plumbing twice.
+1. **EX stage** — ALU, branch resolution, and the forwarding muxes. Three
+   things land together here by necessity: EX→EX and MEM→EX forwarding, the
+   load-use stall (CLAUDE.md §9's most-botched case, so directed tests before
+   random), and the RVFI tap move — `rs1_rdata`/`rs2_rdata` must come from the
+   forwarding mux outputs, not the ID/EX register, or riscv-formal will report
+   what looks like a forwarding bug that is not one. See
+   [rvfi-plan.md](rvfi-plan.md).
+2. **Fold the temporary `wb_rd_*_i` port into WB** when WB exists, and delete
+   it from the core's interface.
 3. **Board-level top** — deferred until the core executes instructions:
    `constr/arty_a7.xdc` pin constraints, a top with BRAM instruction memory and
    clocking, then `make prog`. Only then does Fmax become a board number.
@@ -258,11 +309,9 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-09-17 — CLAUDE.md rewritten to a two-stage scope (Stage 1
-CPU, Phases A–E; Stage 2 SoC + accelerator + DMA/AXI, Phases F–H, plus an
-OpenLane ASIC flow run twice). Reset converted to synchronous active-high and
-ports given `_i`/`_o` suffixes to match its §4 coding standards. Repo moved to
-the nested layout with recursive, fail-loud source globs; missing Makefile
-targets added as phase-naming stubs; README, vivado-setup.md and the CI
-requirements path reconciled with the new spec. Next slice is the ID stage —
-decide the RVFI question before starting it.*
+*Last updated: 2026-09-17 — ID slice landed: decoder, register file and the
+ID/EX register, with RVFI shadow fields carried from the start and the design
+written down in rvfi-plan.md first. 28 cocotb tests across three toplevels.
+Fmax fell 375.7 → 251.8 MHz, which is the register file arriving on the
+critical path and is the point of the trend table. Forced a cocotb upgrade to
+2.1.0 on the way — see the decision above. Next slice is EX.*
