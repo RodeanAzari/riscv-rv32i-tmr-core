@@ -24,10 +24,35 @@ set reports [file join $repo docs reports]
 file mkdir $rundir $reports
 cd $rundir
 
-read_verilog -sv [glob [file join $repo rtl *.sv]]
+# rtl/ is nested (core/, and tmr/, accel/, bus/, periph/ as they arrive), and
+# Tcl's glob has no recursive form, so walk it. Sorted for a stable read order
+# across machines.
+proc find_sv {dir} {
+    set out [glob -nocomplain -directory $dir -types f *.sv]
+    foreach sub [glob -nocomplain -directory $dir -types d *] {
+        set out [concat $out [find_sv $sub]]
+    }
+    return [lsort $out]
+}
+
+set sv [find_sv [file join $repo rtl]]
+if {[llength $sv] == 0} {
+    error "no .sv files found under rtl/ -- refusing to synthesize nothing"
+}
+read_verilog -sv $sv
 read_xdc [file join $repo constr core_ooc.xdc]
 
 synth_design -top $top -part $part -mode out_of_context
+
+# A module Vivado cannot find becomes a black box with a critical warning and
+# the run completes, producing a utilization report for a design with a hole in
+# it -- a number that would then land in the trend table. Verilator errors on
+# the same mistake; Vivado does not, so check explicitly.
+set bb [get_cells -hier -quiet -filter {IS_BLACKBOX == 1}]
+if {[llength $bb] > 0} {
+    error "black boxes in the synthesized netlist: $bb"
+}
+
 write_checkpoint -force [file join $rundir post_synth.dcp]
 
 opt_design

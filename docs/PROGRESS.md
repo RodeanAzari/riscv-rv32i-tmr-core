@@ -23,7 +23,7 @@ meaningful state.
 
 ### Implemented
 
-`rtl/riscv_core.sv` (43 lines) — PC register and IF stage only.
+`rtl/core/riscv_core.sv` (43 lines) — PC register and IF stage only.
 
 - PC resets to `0x0000_0000`, advances `pc + 4`
 - **Synchronous, active-high `rst_i`** per CLAUDE.md §4 — flops map to FDRE/FDSE
@@ -34,7 +34,7 @@ meaningful state.
   (heads off the X-propagation failure mode in plan §3.6)
 - `if_id_pc_o` / `if_id_instr_o` exposed as outputs for ILA probing later
 
-`tb/test_core.py` (59 lines) — 3 cocotb tests: reset state, PC sequencing,
+`tb/cocotb/test_core.py` (59 lines) — 3 cocotb tests: reset state, PC sequencing,
 IF/ID capture against a 4-instruction program.
 
 `scripts/setup-vivado-env.sh`, `constr/core_ooc.xdc`, `syn/synth_ooc.tcl` —
@@ -131,10 +131,11 @@ Debian 5.032 package automatically.
 |---|---|---|
 | `make lint` | Verilator lint of `rtl/` | working |
 | `make sim` | cocotb regression | working |
-| `make sw` | build `sw/*.c` → `.elf` / `.hex` | untested, no source yet |
+| `make sw` | build `sw/**/*.c` → `.elf` / `.hex` | untested, no source yet |
 | `make spike` | run `.elf` on spike | untested, no source yet |
 | `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
-| `make prog` | — | not written, blocked on USB passthrough (§6 of vivado-setup.md) |
+| `make prog` | — | stub; blocked on USB passthrough (§6 of vivado-setup.md) |
+| `make formal` / `uvm` / `impl` / `asic` | — | stubs that name their phase and what they wait on |
 
 ---
 
@@ -142,7 +143,7 @@ Debian 5.032 package automatically.
 
 `.github/workflows/ci.yml`, single `verilate` job: builds Verilator 5.050 from
 source, caches it on key `verilator-Linux-v5.050`, installs cocotb from
-`tb/requirements.txt`, then runs lint and sim.
+`tb/cocotb/requirements.txt`, then runs lint and sim.
 
 First run took 11m53s (the compile). Cached runs should be under a minute.
 Bumping `VERILATOR_VERSION` forces a rebuild.
@@ -195,6 +196,16 @@ the honest answer rather than pretending it fits on a hosted one.
   be renamed whenever RTL naming conventions shift. Verified the constraint
   still binds: the timing report shows `clk` at 10.000 ns / 100 MHz, not the
   empty-path fallback the script prints when `create_clock` matches nothing.
+- **Nested layout adopted early, empty directories not created** (2026-09-17).
+  `rtl/core/` and `tb/cocotb/` now hold the two existing files; the other eight
+  directories in CLAUDE.md §3 appear when they have contents. The real fix was
+  not the move but the **globs**: `rtl/*.sv` matched one level, and the failure
+  modes were asymmetric — Verilator errors on a missing module, but Vivado
+  black-boxes it with a critical warning and finishes, emitting a utilization
+  report for a design with a hole in it. Every source glob is now recursive,
+  sorted for reproducible ordering, and errors on an empty match, and
+  `synth_ooc.tcl` additionally rejects any netlist containing a black box
+  (`IS_BLACKBOX`, property name verified against Vivado rather than assumed).
 
 ---
 
@@ -229,7 +240,6 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-09-17 — reset converted from asynchronous active-low to
-synchronous active-high, and every port given the `_i`/`_o` suffixes CLAUDE.md
-§4 requires. Verified in the synthesis report, not assumed: FDCE/FDPE became
-FDRE/FDSE and the active-low inverter LUT disappeared. Zero timing cost.*
+*Last updated: 2026-09-17 — reset and port-naming conventions aligned with
+CLAUDE.md §4, then the repo moved to the nested layout of §3 with recursive,
+fail-loud source globs and a black-box guard in the synthesis script.*

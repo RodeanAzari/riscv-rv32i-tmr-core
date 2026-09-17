@@ -48,7 +48,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install cocotb
-        run: pip install -r tb/requirements.txt
+        run: pip install -r tb/cocotb/requirements.txt
 
       - name: Lint RTL
         run: make lint
