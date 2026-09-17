@@ -23,6 +23,7 @@ xsim.dir/
 *.wdb
 *.vstf
 results.xml
+results_*.xml
 
 # Formal
 syn/*_formal/
