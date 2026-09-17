@@ -12,6 +12,20 @@ meaningful state.
 
 ## Where things stand
 
+**Position: Phase A, three of five pipeline stages built.** IF, ID and EX are
+implemented and tested; MEM and WB are not. The datapath computes ALU results
+and parks them in EX/MEM, where they stop — nothing writes back to the register
+file yet, so the core does not execute a program end to end. The register file's
+write port is still the temporary `wb_rd_*_i` core port, driven by the
+testbench.
+
+Working today: `addi`, `add`, `sub`, the shifts, `slt`/`sltu`, the bitwise ops,
+`lui` and `auipc` — everything whose result is an ALU output. Branches, jumps,
+loads and stores decode **inert** (`rd_we = 0`) rather than half-working.
+
+Everything is committed and pushed; `make lint`, `make sim` and `make synth` all
+pass from a clean checkout.
+
 ### Working and verified
 
 | Check | Result |
@@ -304,21 +318,90 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-1. **MEM + WB** — data memory port (external, BRAM-shaped, like IMEM), load/store
-   alignment, the writeback mux and MEM/WB. This closes the loop: the register
-   file write port stops being the temporary `wb_rd_*_i` core port and becomes
-   internal, and the core executes its first instruction end to end.
-2. **Branches, jumps and the hazard unit** — branch resolution in EX with static
-   not-taken prediction, IF/ID and ID/EX flush on taken, EX→EX and MEM→EX
-   forwarding, and the load-use stall. CLAUDE.md §9 calls load-use the most
-   commonly botched case, so directed tests before random. The RVFI taps for
-   `rs1_rdata`/`rs2_rdata` move to the forwarding mux outputs in this slice —
-   see [rvfi-plan.md](rvfi-plan.md).
-3. **RVFI port + riscv-formal** — once WB retires instructions there is something
-   non-vacuous to prove. Needs yosys/SymbiYosys installed.
-4. **Board-level top** — deferred until the core executes instructions:
-   `constr/arty_a7.xdc` pin constraints, a top with BRAM instruction memory and
-   clocking, then `make prog`. Only then does Fmax become a board number.
+### 1. MEM + WB — the slice that closes the loop
+
+The next slice, and the most valuable one left in Phase A: after it the core
+executes an instruction end to end instead of parking results in EX/MEM.
+
+**Data memory port.** External, exactly like IMEM and for the same reason —
+BRAM-shaped from the start so Phase D bring-up needs no rewrite. Synchronous
+read, one cycle of latency, so load data arrives in WB, a stage after the
+address is driven:
+
+```
+output dmem_addr_o      word address
+output dmem_wdata_o     store data, already shifted into lane
+output dmem_wstrb_o     4-bit byte strobes
+output dmem_we_o
+input  dmem_rdata_i     arrives one cycle later
+```
+
+**Load/store alignment is the real work here**, not the pipeline register.
+`funct3` gives the width (`LB`/`LH`/`LW`/`LBU`/`LHU`, `SB`/`SH`/`SW`); the low
+two address bits give the lane. Stores shift data *into* lane and generate byte
+strobes; loads select the lane out and then sign- or zero-extend. The `LB`/`LBU`
+and `LH`/`LHU` pairs are the ones to test directly — they differ only in
+extension, so a bug in one is invisible while values stay positive. This is the
+same shape of trap as the `SRA`/`SRL` cast and the `addi -1` alt bit.
+
+**Open decision before starting: misaligned accesses.** RV32I requires either
+support or a trap, and §5.1 puts traps out of scope. So pick one and write it
+down: assume aligned and document the assumption, or handle misalignment in
+hardware. This has to be settled before `rvfi_mem_rmask`/`wmask` are populated,
+because the masks encode exactly this behaviour.
+
+**Decoder additions:** `mem_read`, `mem_write`, and a writeback select (ALU
+result vs. load data). `rd_we` becomes true for loads. `funct3` is already
+carried and doubles as the width field.
+
+**EX/MEM must gain `rs2_rdata`** — store data comes from rs2 and is not needed
+before now, which is why it was not carried.
+
+**MEM/WB register:** ALU result, load data, `rd_addr`, `rd_we`, plus the RVFI
+shadow (`instr`, `pc`).
+
+**WB:** the writeback mux, and the register file write port stops being a core
+port. `wb_rd_we_i` / `wb_rd_addr_i` / `wb_rd_wdata_i` get **deleted from the
+interface** and wired internally. The core-level tests that currently drive
+them (`test_x0_reads_zero_through_the_core`, `test_regfile_read_reaches_id_ex`,
+and the `write_reg` helper) need reworking to set registers by executing
+instructions instead — which is a better test anyway.
+
+**RVFI:** `mem_addr`, `mem_rmask`, `mem_wmask`, `mem_wdata` captured at MEM;
+`mem_rdata` at MEM/WB. The port itself still waits — see
+[rvfi-plan.md](rvfi-plan.md) — because `rvfi_valid` needs retirement to be
+correct, and retirement is only correct once the hazard unit exists.
+
+**Done when:** a short instruction sequence stores a value and loads it back
+into a different register, verified end to end; every load/store width and lane
+covered; `make lint` clean, `make sim` green, `make synth` run and a trend row
+appended.
+
+### 2. Branches, jumps and the hazard unit
+
+Branch resolution in EX with static not-taken prediction, IF/ID and ID/EX flush
+on taken, EX→EX and MEM→EX forwarding, and the load-use stall. CLAUDE.md §9
+calls load-use the most commonly botched case, so directed tests before random.
+
+The RVFI taps for `rs1_rdata`/`rs2_rdata` **move to the forwarding mux outputs**
+in this slice. Tapped from ID/EX they go stale in exactly the cycles forwarding
+fires, and riscv-formal reports it as what looks like a forwarding bug. This is
+written down in [rvfi-plan.md](rvfi-plan.md) precisely so it is not rediscovered
+the hard way.
+
+### 3. RVFI port + riscv-formal
+
+Once WB retires instructions there is something non-vacuous to prove. Needs
+yosys and SymbiYosys installed, which is also the first thing `make formal`
+stops complaining about. Check reachability on every property — a vacuous pass
+proves nothing (§5.5, §9).
+
+### 4. Board-level top
+
+Deferred until the core executes instructions: `constr/arty_a7.xdc` pin
+constraints, a top with BRAM instruction memory and clocking, then `make prog`
+(still blocked on WSL2 USB passthrough, §6 of vivado-setup.md). Only then does
+Fmax become a board number, and it gets its own table.
 
 ---
 
@@ -341,10 +424,10 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-09-17 — EX slice landed: ALU, operand selection and EX/MEM,
-plus the decoder control that feeds them. 63 tests across four toplevels, the
-ALU checked against an independent Python model on chosen corners rather than
-sampled randoms. Fmax 251.8 → 144.8 MHz; the critical path is now
+*Last updated: 2026-09-17 — EX slice landed and pushed: ALU, operand selection
+and EX/MEM, plus the decoder control that feeds them. 63 tests across four
+toplevels. Fmax 251.8 → 144.8 MHz; the critical path is now
 `id_ex_imm → ex_mem_alu_result`, 12 logic levels of which 8 are the CARRY4 chain
-of the 32-bit add/subtract. Next slice is MEM + WB, which closes the loop and
-retires the temporary wb_rd_*_i port.*
+of the 32-bit add/subtract. Stopped here deliberately — next session starts with
+MEM + WB, planned in "Next up" above, including the misaligned-access decision
+that needs making before the RVFI memory fields can be populated.*
