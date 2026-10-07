@@ -287,9 +287,54 @@ async def test_auipc_is_pc_plus_immediate(dut):
 
 @cocotb.test()
 async def test_unimplemented_classes_are_inert(dut):
-    """Branches, jumps, loads and stores write no register until their stages
-    exist. Inert beats plausibly wrong -- a half-implemented instruction that
-    writes something is what riscv-formal would later blame on forwarding."""
-    for instr in (enc_b(8), enc_j(8), enc_i(4, opcode=OPCODE_LOAD), enc_s(4)):
+    """Branches and jumps write no register and touch no memory until their
+    stages exist. Inert beats plausibly wrong -- a half-implemented instruction
+    that writes something is what riscv-formal would later blame on forwarding."""
+    for instr in (enc_b(8), enc_j(8)):
         await decode(dut, instr)
         assert int(dut.rd_we_o.value) == 0, f"{instr:#010x} writes a register"
+        assert int(dut.mem_read_o.value) == 0, f"{instr:#010x} reads memory"
+        assert int(dut.mem_write_o.value) == 0, f"{instr:#010x} writes memory"
+
+
+# --- MEM / WB control --------------------------------------------------------
+
+@cocotb.test()
+async def test_load_is_rs1_plus_imm_and_writes_rd(dut):
+    """lw rd, imm(rs1): the ALU must ADD -- funct3_o cannot carry the width."""
+    for funct3 in (0b000, 0b001, 0b010, 0b100, 0b101):   # LB LH LW LBU LHU
+        await decode(dut, enc_i(-4, rs1=1, funct3=funct3, rd=3, opcode=OPCODE_LOAD))
+        assert int(dut.mem_read_o.value) == 1
+        assert int(dut.mem_write_o.value) == 0
+        assert int(dut.rd_we_o.value) == 1
+        assert int(dut.alu_a_sel_zero_o.value) == 0
+        assert int(dut.alu_a_sel_pc_o.value) == 0
+        assert int(dut.alu_b_sel_imm_o.value) == 1
+        assert int(dut.funct3_o.value) == F3_ADD_SUB, (
+            f"load funct3 {funct3:03b} leaked into the ALU op"
+        )
+        assert int(dut.alu_alt_o.value) == 0
+        assert int(dut.mem_funct3_o.value) == funct3
+
+
+@cocotb.test()
+async def test_store_is_rs1_plus_imm_and_writes_no_register(dut):
+    """sw rs2, imm(rs1): memory write, no rd -- rd's field is immediate bits."""
+    for funct3 in (0b000, 0b001, 0b010):                 # SB SH SW
+        await decode(dut, enc_s(-4, rs1=1, rs2=2, funct3=funct3))
+        assert int(dut.mem_write_o.value) == 1
+        assert int(dut.mem_read_o.value) == 0
+        assert int(dut.rd_we_o.value) == 0, "store writes a register"
+        assert int(dut.alu_a_sel_zero_o.value) == 0
+        assert int(dut.alu_b_sel_imm_o.value) == 1, "store added rs2, not imm"
+        assert int(dut.funct3_o.value) == F3_ADD_SUB
+        assert int(dut.mem_funct3_o.value) == funct3
+
+
+@cocotb.test()
+async def test_alu_instructions_touch_no_memory(dut):
+    for instr in (enc_r(F3_ADD_SUB), enc_i(5), enc_u(0x1000),
+                  enc_u(0x1000, opcode=OPCODE_AUIPC)):
+        await decode(dut, instr)
+        assert int(dut.mem_read_o.value) == 0, f"{instr:#010x} reads memory"
+        assert int(dut.mem_write_o.value) == 0, f"{instr:#010x} writes memory"

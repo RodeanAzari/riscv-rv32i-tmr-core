@@ -1,4 +1,10 @@
-"""Phase A: PC sequencing, IF/ID capture, and the ID stage."""
+"""Phase A: the five-stage core, IF through WB.
+
+There is no back door into the register file: registers are set by executing
+instructions (li() below), the way software sets them. Until the hazard unit
+lands there is no forwarding either, so every dependent instruction trails its
+producer by HAZARD_GAP NOPs -- see the header of rtl/core/riscv_core.sv.
+"""
 
 import cocotb
 from cocotb.clock import Clock
@@ -6,29 +12,70 @@ from cocotb.triggers import RisingEdge, FallingEdge
 
 CLK_PERIOD_NS = 10
 NOP = 0x0000_0013
+MASK32 = 0xFFFF_FFFF
+
+# IF -> ID -> EX -> MEM -> WB: a producer writes the register file three
+# instructions after it is fetched, and the write-first bypass serves the
+# instruction in ID that same cycle. Three NOPs is the minimum safe gap.
+HAZARD_GAP = 3
 
 # addi x1,x0,1 / addi x2,x0,2 / addi x3,x0,3
 PROGRAM = [0x0000_0013, 0x0010_0093, 0x0020_0113, 0x0030_0193]
 
 
+OPCODE_OP     = 0b0110011
+OPCODE_OP_IMM = 0b0010011
+OPCODE_LUI    = 0b0110111
+OPCODE_AUIPC  = 0b0010111
+OPCODE_BRANCH = 0b1100011
+OPCODE_LOAD   = 0b0000011
+OPCODE_STORE  = 0b0100011
+
+
+def enc_i(imm, rs1=0, funct3=0, rd=0, opcode=OPCODE_OP_IMM):
+    return ((imm & 0xFFF) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
+
+
+def enc_r(funct3, rs1, rs2, rd, funct7=0):
+    return (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) \
+        | (rd << 7) | OPCODE_OP
+
+
+def enc_u(imm, rd=0, opcode=OPCODE_LUI):
+    return (imm & 0xFFFF_F000) | (rd << 7) | opcode
+
+
+def enc_s(imm, rs1=0, rs2=0, funct3=0):
+    return (((imm >> 5) & 0x7F) << 25) | (rs2 << 20) | (rs1 << 15) \
+        | (funct3 << 12) | ((imm & 0x1F) << 7) | OPCODE_STORE
+
+
+def enc_load(funct3, rd, imm, rs1=0):
+    return enc_i(imm, rs1=rs1, funct3=funct3, rd=rd, opcode=OPCODE_LOAD)
+
+
+def li(rd, value):
+    """The assembler's li pseudo-instruction, padded for the missing forwarding.
+
+    addi's immediate is sign-extended, so when the low 12 bits look negative the
+    lui half has to round up by one to compensate -- the same "+0x800" every
+    RISC-V assembler does for %hi/%lo.
+    """
+    value &= MASK32
+    lo = ((value & 0xFFF) ^ 0x800) - 0x800          # sign-extended low 12 bits
+    hi = (value - lo) & MASK32
+    gap = [NOP] * HAZARD_GAP
+    if hi == 0:
+        return [enc_i(lo, rs1=0, rd=rd)] + gap
+    return [enc_u(hi, rd=rd)] + gap + [enc_i(lo, rs1=rd, rd=rd)] + gap
+
+
 async def reset(dut):
     dut.rst_i.value = 1
     dut.imem_rdata_i.value = 0
-    dut.wb_rd_we_i.value = 0
-    dut.wb_rd_addr_i.value = 0
-    dut.wb_rd_wdata_i.value = 0
+    dut.dmem_rdata_i.value = 0
     cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start())
     await RisingEdge(dut.clk_i)
-    await FallingEdge(dut.clk_i)
-
-
-async def write_reg(dut, addr, value):
-    """Drive the temporary WB write port. Collapses into WB when it exists."""
-    dut.wb_rd_we_i.value = 1
-    dut.wb_rd_addr_i.value = addr
-    dut.wb_rd_wdata_i.value = value
-    await RisingEdge(dut.clk_i)
-    dut.wb_rd_we_i.value = 0
     await FallingEdge(dut.clk_i)
 
 
@@ -37,6 +84,12 @@ async def feed(dut, instr):
     dut.imem_rdata_i.value = instr
     await RisingEdge(dut.clk_i)
     await FallingEdge(dut.clk_i)
+
+
+async def set_reg(dut, rd, value):
+    """Set a register by executing li() -- needs rst_i already released."""
+    for instr in li(rd, value):
+        await feed(dut, instr)
 
 
 @cocotb.test()
@@ -131,8 +184,8 @@ async def test_regfile_read_reaches_id_ex(dut):
     await reset(dut)
     dut.rst_i.value = 0
 
-    await write_reg(dut, 3, 0x1111_1111)
-    await write_reg(dut, 4, 0x2222_2222)
+    await set_reg(dut, 3, 0x1111_1111)
+    await set_reg(dut, 4, 0x2222_2222)
 
     await feed(dut, ADD_X7_X3_X4)
     await feed(dut, NOP)
@@ -147,7 +200,14 @@ async def test_x0_reads_zero_through_the_core(dut):
     await reset(dut)
     dut.rst_i.value = 0
 
-    await write_reg(dut, 0, 0xFFFF_FFFF)
+    # addi x0, x0, -1 really does reach WB as a write to x0; the register
+    # file has to throw it away.
+    await feed(dut, enc_i(-1, rs1=0, rd=0))
+    for _ in range(HAZARD_GAP):
+        await feed(dut, NOP)
+    assert int(dut.wb_rd_we_o.value) == 1 and int(dut.wb_rd_addr_o.value) == 0, (
+        "the write to x0 never reached WB, so this test proves nothing"
+    )
 
     # add x7, x0, x0 -- both operands read x0
     await feed(dut, 0x0000_03B3)
@@ -160,26 +220,6 @@ async def test_x0_reads_zero_through_the_core(dut):
 # --- EX stage --------------------------------------------------------------
 # An instruction fed at cycle N reaches IF/ID at N+1, ID/EX at N+2, EX/MEM at
 # N+3. drain() walks it the whole way so a test can assert on EX/MEM.
-
-OPCODE_OP     = 0b0110011
-OPCODE_OP_IMM = 0b0010011
-OPCODE_LUI    = 0b0110111
-OPCODE_AUIPC  = 0b0010111
-OPCODE_BRANCH = 0b1100011
-
-
-def enc_i(imm, rs1=0, funct3=0, rd=0, opcode=OPCODE_OP_IMM):
-    return ((imm & 0xFFF) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
-
-
-def enc_r(funct3, rs1, rs2, rd, funct7=0):
-    return (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) \
-        | (rd << 7) | OPCODE_OP
-
-
-def enc_u(imm, rd=0, opcode=OPCODE_LUI):
-    return (imm & 0xFFFF_F000) | (rd << 7) | opcode
-
 
 async def drain(dut, instr):
     """Feed one instruction and walk it to EX/MEM. Returns the PC it saw."""
@@ -219,7 +259,7 @@ async def test_addi_negative_immediate_adds(dut):
     """
     await reset(dut)
     dut.rst_i.value = 0
-    await write_reg(dut, 3, 100)
+    await set_reg(dut, 3, 100)
 
     await drain(dut, enc_i(-1, rs1=3, rd=6))
     assert int(dut.ex_mem_alu_result_o.value) == 99, "addi -1 behaved as a subtract"
@@ -229,8 +269,8 @@ async def test_addi_negative_immediate_adds(dut):
 async def test_register_register_add_and_sub(dut):
     await reset(dut)
     dut.rst_i.value = 0
-    await write_reg(dut, 3, 70)
-    await write_reg(dut, 4, 12)
+    await set_reg(dut, 3, 70)
+    await set_reg(dut, 4, 12)
 
     await drain(dut, enc_r(0b000, rs1=3, rs2=4, rd=7))
     assert int(dut.ex_mem_alu_result_o.value) == 82
@@ -244,7 +284,7 @@ async def test_lui_places_upper_immediate(dut):
     """lui x8, 0x12345 -> 0x12345000, with rs1 ignored."""
     await reset(dut)
     dut.rst_i.value = 0
-    await write_reg(dut, 1, 0xFFFF_FFFF)   # must not leak into the result
+    await set_reg(dut, 1, 0xFFFF_FFFF)   # must not leak into the result
 
     await drain(dut, enc_u(0x1234_5000, rd=8))
     assert int(dut.ex_mem_alu_result_o.value) == 0x1234_5000
@@ -268,8 +308,8 @@ async def test_slt_signed_through_the_core(dut):
     """slt x10, x3, x4 with x3 = -1, x4 = 1 -> 1. Unsigned would give 0."""
     await reset(dut)
     dut.rst_i.value = 0
-    await write_reg(dut, 3, 0xFFFF_FFFF)
-    await write_reg(dut, 4, 1)
+    await set_reg(dut, 3, 0xFFFF_FFFF)
+    await set_reg(dut, 4, 1)
 
     await drain(dut, enc_r(0b010, rs1=3, rs2=4, rd=10))
     assert int(dut.ex_mem_alu_result_o.value) == 1, "slt compared unsigned"
@@ -298,8 +338,8 @@ async def test_control_travels_with_its_instruction(dut):
     """
     await reset(dut)
     dut.rst_i.value = 0
-    await write_reg(dut, 3, 5)
-    await write_reg(dut, 4, 6)
+    await set_reg(dut, 3, 5)
+    await set_reg(dut, 4, 6)
 
     branch = 0x0000_0063 | (1 << 15) | (2 << 20)
     await feed(dut, branch)
@@ -310,3 +350,187 @@ async def test_control_travels_with_its_instruction(dut):
     assert int(dut.ex_mem_rd_we_o.value) == 1
     assert int(dut.ex_mem_rd_addr_o.value) == 7
     assert int(dut.ex_mem_alu_result_o.value) == 11
+
+
+# --- MEM and WB -------------------------------------------------------------
+# Whole programs from here on, against two memory models: IMEM answers within
+# the cycle, exactly as feed() does, and DMEM behaves like a BRAM.
+
+async def dmem_model(dut, mem):
+    """Byte-strobed, synchronous-read RAM: the timing of an Arty A7 BRAM.
+
+    Samples the port mid-cycle, when it is stable, then acts at the rising
+    edge: apply the write, and drive the read data for the address the core
+    presented. A value assigned after RisingEdge is not seen by the flops on
+    that same edge, so the data appears just after the clock -- one cycle of
+    latency, as a real BRAM output register gives. Read-first: a read of the
+    word being written returns the old contents.
+
+    mem maps word-aligned byte addresses to 32-bit words; absent reads as 0.
+    """
+    while True:
+        await FallingEdge(dut.clk_i)
+        addr = int(dut.dmem_addr_o.value)
+        we = int(dut.dmem_we_o.value)
+        wstrb = int(dut.dmem_wstrb_o.value)
+        wdata = int(dut.dmem_wdata_o.value)
+        await RisingEdge(dut.clk_i)
+        old = mem.get(addr, 0)
+        if we:
+            keep = sum(0xFF << (8 * i) for i in range(4) if not (wstrb >> i) & 1)
+            mem[addr] = (old & keep) | (wdata & ~keep & MASK32)
+        dut.dmem_rdata_i.value = old
+
+
+async def run(dut, program, mem=None):
+    """Reset, run program from address 0, drain it to WB.
+
+    Returns (writebacks, mem): every register write WB performed, in retirement
+    order, as (rd, value) -- x0 included, since a write to x0 still happens --
+    and the data memory as the program left it.
+    """
+    mem = {} if mem is None else mem
+    await reset(dut)
+    dut.rst_i.value = 0
+    cocotb.start_soon(dmem_model(dut, mem))
+
+    writebacks = []
+    for _ in range(len(program) + 5):
+        word = int(dut.imem_addr_o.value) >> 2
+        dut.imem_rdata_i.value = program[word] if word < len(program) else NOP
+        await RisingEdge(dut.clk_i)
+        await FallingEdge(dut.clk_i)
+        if int(dut.wb_rd_we_o.value):
+            writebacks.append((int(dut.wb_rd_addr_o.value),
+                               int(dut.wb_rd_wdata_o.value)))
+    return writebacks, mem
+
+
+def final_regs(writebacks):
+    """Last value written to each register, x0 excluded."""
+    return {rd: v for rd, v in writebacks if rd != 0}
+
+
+GAP = [NOP] * HAZARD_GAP
+
+LB, LH, LW, LBU, LHU = 0b000, 0b001, 0b010, 0b100, 0b101
+SB, SH, SW = 0b000, 0b001, 0b010
+
+
+@cocotb.test()
+async def test_wb_and_dmem_reset_inert(dut):
+    """Out of reset nothing is written -- not a register, not memory."""
+    await reset(dut)
+    assert int(dut.wb_rd_we_o.value) == 0, "WB writes a register out of reset"
+    assert int(dut.dmem_we_o.value) == 0, "MEM writes memory out of reset"
+    assert int(dut.dmem_wstrb_o.value) == 0
+    assert int(dut.mem_wb_instr_o.value) == NOP
+
+
+@cocotb.test()
+async def test_alu_result_writes_back_and_is_read_again(dut):
+    """The loop closes: a result written in WB is an operand three instructions on."""
+    program = [enc_i(42, rs1=0, rd=5)] + GAP + [enc_r(0b000, rs1=5, rs2=5, rd=6)]
+    writebacks, _ = await run(dut, program)
+    regs = final_regs(writebacks)
+    assert regs.get(5) == 42, f"x5 never written back: {writebacks}"
+    assert regs.get(6) == 84, f"x6 = x5 + x5 read a stale x5: {writebacks}"
+
+
+@cocotb.test()
+async def test_store_then_load_round_trip(dut):
+    """The slice's definition of done: store a value, load it into a different
+    register, and prove the loaded value really landed in the register file by
+    storing it again from there.
+
+    The load directly follows the store. That is a dependency through memory,
+    not a register, so it needs no gap: the store writes at the end of its MEM
+    cycle and the load reads at the end of its own, one cycle later.
+    """
+    value = 0x8765_4321
+    program = li(1, value) + [
+        enc_s(16, rs1=0, rs2=1, funct3=SW),      # sw x1, 16(x0)
+        enc_load(LW, rd=2, imm=16),              # lw x2, 16(x0)
+    ] + GAP + [
+        enc_s(20, rs1=0, rs2=2, funct3=SW),      # sw x2, 20(x0)
+    ]
+    writebacks, mem = await run(dut, program)
+    assert mem.get(16) == value, f"store: mem[16] = {mem.get(16, 0):#010x}"
+    assert final_regs(writebacks).get(2) == value, f"load: writebacks {writebacks}"
+    assert mem.get(20) == value, (
+        f"x2 was written back but not stored: mem[20] = {mem.get(20, 0):#010x}"
+    )
+
+
+@cocotb.test()
+async def test_store_widths_and_lanes_through_the_core(dut):
+    """SB to all four lanes and SH to both halves, distinct data per lane.
+
+    riscv_mem_align is swept exhaustively in its own test; this one proves the
+    core feeds it the right funct3 and address bits.
+    """
+    program = []
+    for rd, v in ((1, 0x01), (2, 0x02), (3, 0x03), (4, 0x04), (5, 0xFFFF_FFFE)):
+        program += li(rd, v)
+    program += [
+        enc_s(32, rs2=1, funct3=SB), enc_s(33, rs2=2, funct3=SB),
+        enc_s(34, rs2=3, funct3=SB), enc_s(35, rs2=4, funct3=SB),
+        enc_s(36, rs2=1, funct3=SH), enc_s(38, rs2=5, funct3=SH),
+        enc_s(40, rs2=5, funct3=SW),
+    ]
+    _, mem = await run(dut, program, mem={32: 0xAAAA_AAAA, 36: 0xAAAA_AAAA})
+    assert mem.get(32) == 0x0403_0201, f"SB lanes: {mem.get(32, 0):#010x}"
+    assert mem.get(36) == 0xFFFE_0001, f"SH halves: {mem.get(36, 0):#010x}"
+    assert mem.get(40) == 0xFFFF_FFFE, f"SW: {mem.get(40, 0):#010x}"
+
+
+@cocotb.test()
+async def test_load_widths_lanes_and_extension_through_the_core(dut):
+    """Every load form against one word whose lanes are 0x01, 0x7F, 0xFF, 0x80.
+
+    Byte 2 (0xFF) and the upper half (0x80FF) are the cases where LB/LBU and
+    LH/LHU must disagree. Byte 1 (0x7F) is where they must agree.
+    """
+    word = 0x80FF_7F01
+    loads = [
+        (LB, 66, 0xFFFF_FFFF), (LBU, 66, 0x0000_00FF), (LB, 65, 0x0000_007F),
+        (LBU, 64, 0x0000_0001), (LB, 67, 0xFFFF_FF80),
+        (LH, 66, 0xFFFF_80FF), (LHU, 66, 0x0000_80FF), (LH, 64, 0x0000_7F01),
+        (LW, 64, word),
+    ]
+    program = [enc_load(f3, rd=i + 1, imm=addr) for i, (f3, addr, _) in enumerate(loads)]
+    writebacks, _ = await run(dut, program, mem={64: word})
+    regs = final_regs(writebacks)
+    for i, (f3, addr, want) in enumerate(loads):
+        got = regs.get(i + 1)
+        assert got == want, (
+            f"funct3={f3:03b} addr={addr}: x{i + 1} = "
+            f"{'never written' if got is None else hex(got)}, expected {want:#010x}"
+        )
+
+
+@cocotb.test()
+async def test_store_writes_no_register(dut):
+    """A store's rd field is immediate bits; it must not reach WB as a write.
+
+    imm[4:0] = 31 sits in the rd slot, so a leaked write shows up as x31. The
+    NOP padding does write x0 -- NOP is addi x0, x0, 0 -- hence final_regs().
+    """
+    program = [enc_s(0b11111, rs1=0, rs2=0, funct3=SW)]
+    writebacks, _ = await run(dut, program)
+    assert final_regs(writebacks) == {}, f"store wrote a register: {writebacks}"
+
+
+@cocotb.test()
+async def test_misaligned_access_uses_the_containing_word(dut):
+    """Pins the documented assumption: bits below the access size are ignored.
+
+    Not RV32I-required behaviour -- misalignment is outside this core's scope --
+    but whatever the hardware does must be what docs/PROGRESS.md says it does,
+    because rvfi_mem_rmask/wmask will encode it.
+    """
+    program = [enc_load(LW, rd=1, imm=66), enc_load(LH, rd=2, imm=67)]
+    writebacks, _ = await run(dut, program, mem={64: 0x8765_4321})
+    regs = final_regs(writebacks)
+    assert regs.get(1) == 0x8765_4321, f"lw @66: {regs.get(1)}"
+    assert regs.get(2) == 0xFFFF_8765, f"lh @67: {regs.get(2)}"

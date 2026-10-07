@@ -52,7 +52,8 @@ endif
 TESTS ?= riscv_core:test_core \
          riscv_alu:test_alu \
          riscv_regfile:test_regfile \
-         riscv_decoder:test_decoder
+         riscv_decoder:test_decoder \
+         riscv_mem_align:test_mem_align
 
 ifdef TEST_ONE
   TOPLEVEL              := $(word 1,$(subst :, ,$(TEST_ONE)))

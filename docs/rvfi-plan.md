@@ -38,7 +38,7 @@ so they ride the pipeline registers as shadow fields alongside the real data.
 | `rvfi_rs1_addr`, `rvfi_rs2_addr` | ID | Decoder output |
 | `rvfi_rs1_rdata`, `rvfi_rs2_rdata` | **EX, after the forwarding mux** | See below |
 | `rvfi_pc_wdata` | EX | Branch target, else `pc + 4` |
-| `rvfi_mem_addr`, `_rmask`, `_wmask`, `_wdata` | MEM | Masks encode width and alignment |
+| `rvfi_mem_addr`, `_rmask`, `_wmask`, `_wdata` | MEM | Masks encode width and alignment. Stores: `dmem_addr_o`/`dmem_wstrb_o`/`dmem_wdata_o` already are these values; `rmask` needs computing for loads. All need one MEM/WB shadow register when the port lands |
 | `rvfi_mem_rdata` | MEM→WB | Load data lands a stage after its address |
 | `rvfi_rd_addr`, `rvfi_rd_wdata` | WB | Both read 0 when no write happens |
 | `rvfi_order` | WB | Free-running retirement counter |

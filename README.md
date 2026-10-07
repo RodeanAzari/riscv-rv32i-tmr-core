@@ -10,11 +10,12 @@ Current state of the work: [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Status
 
-**Stage 1, Phase A — working core. In progress.** IF, ID and EX implemented:
-PC and fetch, decode with all five immediate formats, the register file, the
-ALU and its operand selection, and the IF/ID, ID/EX and EX/MEM pipeline
-registers. MEM, WB, branches and jumps, the hazard unit and forwarding still to
-come; instructions in those classes decode inert rather than half-working.
+**Stage 1, Phase A — working core. In progress.** All five stages
+implemented: the core runs straight-line programs end to end, including all
+eight loads and stores through a BRAM-timed data memory port. Branches and
+jumps, the hazard unit and forwarding still to come; branches and jumps decode
+inert rather than half-working, and dependent instructions need NOP padding
+until forwarding exists.
 
 | Stage | Phases | State |
 |---|---|---|
@@ -23,7 +24,7 @@ come; instructions in those classes decode inert rather than half-working.
 
 ```
 make lint    # Verilator 5.050 lint, zero warnings
-make sim     # cocotb 2.1.0 regression, 63/63 passing
+make sim     # cocotb 2.1.0 regression, 77/77 passing
 make synth   # out-of-context synth + P&R, reports to docs/reports/
 ```
 
@@ -42,9 +43,9 @@ share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
 
 | Metric | Value |
 |---|---|
-| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 144.8 MHz *(IF + ID + EX only)* |
+| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 136.9 MHz *(no branches or forwarding yet)* |
 | Fmax, board-level | — |
-| LUT / FF / BRAM / DSP | 592 / 352 / 0 / 0 *(IF + ID + EX only)* |
+| LUT / FF / BRAM / DSP | 682 / 484 / 0 / 0 *(no branches or forwarding yet)* |
 | CPI / IPC (Dhrystone, CoreMark) | — |
 | Formal: properties proven, proof depth | — |
 | Bugs formal caught that simulation missed | — |

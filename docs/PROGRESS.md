@@ -6,39 +6,45 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — working core (IF, ID and EX done; MEM + WB next)
+**Phase:** A — working core (all five stages built; IF timing fix, then branches + hazard unit)
 
 ---
 
 ## Where things stand
 
-**Position: Phase A, three of five pipeline stages built.** IF, ID and EX are
-implemented and tested; MEM and WB are not. The datapath computes ALU results
-and parks them in EX/MEM, where they stop — nothing writes back to the register
-file yet, so the core does not execute a program end to end. The register file's
-write port is still the temporary `wb_rd_*_i` core port, driven by the
-testbench.
+**Position: Phase A, all five pipeline stages built.** The core executes
+straight-line programs end to end: results write back to the register file in
+WB, and loads and stores go through an external, BRAM-timed data memory port.
+The temporary `wb_rd_*_i` testbench port is gone; tests set registers by
+executing instructions.
 
-Working today: `addi`, `add`, `sub`, the shifts, `slt`/`sltu`, the bitwise ops,
-`lui` and `auipc` — everything whose result is an ALU output. Branches, jumps,
-loads and stores decode **inert** (`rd_we = 0`) rather than half-working.
+Working today: every ALU instruction, `lui`, `auipc`, and all eight loads and
+stores. Branches and jumps decode **inert** (`rd_we = 0`, no memory access)
+rather than half-working. **There is no forwarding yet**: a dependent
+instruction must trail its producer by three instructions.
 
-Everything is committed and pushed; `make lint`, `make sim` and `make synth` all
-pass from a clean checkout.
+**Known bug, not yet fixed: IF is off by one word under real BRAM timing.**
+See Next up §1. Every test so far answers `imem_rdata_i` within the cycle,
+which hides it.
+
+Everything is committed but **not yet pushed** — the MEM + WB commit is local
+only (`git push` to sync, and CI runs on push). `make lint`, `make sim` and
+`make synth` all pass from a clean checkout.
 
 ### Working and verified
 
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 63/63 passing across 4 toplevels (core, alu, regfile, decoder) |
+| `make sim` | 77/77 passing across 5 toplevels (core, alu, regfile, decoder, mem_align) |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | CI on push | green (lint + sim) |
 
 ### Implemented
 
 `rtl/core/riscv_core.sv` — IF (PC, fetch, IF/ID), ID (decoder, register file,
-ID/EX) and EX (operand selection, ALU, EX/MEM).
+ID/EX), EX (operand selection, ALU, EX/MEM), MEM (DMEM port, store alignment,
+MEM/WB) and WB (load alignment, writeback mux).
 
 - PC resets to `0x0000_0000`, advances `pc + 4`
 - **Synchronous, active-high `rst_i`** per CLAUDE.md §4 — flops map to FDRE/FDSE
@@ -49,15 +55,22 @@ ID/EX) and EX (operand selection, ALU, EX/MEM).
   (heads off the X-propagation failure mode in CLAUDE.md §9)
 - `if_id_pc_o` / `if_id_instr_o` / `id_ex_*` exposed as outputs for ILA probing
   later, and carrying the RVFI shadow fields — see [rvfi-plan.md](rvfi-plan.md)
-- The register file write port is **temporarily** a core port (`wb_rd_*_i`). It
-  belongs to WB. Left as a port rather than tied off because a constant-zero
-  write enable lets synthesis delete the entire register file, which would make
-  the area row above a fiction
+- **DMEM is an external port** — word-aligned address straight off the EX/MEM
+  register, byte strobes, synchronous read. Load data arrives in WB and is
+  **not** re-registered in MEM/WB: the BRAM's output register already is that
+  pipeline register for it
+- WB's register write is exposed as `wb_rd_*_o` **outputs** — what the tests
+  observe, and `rvfi_rd_addr`/`rvfi_rd_wdata` in waiting
 
 `rtl/core/riscv_decoder.sv` — register addresses, all five RV32I immediate
-formats (I/S/B/U/J), and the EX control signals. Memory and writeback control
-still waits for MEM and WB, on the same principle: a control signal with no
-destination is dead logic lint cannot tell apart from a mistake.
+formats (I/S/B/U/J), the EX control signals, and `mem_read`/`mem_write`/
+`mem_funct3`. `mem_read` doubles as the writeback select until JAL/JALR add a
+third writeback source.
+
+`rtl/core/riscv_mem_align.sv` — byte lanes for both directions: stores
+replicate data across lanes and raise strobes; loads pick the lane and sign- or
+zero-extend. One module so the little-endian lane convention lives in one
+place. Implements the misalignment assumption (see Decisions).
 
 `rtl/core/riscv_alu.sv` — the ten RV32I arithmetic/logic operations. Selected by
 the ISA's own `funct3` plus the ADD/SUB and SRL/SRA "alt" bit rather than a
@@ -72,8 +85,10 @@ would have forced. x0 invariance and WB→ID write-first forwarding are both
 implemented here rather than in the surrounding pipeline, because both are
 formal properties in CLAUDE.md §5.5.
 
-`tb/cocotb/` — 28 tests across three toplevels: `test_core` (8), `test_regfile`
-(8), `test_decoder` (12). Submodules get their own toplevel rather than being
+`tb/cocotb/` — 77 tests across five toplevels: `test_core` (24), `test_alu`
+(16), `test_regfile` (8), `test_decoder` (25), `test_mem_align` (4, each an
+exhaustive sweep). `test_core` runs whole programs against a BRAM-timed DMEM
+model, and its `li()` helper pads for the missing forwarding. Submodules get their own toplevel rather than being
 poked through the core's hierarchy, so a unit test survives refactoring and can
 drive ports the core does not expose.
 
@@ -84,9 +99,9 @@ estimate and post-route is measured.
 
 ### Not started
 
-Branches and jumps, loads and stores, MEM, WB, the hazard unit and load-use
-stall, EX→EX and MEM→EX forwarding, the RVFI port itself, formal, UVM, TMR,
-hardware bring-up, and all of Stage 2.
+Branches and jumps, the hazard unit and load-use stall, EX→EX and MEM→EX
+forwarding, the RVFI port itself, formal, UVM, TMR, hardware bring-up, and all
+of Stage 2.
 
 **Instructions not yet implemented decode inert** (`rd_we = 0`) rather than
 half-working. A branch or load that wrote a plausible-looking value would later
@@ -115,6 +130,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-09-17 | Sync-high reset + `_i`/`_o` ports | 1 | 92 | 8 | +7.338 | 375.7 | 0.0 |
 | 2026-09-17 | ID: decode + regfile + ID/EX | 108 | 249 | 8 | +6.029 | 251.8 | −123.9 |
 | 2026-09-17 | EX: ALU + operand sel + EX/MEM | 592 | 352 | 24 | +3.095 | 144.8 | −107.0 |
+| 2026-10-07 | MEM + WB: DMEM port, lane align, MEM/WB, writeback | 682 | 484 | 24 | +2.696 | 136.9 | −7.9 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -137,6 +153,17 @@ A single number at the end of the project is a claim; a table showing what each
 pipeline stage cost in MHz and LUTs is evidence of engineering. It also
 localises regressions — if Fmax halves, the row tells you which slice did it,
 instead of bisecting months of commits.
+
+The MEM + WB row: **the critical path did not move.** It is still
+`id_ex_a_sel_zero` → ALU carry chain → `ex_mem_alu_result_o[31]`, 12 levels,
+61% route. The −7.9 MHz is the same EX path routing worse among ~90 more LUTs,
+not a new path through MEM or WB. The FF count reconciles exactly: the RTL adds
+148 flops (ID/EX +5, EX/MEM +37, MEM/WB +106); 2 constant-fold
+(`mem_wb_pc_o[1:0]`), and Vivado merges 14 pairs of flops that always hold the
+same bit — `mem_funct3` equals `instr[14:12]` in three stages, and
+`mem_wb_rd_addr` equals `instr[11:7]`. 352 + 148 − 16 = 484. Checked in the
+routed netlist, not assumed: `mem_wb_instr_o` keeps 29 flops (its funct3 bits
+merged into `mem_wb_mem_funct3`), and `mem_wb_rd_addr` keeps none.
 
 ---
 
@@ -302,6 +329,26 @@ the honest answer rather than pretending it fits on a hosted one.
   forward from. Branch resolution needs the flush machinery, which belongs with
   the hazard unit. Loads and stores need MEM. Half a branch is worse than none,
   so the unimplemented classes decode inert instead.
+- **Misaligned loads/stores are assumed not to happen** (decided 2026-10-07).
+  RV32I demands support or a trap; traps are out of scope (§5.1) and hardware
+  support means a MEM-stage FSM and a stall before any hazard unit exists.
+  Defined behaviour rather than undefined: **address bits below the access size
+  are ignored**, so a misaligned access touches the aligned word or halfword
+  that contains it, never two words. Pinned by
+  `test_misaligned_access_uses_the_containing_word`. **Open for Phase B:**
+  riscv-formal must be told; check what `RISCV_FORMAL_ALIGNED_MEM` expects of a
+  misaligned access (it may expect `rvfi_trap`) before relying on it, otherwise
+  constrain the harness to aligned addresses.
+- **Load/store width is its own field, not the ALU's `funct3`** (2026-10-07).
+  The earlier plan said the carried `funct3` doubled as the width. It cannot:
+  loads and stores use the ALU to compute `rs1 + imm`, so the ALU's `funct3`
+  must say ADD. `mem_funct3` rides alongside. It costs nothing in the end —
+  Vivado merges each copy with the `instr[14:12]` shadow bits it always equals,
+  keeping one flop per bit.
+- **Store data is replicated, not shifted** (2026-10-07). `SB` puts rs2's byte
+  in all four lanes and the strobes pick one; replication is wiring, a shifter
+  is muxes. The unit test checks the memory *outcome*, not `wdata`'s unwritten
+  lanes, so it would still pass on a correct shifting redesign.
 - **The ALU is selected by `funct3` + `alt`, not a private opcode enum**
   (2026-09-17). Using the ISA's own encoding means the decoder and the ALU
   cannot drift out of step, because there is only one encoding. It also avoids a
@@ -318,64 +365,25 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-### 1. MEM + WB — the slice that closes the loop
+### 1. Fix IF timing — found 2026-10-07, before anything uses the PC
 
-The next slice, and the most valuable one left in Phase A: after it the core
-executes an instruction end to end instead of parking results in EX/MEM.
+**IF pairs each instruction with the next instruction's PC when IMEM has real
+BRAM timing.** `imem_addr_o = pc`, and IF/ID captures `pc` and `imem_rdata_i`
+on the same edge. A BRAM latches `pc` at the end of the cycle and returns its
+data the cycle *after*, by which time `pc` has moved on by 4. Shown, not
+inferred: with a BRAM-timed IMEM model, `auipc x5, 0` at pc 8 wrote **12**. It
+has gone unnoticed because every test answers `imem_rdata_i` within the cycle,
+which no BRAM can do — while DMEM, built in this slice, is correct by
+construction (its address comes off EX/MEM and its data lands with the
+instruction in MEM/WB).
 
-**Data memory port.** External, exactly like IMEM and for the same reason —
-BRAM-shaped from the start so Phase D bring-up needs no rewrite. Synchronous
-read, one cycle of latency, so load data arrives in WB, a stage after the
-address is driven:
-
-```
-output dmem_addr_o      word address
-output dmem_wdata_o     store data, already shifted into lane
-output dmem_wstrb_o     4-bit byte strobes
-output dmem_we_o
-input  dmem_rdata_i     arrives one cycle later
-```
-
-**Load/store alignment is the real work here**, not the pipeline register.
-`funct3` gives the width (`LB`/`LH`/`LW`/`LBU`/`LHU`, `SB`/`SH`/`SW`); the low
-two address bits give the lane. Stores shift data *into* lane and generate byte
-strobes; loads select the lane out and then sign- or zero-extend. The `LB`/`LBU`
-and `LH`/`LHU` pairs are the ones to test directly — they differ only in
-extension, so a bug in one is invisible while values stay positive. This is the
-same shape of trap as the `SRA`/`SRL` cast and the `addi -1` alt bit.
-
-**Open decision before starting: misaligned accesses.** RV32I requires either
-support or a trap, and §5.1 puts traps out of scope. So pick one and write it
-down: assume aligned and document the assumption, or handle misalignment in
-hardware. This has to be settled before `rvfi_mem_rmask`/`wmask` are populated,
-because the masks encode exactly this behaviour.
-
-**Decoder additions:** `mem_read`, `mem_write`, and a writeback select (ALU
-result vs. load data). `rd_we` becomes true for loads. `funct3` is already
-carried and doubles as the width field.
-
-**EX/MEM must gain `rs2_rdata`** — store data comes from rs2 and is not needed
-before now, which is why it was not carried.
-
-**MEM/WB register:** ALU result, load data, `rd_addr`, `rd_we`, plus the RVFI
-shadow (`instr`, `pc`).
-
-**WB:** the writeback mux, and the register file write port stops being a core
-port. `wb_rd_we_i` / `wb_rd_addr_i` / `wb_rd_wdata_i` get **deleted from the
-interface** and wired internally. The core-level tests that currently drive
-them (`test_x0_reads_zero_through_the_core`, `test_regfile_read_reaches_id_ex`,
-and the `write_reg` helper) need reworking to set registers by executing
-instructions instead — which is a better test anyway.
-
-**RVFI:** `mem_addr`, `mem_rmask`, `mem_wmask`, `mem_wdata` captured at MEM;
-`mem_rdata` at MEM/WB. The port itself still waits — see
-[rvfi-plan.md](rvfi-plan.md) — because `rvfi_valid` needs retirement to be
-correct, and retirement is only correct once the hazard unit exists.
-
-**Done when:** a short instruction sequence stores a value and loads it back
-into a different register, verified end to end; every load/store width and lane
-covered; `make lint` clean, `make sim` green, `make synth` run and a trend row
-appended.
+Today only `auipc` reads the PC. Branches and JAL will, so this goes first. The
+usual fix: drive the BRAM from `pc_next` (reset vector during reset), so the
+BRAM's own output register *is* the instruction half of IF/ID. That puts the
+stall into the address mux — a stalled fetch must re-present the same address
+— so design it with the hazard unit in mind. Then move every core test onto a
+BRAM-timed IMEM model, so the testbench can never again be more forgiving than
+the hardware.
 
 ### 2. Branches, jumps and the hazard unit
 
@@ -424,10 +432,10 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-09-17 — EX slice landed and pushed: ALU, operand selection
-and EX/MEM, plus the decoder control that feeds them. 63 tests across four
-toplevels. Fmax 251.8 → 144.8 MHz; the critical path is now
-`id_ex_imm → ex_mem_alu_result`, 12 logic levels of which 8 are the CARRY4 chain
-of the 32-bit add/subtract. Stopped here deliberately — next session starts with
-MEM + WB, planned in "Next up" above, including the misaligned-access decision
-that needs making before the RVFI memory fields can be populated.*
+*Last updated: 2026-10-07 — MEM + WB slice landed (committed, not pushed): DMEM
+port, `riscv_mem_align`, MEM/WB and the writeback mux; the temporary
+`wb_rd_*_i` port is gone. Misaligned accesses decided: assumed aligned, low
+address bits below the access size ignored. 77 tests across five toplevels.
+Fmax 144.8 → 136.9 MHz with the critical path unchanged (still the EX carry
+chain). Found and reproduced an IF timing bug under BRAM-timed IMEM — next
+session starts there, Next up §1, before branches.*

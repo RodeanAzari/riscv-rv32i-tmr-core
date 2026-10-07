@@ -1,12 +1,8 @@
 // RV32I instruction decode: register addresses, the immediate, and the control
-// the EX stage consumes.
+// the EX, MEM and WB stages consume.
 //
-// Scope note: memory and writeback control arrive with MEM and WB, for the same
-// reason ALU control was not here before EX existed -- a control signal with no
-// destination is dead logic that lint cannot tell apart from a mistake.
-//
-// Instructions whose stages do not exist yet (branches, jumps, loads, stores,
-// FENCE, ECALL, EBREAK) decode to rd_we_o = 0. They are inert rather than
+// Instructions not yet implemented (branches, jumps, FENCE, ECALL, EBREAK)
+// decode to rd_we_o = 0 and no memory access. They are inert rather than
 // wrong. That matters more than it sounds: a half-implemented instruction that
 // writes a plausible-looking value is exactly the kind of fault riscv-formal
 // will later report as a forwarding bug, sending the hunt to the wrong place.
@@ -33,6 +29,13 @@ module riscv_decoder #(
     output logic              alu_a_sel_pc_o,
     output logic              alu_a_sel_zero_o,
     output logic              alu_b_sel_imm_o,
+
+    // MEM / WB control. mem_read_o doubles as the writeback select (load data
+    // rather than the ALU result) -- in RV32I the two are the same question
+    // until JAL/JALR add a third writeback source.
+    output logic              mem_read_o,
+    output logic              mem_write_o,
+    output logic [2:0]        mem_funct3_o,
     output logic              rd_we_o
 );
 
@@ -41,6 +44,7 @@ module riscv_decoder #(
   localparam logic [6:0] OPCODE_AUIPC  = 7'b0010111;
   localparam logic [6:0] OPCODE_JAL    = 7'b1101111;
   localparam logic [6:0] OPCODE_BRANCH = 7'b1100011;
+  localparam logic [6:0] OPCODE_LOAD   = 7'b0000011;
   localparam logic [6:0] OPCODE_STORE  = 7'b0100011;
   localparam logic [6:0] OPCODE_OP     = 7'b0110011;
   localparam logic [6:0] OPCODE_OP_IMM = 7'b0010011;
@@ -57,6 +61,12 @@ module riscv_decoder #(
   assign rs1_addr_o = instr_i[19:15];
   assign rs2_addr_o = instr_i[24:20];
   assign rd_addr_o  = instr_i[11:7];
+
+  // Load/store width and signedness. Not funct3_o: for a load or store the ALU
+  // computes the address, so funct3_o must say ADD and cannot also carry the
+  // width. Extracted unconditionally like the register fields; mem_read_o and
+  // mem_write_o decide whether anything uses it.
+  assign mem_funct3_o = funct3;
 
   // Immediate forms. Every one is sign-extended from instr[31] except U, which
   // is not an offset at all -- it supplies the upper 20 bits directly.
@@ -111,6 +121,8 @@ module riscv_decoder #(
     alu_a_sel_pc_o   = 1'b0;
     alu_a_sel_zero_o = 1'b1;
     alu_b_sel_imm_o  = 1'b1;
+    mem_read_o       = 1'b0;
+    mem_write_o      = 1'b0;
     rd_we_o          = 1'b0;
 
     case (opcode)
@@ -140,6 +152,22 @@ module riscv_decoder #(
         alu_a_sel_pc_o   = 1'b1;
         alu_a_sel_zero_o = 1'b0;
         rd_we_o          = 1'b1;
+      end
+
+      // rd = mem[rs1 + imm]. The ALU computes the address with its default
+      // ADD; the I-form immediate is already selected.
+      OPCODE_LOAD: begin
+        alu_a_sel_zero_o = 1'b0;      // rs1
+        mem_read_o       = 1'b1;
+        rd_we_o          = 1'b1;
+      end
+
+      // mem[rs1 + imm] = rs2. Same address path as a load, with the S-form
+      // immediate. rs2 is the store data, not an ALU operand, so b stays on
+      // the immediate.
+      OPCODE_STORE: begin
+        alu_a_sel_zero_o = 1'b0;      // rs1
+        mem_write_o      = 1'b1;
       end
 
       default: ;  // inert: defaults above already write nothing
