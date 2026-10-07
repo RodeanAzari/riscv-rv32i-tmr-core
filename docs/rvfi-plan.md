@@ -36,13 +36,13 @@ so they ride the pipeline registers as shadow fields alongside the real data.
 |---|---|---|
 | `rvfi_insn`, `rvfi_pc_rdata` | IF/ID | Available today |
 | `rvfi_rs1_addr`, `rvfi_rs2_addr` | ID | Decoder output |
-| `rvfi_rs1_rdata`, `rvfi_rs2_rdata` | **EX, after the forwarding mux** | See below |
+| `rvfi_rs1_rdata`, `rvfi_rs2_rdata` | **EX, after the forwarding mux** | `ex_rs1` / `ex_rs2` in `riscv_core.sv`. Today only `ex_rs2` is carried on (as store data, in EX/MEM); both need shadow registers to WB. See below |
 | `rvfi_pc_wdata` | EX | Branch target, else `pc + 4` |
 | `rvfi_mem_addr`, `_rmask`, `_wmask`, `_wdata` | MEM | Masks encode width and alignment. Stores: `dmem_addr_o`/`dmem_wstrb_o`/`dmem_wdata_o` already are these values; `rmask` needs computing for loads. All need one MEM/WB shadow register when the port lands |
 | `rvfi_mem_rdata` | MEM→WB | Load data lands a stage after its address |
 | `rvfi_rd_addr`, `rvfi_rd_wdata` | WB | Both read 0 when no write happens |
 | `rvfi_order` | WB | Free-running retirement counter |
-| `rvfi_valid` | WB | One pulse per retired instruction |
+| `rvfi_valid` | WB | One pulse per retired instruction. Needs a valid bit riding the pipeline: a load-use bubble is a NOP decode today, indistinguishable from a real NOP, and must not retire |
 | `rvfi_trap`, `rvfi_halt`, `rvfi_intr` | WB | Tied low — no traps or interrupts in scope (§5.1) |
 
 ---

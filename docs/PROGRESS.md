@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — working core (all five stages built; branches + hazard unit next)
+**Phase:** A — working core (forwarding + load-use stall done; branches and jumps next)
 
 ---
 
@@ -19,15 +19,20 @@ The temporary `wb_rd_*_i` testbench port is gone; tests set registers by
 executing instructions.
 
 Working today: every ALU instruction, `lui`, `auipc`, and all eight loads and
-stores. Branches and jumps decode **inert** (`rd_we = 0`, no memory access)
-rather than half-working. **There is no forwarding yet**: a dependent
-instruction must trail its producer by three instructions.
+stores, **with full data-hazard handling** — EX/MEM→EX and MEM/WB→EX
+forwarding, WB→ID through the register file, and a one-cycle load-use stall.
+Programs need no NOP padding. Branches and jumps decode **inert**
+(`rd_we = 0`, no memory access) rather than half-working.
+
+**Timing margin is now thin: 0.94 ns at 100 MHz out-of-context**, and the
+paths that cross the memory ports are not yet timed at all. See the synthesis
+trend notes.
 
 Both memories are now BRAM-timed in the testbench as well as in the design.
 The IF timing bug found during MEM + WB is fixed — see Decisions.
 
-Everything is committed but **not yet pushed** — the MEM + WB and IF-fix
-commits are local only (`git push` to sync, and CI runs on push). `make lint`, `make sim` and
+Everything is committed but **not yet pushed** — the MEM + WB, IF-fix and
+forwarding commits are local only (`git push` to sync, and CI runs on push). `make lint`, `make sim` and
 `make synth` all pass from a clean checkout.
 
 ### Working and verified
@@ -35,7 +40,7 @@ commits are local only (`git push` to sync, and CI runs on push). `make lint`, `
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 78/78 passing across 5 toplevels (core, alu, regfile, decoder, mem_align) |
+| `make sim` | 95/95 passing across 6 toplevels (core, alu, regfile, decoder, mem_align, hazard) |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | CI on push | green (lint + sim) |
 
@@ -68,6 +73,16 @@ formats (I/S/B/U/J), the EX control signals, and `mem_read`/`mem_write`/
 `mem_funct3`. `mem_read` doubles as the writeback select until JAL/JALR add a
 third writeback source.
 
+`rtl/core/riscv_hazard.sv` — forwarding selects for EX and load-use detection
+for ID, purely combinational. Selects are one-hot per operand with priority
+already resolved (EX/MEM beats MEM/WB: the younger write), so the core holds
+no second copy of an encoding. Writes to x0 are never forwarded. The stall
+compares the rs1/rs2 **fields** whether or not the instruction uses them — a
+false match costs a cycle, never correctness. In the core, a stall holds the
+pc and IF/ID (the pc mux re-presents `pc`, so the BRAM re-reads the word it
+holds) and loads a NOP-decode bubble into ID/EX. Store data in EX/MEM is the
+**forwarded** rs2.
+
 `rtl/core/riscv_mem_align.sv` — byte lanes for both directions: stores
 replicate data across lanes and raise strobes; loads pick the lane and sign- or
 zero-extend. One module so the little-endian lane convention lives in one
@@ -86,13 +101,27 @@ would have forced. x0 invariance and WB→ID write-first forwarding are both
 implemented here rather than in the surrounding pipeline, because both are
 formal properties in CLAUDE.md §5.5.
 
-`tb/cocotb/` — 78 tests across five toplevels: `test_core` (25), `test_alu`
+`tb/cocotb/` — 95 tests across six toplevels: `test_core` (40), `test_alu`
 (16), `test_regfile` (8), `test_decoder` (25), `test_mem_align` (4, each an
-exhaustive sweep). In `test_core` **both** memories are BRAM-timed models that
+exhaustive sweep), `test_hazard` (2; one sweeps all 17,496 input combinations
+over x0–x2). In `test_core` **both** memories are BRAM-timed models that
 sample 1 ns before each rising edge, like a flop's setup window. `feed()`
 writes an instruction at the address being fetched, and `feed_to()` walks it to
-a named pipeline register, so no test hand-counts the fetch latency. `li()`
-pads for the missing forwarding.
+a named pipeline register, so no test hand-counts the fetch latency. `feed()`
+assumes no stall — a stall re-presents the same address, and feed() would
+overwrite it — so anything with a load-use pair goes through `run()`, whose
+`timed=True` records the cycle each instruction retires. That is how the
+load-use tests prove the stall costs **exactly** one cycle, and that a load
+followed by an unrelated instruction, or a load to x0, costs none.
+
+`tb/cocotb/rv32i_model.py` — the golden model (CLAUDE.md §11): one instruction
+at a time, no pipeline, written from the ISA spec. It follows one design
+decision rather than the spec — the misalignment rule — and raises on
+everything not yet implemented rather than guessing. `test_core` runs random
+programs over x0–x4 against it, comparing **retirement order** (not just final
+state, which a dropped or doubled instruction can survive) and final memory:
+120 instructions padded (validates the model), 400 dense (finds hazards).
+`SEED=n` reruns a seed; seeds 1–8 pass.
 
 Submodules get their own toplevel rather than being
 poked through the core's hierarchy, so a unit test survives refactoring and can
@@ -105,9 +134,8 @@ estimate and post-route is measured.
 
 ### Not started
 
-Branches and jumps, the hazard unit and load-use stall, EX→EX and MEM→EX
-forwarding, the RVFI port itself, formal, UVM, TMR, hardware bring-up, and all
-of Stage 2.
+Branches and jumps (and the flush they need), the RVFI port itself, formal,
+UVM, TMR, hardware bring-up, and all of Stage 2.
 
 **Instructions not yet implemented decode inert** (`rd_we = 0`) rather than
 half-working. A branch or load that wrote a plausible-looking value would later
@@ -138,6 +166,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-09-17 | EX: ALU + operand sel + EX/MEM | 592 | 352 | 24 | +3.095 | 144.8 | −107.0 |
 | 2026-10-07 | MEM + WB: DMEM port, lane align, MEM/WB, writeback | 682 | 484 | 24 | +2.696 | 136.9 | −7.9 |
 | 2026-10-07 | IF fix: IMEM driven from `pc_next` | 712 | 489 | 24 | +2.846 | 139.8 | +2.9 |
+| 2026-10-07 | Forwarding + load-use stall (hazard unit) | 818 | 489 | 24 | +0.942 | 110.4 | −29.4 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -185,6 +214,24 @@ out-of-context constraints set no output delays, so the path from the pc
 register through the adder to the BRAM address pins is **untimed** here. It
 gets timed when the board-level top puts a real BRAM on the other end — see
 Next up.
+
+The forwarding row is the largest single-feature cost so far, and the shape
+of the critical path is the textbook one: `ex_mem_rd_we` → hazard comparator →
+`fwd_rs2_ex_mem` (fanout 32) → forwarding mux → `alu_b[2]` (fanout 115, the
+shifter's shift amount) → `ex_mem_alu_result[26]`. A loop from EX/MEM back to
+EX/MEM with the forwarding **decision** in series ahead of the ALU; 79% of it
+is routing. **Not acted on yet**, recorded as an option: compute the selects
+one stage early — compare ID's rs1/rs2 against ID/EX's and EX/MEM's rd — and
+register them into ID/EX, so in EX they come straight off flops. FF count is
+unchanged because the stall uses clock enables and the bubble reuses the reset
+values.
+
+**0.94 ns of slack is the out-of-context number, and it is optimistic.** Three
+paths that matter on the board cross the core's ports and are untimed here:
+`pc + 4` / stall mux → `imem_addr_o`, the stall comparator → `imem_addr_o`, and
+`dmem_rdata_i` → load alignment → writeback mux → forwarding mux → ALU — the
+last one starts at a BRAM clock-to-out of roughly 2 ns on Artix-7. The board-
+level run will say whether 100 MHz survives.
 
 ---
 
@@ -350,6 +397,23 @@ the honest answer rather than pretending it fits on a hosted one.
   forward from. Branch resolution needs the flush machinery, which belongs with
   the hazard unit. Loads and stores need MEM. Half a branch is worse than none,
   so the unimplemented classes decode inert instead.
+- **The hazard slice was split: data hazards first, branches second**
+  (2026-10-07). The plan bundled forwarding, the load-use stall and branches.
+  Forwarding is independent of control flow and removes the NOP padding every
+  test needed; branches bring their own flush machinery. Two slices also mean
+  two trend rows, so each feature's cost is visible on its own.
+- **Golden model before RTL, and proven on both sides of the change**
+  (2026-10-07). The model and random tests were written before any hazard RTL.
+  Padded programs passed against the old core (the model is right); dense ones
+  failed at writeback #11 (the test can see hazards); after the hazard unit,
+  both passed. The first padded run failed for a third reason worth
+  remembering: the register file has no reset, so a random program reading a
+  register before writing it got Verilator's initial value in the core and 0
+  in the model. Random programs now load x1–x4 first, as real software would.
+- **Store data is forwarded** (2026-10-07). Not in the original plan. EX/MEM
+  was copying rs2 out of ID/EX, so `addi x1; sw x1` back to back would have
+  stored a stale x1. Found while designing the muxes, not in test, and covered
+  by `test_store_data_is_forwarded`.
 - **IMEM is driven from `pc_next`, not `pc`** (2026-10-07). Fixes a bug found
   during the MEM + WB slice: a BRAM latches its address at a clock edge and
   answers during the next cycle, so presenting `pc` made it return `mem[P]`
@@ -404,25 +468,36 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-### 1. Branches, jumps and the hazard unit
+### 1. Branches and jumps
 
 Branch resolution in EX with static not-taken prediction, IF/ID and ID/EX flush
-on taken, EX→EX and MEM→EX forwarding, and the load-use stall. CLAUDE.md §9
-calls load-use the most commonly botched case, so directed tests before random.
+on taken, JAL and JALR. Then all 40 RV32I instructions except FENCE and
+ECALL/EBREAK exist, and FENCE can decode as a NOP on an in-order core with no
+caches. CLAUDE.md §9's failure mode for this slice: **branch flush off by one
+stage** — a wrong-path instruction reaches WB. The golden model gains branches
+first, and the dense random test with them is the check.
 
 **How redirect meets BRAM fetch.** A taken branch resolved in EX replaces
 `pc_next`, which also feeds `imem_addr_o`, so the target is fetched on the very
 next edge. Two wrong-path words are already in flight by then: the one in IF/ID
 and the one at the BRAM output that IF/ID is about to capture. Flushing means
 IF/ID and ID/EX load NOPs on the redirect edge — a 2-cycle taken-branch
-penalty. The stall works the same way: re-present `pc` so the BRAM re-reads the
-word it is holding.
+penalty.
 
-The RVFI taps for `rs1_rdata`/`rs2_rdata` **move to the forwarding mux outputs**
-in this slice. Tapped from ID/EX they go stale in exactly the cycles forwarding
-fires, and riscv-formal reports it as what looks like a forwarding bug. This is
-written down in [rvfi-plan.md](rvfi-plan.md) precisely so it is not rediscovered
-the hard way.
+**Redirect and stall in the same cycle.** A load-use stall is raised by the
+instruction in ID; a branch resolving in EX is older. If both fire, the branch
+wins: the stalled instruction is on the wrong path and is about to be flushed
+anyway. Getting this priority wrong either loses the redirect or keeps a
+wrong-path instruction alive — a directed test for exactly this pair.
+
+**Writeback select.** JAL/JALR write `pc + 4`, a third writeback source, so the
+decoder's `mem_read` stops doubling as the writeback select — or `pc + 4` goes
+through the ALU, which already has the pc on its A side. Decide which.
+
+**Timing.** The branch comparison and target add go into EX, which already
+holds the critical path, and the redirect mux goes in front of
+`imem_addr_o`. Expect Fmax to fall again; registering the forwarding selects
+(see the trend notes) is the first lever if it falls below 100 MHz.
 
 ### 2. RVFI port + riscv-formal
 
@@ -462,9 +537,9 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-07 — IF timing fixed (committed, not pushed): IMEM is
-driven from `pc_next`, and both testbench memories are BRAM-timed, so the
-testbench is no longer more forgiving than the hardware. 78 tests; the new
-testbench was shown to fail on the old RTL. 139.8 MHz out-of-context, but the
-`pc + 4` → `imem_addr_o` path is untimed here until the board-level top
-exists. Next session: branches, jumps and the hazard unit (Next up §1).*
+*Last updated: 2026-10-07 — forwarding and the load-use stall landed
+(committed, not pushed): `riscv_hazard`, forwarding muxes in EX, store data
+forwarded, one-cycle stall with a bubble. Golden model `rv32i_model.py` and
+dense random programs against it. 95 tests. Fmax 139.8 → 110.4 MHz, 0.94 ns of
+slack at 100 MHz, with the memory-port paths still untimed. Next session:
+branches and jumps (Next up §1).*

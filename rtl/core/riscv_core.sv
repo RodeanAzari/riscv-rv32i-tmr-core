@@ -1,15 +1,13 @@
 // RV32I core. Phase A: all five stages -- IF, ID, EX, MEM, WB.
 //
-// Not yet here, and deliberately so: branches and jumps (they pair with the
-// flush machinery, which pairs with the hazard unit), and EX->EX / MEM->EX
-// forwarding with the load-use stall. Branches and jumps decode inert -- see
-// the decoder -- rather than half-working.
+// Not yet here, and deliberately so: branches and jumps, which pair with the
+// flush machinery. They decode inert -- see the decoder -- rather than
+// half-working.
 //
-// WITHOUT FORWARDING, a dependent instruction must trail its producer by at
-// least three instructions: the producer writes the register file in WB, and
-// the register file's write-first bypass hands the value to whatever is in ID
-// that same cycle. Anything closer reads a stale register. Software and tests
-// pad with NOPs until the hazard unit lands.
+// Data hazards are handled in full (CLAUDE.md 5.3): EX/MEM and MEM/WB forward
+// into EX, the register file's write-first bypass covers WB->ID, and a load
+// followed directly by a use of its result stalls one cycle. riscv_hazard
+// makes the decisions; the muxes and the stall live here.
 //
 // Instruction memory is external and BRAM-timed: it latches imem_addr_o at a
 // clock edge and returns that word during the following cycle. The core
@@ -86,15 +84,17 @@ module riscv_core #(
   //
   // During reset the address is forced to the reset vector, so the word
   // waiting at the BRAM output on the first cycle after reset is mem[0],
-  // matching pc. Branch redirection and the stall will enter here too: a
-  // taken branch replaces pc_next, and a stall re-presents pc so the BRAM
-  // reads the same word again -- one mux feeds both the pc and the BRAM.
+  // matching pc. A stall re-presents pc, so the BRAM reads the word it is
+  // already holding again while the pc stays put -- one mux feeds both the pc
+  // and the BRAM. Branch redirection will enter the same mux.
   //
-  // Cost: imem_addr_o now comes out of the pc + 4 adder rather than straight
-  // off a flop, so the adder sits on the path into the BRAM address pins.
+  // Cost: imem_addr_o comes out of the pc + 4 adder and the stall mux rather
+  // than straight off a flop, so both sit on the path into the BRAM address
+  // pins -- and the stall comes from comparing IF/ID against ID/EX.
   logic [XLEN-1:0] pc, pc_next;
+  logic            stall;   // load-use; driven by riscv_hazard in ID
 
-  assign pc_next     = pc + 32'd4;
+  assign pc_next     = stall ? pc : pc + 32'd4;
   assign imem_addr_o = rst_i ? RESET_VECTOR : pc_next;
 
   always_ff @(posedge clk_i) begin
@@ -102,12 +102,13 @@ module riscv_core #(
     else       pc <= pc_next;
   end
 
-  // IF/ID. Reset injects a NOP so ID never sees X on the first cycle.
+  // IF/ID. Reset injects a NOP so ID never sees X on the first cycle. A stall
+  // holds it: the instruction waiting on a load stays in ID for another cycle.
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
       if_id_pc_o    <= RESET_VECTOR;
       if_id_instr_o <= NOP;
-    end else begin
+    end else if (!stall) begin
       if_id_pc_o    <= pc;
       if_id_instr_o <= imem_rdata_i;
     end
@@ -163,12 +164,15 @@ module riscv_core #(
 
   // ID/EX. Resets to a NOP's decode: x0 sources and destination, zero data, so
   // EX never sees X and never appears to write a real register on cycle one.
+  // A stall loads the same NOP decode -- a bubble -- while IF/ID holds the
+  // waiting instruction.
   //
-  // RVFI note: id_ex_rs1_rdata_o / id_ex_rs2_rdata_o are the architectural
-  // operand values ONLY while no EX forwarding exists. When the EX slice adds
-  // forwarding muxes, the RVFI taps for these two move to the mux outputs --
-  // the value latched here becomes stale in exactly the cycles forwarding
-  // fires. docs/rvfi-plan.md explains why that failure is hard to recognise.
+  // RVFI note: id_ex_rs1_rdata_o / id_ex_rs2_rdata_o are what the register
+  // file returned, which is NOT what the instruction computed with whenever
+  // forwarding fires. The architectural operand values are ex_rs1 / ex_rs2,
+  // the forwarding mux outputs in EX; that is where rvfi_rs1_rdata /
+  // rvfi_rs2_rdata must be tapped -- docs/rvfi-plan.md.
+  //
   // Control travels with its instruction rather than being re-decoded in EX.
   // Re-decoding would need the instruction word in every stage and would have
   // to be kept in step with the decoder by hand.
@@ -178,8 +182,32 @@ module riscv_core #(
   logic [2:0] id_ex_mem_funct3;
   logic       id_ex_rd_we;
 
+  // Hazard detection. Forwarding selects are consumed in EX, the stall in IF,
+  // IF/ID and here.
+  logic fwd_rs1_ex_mem, fwd_rs1_mem_wb, fwd_rs2_ex_mem, fwd_rs2_mem_wb;
+
+  riscv_hazard #(
+      .ADDR_W (ADDR_W)
+  ) u_hazard (
+      .id_rs1_addr_i    (dec_rs1_addr),
+      .id_rs2_addr_i    (dec_rs2_addr),
+      .ex_rs1_addr_i    (id_ex_rs1_addr_o),
+      .ex_rs2_addr_i    (id_ex_rs2_addr_o),
+      .ex_rd_addr_i     (id_ex_rd_addr_o),
+      .ex_mem_read_i    (id_ex_mem_read),
+      .mem_rd_addr_i    (ex_mem_rd_addr_o),
+      .mem_rd_we_i      (ex_mem_rd_we_o),
+      .wb_rd_addr_i     (wb_rd_addr_o),
+      .wb_rd_we_i       (wb_rd_we_o),
+      .fwd_rs1_ex_mem_o (fwd_rs1_ex_mem),
+      .fwd_rs1_mem_wb_o (fwd_rs1_mem_wb),
+      .fwd_rs2_ex_mem_o (fwd_rs2_ex_mem),
+      .fwd_rs2_mem_wb_o (fwd_rs2_mem_wb),
+      .stall_o          (stall)
+  );
+
   always_ff @(posedge clk_i) begin
-    if (rst_i) begin
+    if (rst_i || stall) begin
       id_ex_pc_o        <= RESET_VECTOR;
       id_ex_instr_o     <= NOP;
       id_ex_rs1_addr_o  <= '0;
@@ -219,20 +247,37 @@ module riscv_core #(
   end
 
   // ---------------------------------------------------------------- EX -----
-  // Operand selection. The forwarding muxes belong here, between the ID/EX
-  // register and these selects: when they arrive, they replace id_ex_rs1_rdata_o
-  // and id_ex_rs2_rdata_o as the mux inputs, and the RVFI taps for
-  // rvfi_rs1_rdata / rvfi_rs2_rdata move to the forwarded values -- see
-  // docs/rvfi-plan.md.
+  // Forwarding muxes, then operand selection. ex_rs1 / ex_rs2 are the values
+  // this instruction architecturally read -- the RVFI rs1_rdata / rs2_rdata
+  // taps.
+  //
+  // The MEM/WB source is wb_rd_wdata, the writeback mux output, so a load's
+  // data forwards along with ALU results. That makes the longest path into EX
+  // BRAM output -> load alignment -> writeback mux -> forwarding mux -> ALU ->
+  // EX/MEM. The out-of-context run cannot time it: dmem_rdata_i is a port with
+  // no input delay.
+  logic [XLEN-1:0] ex_rs1, ex_rs2;
   logic [XLEN-1:0] alu_a, alu_b, alu_result;
+
+  always_comb begin
+    if      (fwd_rs1_ex_mem) ex_rs1 = ex_mem_alu_result_o;
+    else if (fwd_rs1_mem_wb) ex_rs1 = wb_rd_wdata;
+    else                     ex_rs1 = id_ex_rs1_rdata_o;
+  end
+
+  always_comb begin
+    if      (fwd_rs2_ex_mem) ex_rs2 = ex_mem_alu_result_o;
+    else if (fwd_rs2_mem_wb) ex_rs2 = wb_rd_wdata;
+    else                     ex_rs2 = id_ex_rs2_rdata_o;
+  end
 
   always_comb begin
     if      (id_ex_a_sel_zero) alu_a = '0;
     else if (id_ex_a_sel_pc)   alu_a = id_ex_pc_o;
-    else                       alu_a = id_ex_rs1_rdata_o;
+    else                       alu_a = ex_rs1;
   end
 
-  assign alu_b = id_ex_b_sel_imm ? id_ex_imm_o : id_ex_rs2_rdata_o;
+  assign alu_b = id_ex_b_sel_imm ? id_ex_imm_o : ex_rs2;
 
   riscv_alu #(
       .XLEN (XLEN)
@@ -245,8 +290,9 @@ module riscv_core #(
   );
 
   // EX/MEM. rd_we and mem_write reset low so nothing appears to retire, and
-  // nothing is stored, on cycle one. rs2_rdata is carried from here on because
-  // it is a store's data -- nothing needed it past EX until now.
+  // nothing is stored, on cycle one. rs2_rdata is a store's data, and it must
+  // be the FORWARDED value: `addi x1, ...` directly followed by `sw x1, ...`
+  // would otherwise store x1's stale contents.
   logic [XLEN-1:0] ex_mem_rs2_rdata;
   logic            ex_mem_mem_read, ex_mem_mem_write;
   logic [2:0]      ex_mem_mem_funct3;
@@ -266,7 +312,7 @@ module riscv_core #(
       ex_mem_pc_o         <= id_ex_pc_o;
       ex_mem_instr_o      <= id_ex_instr_o;
       ex_mem_alu_result_o <= alu_result;
-      ex_mem_rs2_rdata    <= id_ex_rs2_rdata_o;
+      ex_mem_rs2_rdata    <= ex_rs2;
       ex_mem_rd_addr_o    <= id_ex_rd_addr_o;
       ex_mem_mem_read     <= id_ex_mem_read;
       ex_mem_mem_write    <= id_ex_mem_write;

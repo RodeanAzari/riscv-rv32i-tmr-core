@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
 ---------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
-| Date         : Wed Oct  7 13:28:20 2026
+| Date         : Wed Oct  7 13:50:01 2026
 | Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
 | Command      : report_utilization -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/utilization_ooc.rpt
 | Design       : riscv_core
@@ -32,8 +32,8 @@ Table of Contents
 +----------------------------+------+-------+------------+-----------+-------+
 |          Site Type         | Used | Fixed | Prohibited | Available | Util% |
 +----------------------------+------+-------+------------+-----------+-------+
-| Slice LUTs                 |  684 |     0 |          0 |     63400 |  1.08 |
-|   LUT as Logic             |  640 |     0 |          0 |     63400 |  1.01 |
+| Slice LUTs                 |  762 |     0 |          0 |     63400 |  1.20 |
+|   LUT as Logic             |  718 |     0 |          0 |     63400 |  1.13 |
 |   LUT as Memory            |   44 |     0 |          0 |     19000 |  0.23 |
 |     LUT as Distributed RAM |   44 |     0 |            |           |       |
 |     LUT as Shift Register  |    0 |     0 |            |           |       |
@@ -42,7 +42,7 @@ Table of Contents
 |   Register as Latch        |    0 |     0 |          0 |    126800 |  0.00 |
 | F7 Muxes                   |    1 |     0 |          0 |     31700 | <0.01 |
 | F8 Muxes                   |    0 |     0 |          0 |     15850 |  0.00 |
-| Unique Control Sets        |    2 |       |          0 |     15850 |  0.01 |
+| Unique Control Sets        |    4 |       |          0 |     15850 |  0.03 |
 +----------------------------+------+-------+------------+-----------+-------+
 * Warning! LUT value is adjusted to account for LUT combining.
 ** Note: Available Control Sets calculated as Slice * 1, Review the Control Sets Report for more information regarding control sets.
@@ -73,13 +73,13 @@ Table of Contents
 +--------------------------------------------+------+-------+------------+-----------+-------+
 |                  Site Type                 | Used | Fixed | Prohibited | Available | Util% |
 +--------------------------------------------+------+-------+------------+-----------+-------+
-| Slice                                      |  252 |     0 |          0 |     15850 |  1.59 |
-|   SLICEL                                   |  150 |     0 |            |           |       |
-|   SLICEM                                   |  102 |     0 |            |           |       |
-| LUT as Logic                               |  640 |     0 |          0 |     63400 |  1.01 |
+| Slice                                      |  285 |     0 |          0 |     15850 |  1.80 |
+|   SLICEL                                   |  220 |     0 |            |           |       |
+|   SLICEM                                   |   65 |     0 |            |           |       |
+| LUT as Logic                               |  718 |     0 |          0 |     63400 |  1.13 |
 |   using O5 output only                     |    0 |       |            |           |       |
-|   using O6 output only                     |  568 |       |            |           |       |
-|   using O5 and O6                          |   72 |       |            |           |       |
+|   using O6 output only                     |  618 |       |            |           |       |
+|   using O5 and O6                          |  100 |       |            |           |       |
 | LUT as Memory                              |   44 |     0 |          0 |     19000 |  0.23 |
 |   LUT as Distributed RAM                   |   44 |     0 |            |           |       |
 |     using O5 output only                   |    0 |       |            |           |       |
@@ -90,10 +90,10 @@ Table of Contents
 |     using O6 output only                   |    0 |       |            |           |       |
 |     using O5 and O6                        |    0 |       |            |           |       |
 | Slice Registers                            |  489 |     0 |          0 |    126800 |  0.39 |
-|   Register driven from within the Slice    |  197 |       |            |           |       |
-|   Register driven from outside the Slice   |  292 |       |            |           |       |
-|     LUT in front of the register is unused |  211 |       |            |           |       |
-|     LUT in front of the register is used   |   81 |       |            |           |       |
+|   Register driven from within the Slice    |  175 |       |            |           |       |
+|   Register driven from outside the Slice   |  314 |       |            |           |       |
+|     LUT in front of the register is unused |  183 |       |            |           |       |
+|     LUT in front of the register is used   |  131 |       |            |           |       |
 +--------------------------------------------+------+-------+------------+-----------+-------+
 
 
@@ -183,17 +183,16 @@ Table of Contents
 | Ref Name | Used | Functional Category |
 +----------+------+---------------------+
 | FDRE     |  475 |        Flop & Latch |
-| LUT6     |  397 |                 LUT |
-| LUT5     |  125 |                 LUT |
-| LUT4     |   94 |                 LUT |
+| LUT6     |  390 |                 LUT |
+| LUT4     |  199 |                 LUT |
+| LUT5     |  112 |                 LUT |
+| LUT3     |   75 |                 LUT |
 | RAMD32   |   68 |  Distributed Memory |
-| LUT3     |   56 |                 LUT |
-| LUT2     |   39 |                 LUT |
+| LUT2     |   42 |                 LUT |
 | CARRY4   |   24 |          CarryLogic |
 | RAMS32   |   20 |  Distributed Memory |
 | FDSE     |   14 |        Flop & Latch |
 | MUXF7    |    1 |               MuxFx |
-| LUT1     |    1 |                 LUT |
 +----------+------+---------------------+
 
 
