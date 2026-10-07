@@ -11,9 +11,9 @@
 // that same cycle. Anything closer reads a stale register. Software and tests
 // pad with NOPs until the hazard unit lands.
 //
-// Instruction memory is external: the core drives imem_addr_o and captures
-// imem_rdata_i one cycle later, which is the timing a BRAM gives us on the
-// Arty A7. Branch redirection enters at pc_next when EX lands.
+// Instruction memory is external and BRAM-timed: it latches imem_addr_o at a
+// clock edge and returns that word during the following cycle. The core
+// therefore presents pc_next, not pc -- see the IF section for why.
 //
 // Data memory is external for the same reason. Its address comes straight off
 // the EX/MEM register, so the BRAM sees a flop rather than the ALU's carry
@@ -25,7 +25,9 @@ module riscv_core #(
     input  logic            clk_i,
     input  logic            rst_i,
 
-    // Instruction memory port (synchronous read, 1-cycle latency)
+    // Instruction memory port (synchronous read, 1-cycle latency). The address
+    // is the NEXT pc, combinational -- the BRAM's address register stands in
+    // for the pc register, and imem_rdata_i is the word at pc.
     output logic [XLEN-1:0] imem_addr_o,
     input  logic [XLEN-1:0] imem_rdata_i,
 
@@ -72,10 +74,28 @@ module riscv_core #(
   localparam logic [XLEN-1:0] NOP          = 32'h0000_0013;  // addi x0, x0, 0
 
   // ---------------------------------------------------------------- IF -----
+  // The BRAM and the pc register must latch the SAME address on the SAME edge.
+  // Then, throughout a cycle, pc holds address P and imem_rdata_i holds mem[P],
+  // and IF/ID captures a matched pair.
+  //
+  // Presenting pc instead (the original design) puts the BRAM one cycle behind:
+  // it latches P at the end of the cycle in which pc = P, so mem[P] arrives
+  // while pc = P + 4, and every instruction reached IF/ID tagged with the PC
+  // of the one after it. auipc at pc 8 wrote 12. It went unseen because the
+  // testbench answered within the cycle, which no BRAM can do.
+  //
+  // During reset the address is forced to the reset vector, so the word
+  // waiting at the BRAM output on the first cycle after reset is mem[0],
+  // matching pc. Branch redirection and the stall will enter here too: a
+  // taken branch replaces pc_next, and a stall re-presents pc so the BRAM
+  // reads the same word again -- one mux feeds both the pc and the BRAM.
+  //
+  // Cost: imem_addr_o now comes out of the pc + 4 adder rather than straight
+  // off a flop, so the adder sits on the path into the BRAM address pins.
   logic [XLEN-1:0] pc, pc_next;
 
   assign pc_next     = pc + 32'd4;
-  assign imem_addr_o = pc;
+  assign imem_addr_o = rst_i ? RESET_VECTOR : pc_next;
 
   always_ff @(posedge clk_i) begin
     if (rst_i) pc <= RESET_VECTOR;

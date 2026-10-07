@@ -4,11 +4,16 @@ There is no back door into the register file: registers are set by executing
 instructions (li() below), the way software sets them. Until the hazard unit
 lands there is no forwarding either, so every dependent instruction trails its
 producer by HAZARD_GAP NOPs -- see the header of rtl/core/riscv_core.sv.
+
+Both memories are BRAM-timed models: they latch an address at a clock edge and
+answer during the following cycle. The testbench must never be more forgiving
+than the hardware. An earlier version answered IMEM within the cycle, and that
+hid an IF bug that paired every instruction with the wrong PC.
 """
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge, FallingEdge
+from cocotb.triggers import RisingEdge, FallingEdge, Timer
 
 CLK_PERIOD_NS = 10
 NOP = 0x0000_0013
@@ -19,9 +24,10 @@ MASK32 = 0xFFFF_FFFF
 # instruction in ID that same cycle. Three NOPs is the minimum safe gap.
 HAZARD_GAP = 3
 
-# addi x1,x0,1 / addi x2,x0,2 / addi x3,x0,3
-PROGRAM = [0x0000_0013, 0x0010_0093, 0x0020_0113, 0x0030_0193]
-
+# feed() writes an instruction at the address the core is presenting. The BRAM
+# latches it at the next edge and IF/ID captures it at the edge after that.
+# Edges from the start of feed() to each pipeline register:
+IF_ID, ID_EX, EX_MEM, MEM_WB = 2, 3, 4, 5
 
 OPCODE_OP     = 0b0110011
 OPCODE_OP_IMM = 0b0010011
@@ -70,20 +76,100 @@ def li(rd, value):
     return [enc_u(hi, rd=rd)] + gap + [enc_i(lo, rs1=rd, rd=rd)] + gap
 
 
-async def reset(dut):
+# The instruction memory the IMEM model serves, byte address -> word, absent
+# reads as NOP. Module-level so feed() can write into it; reset() clears it, and
+# cocotb runs tests one at a time.
+_imem = {}
+
+
+async def bram_model(dut, prefix, mem, default):
+    """A synchronous-read RAM, as an Arty A7 BRAM behaves.
+
+    Samples its inputs 1 ns before each rising edge -- a flop's setup window --
+    then at the edge applies any write and drives the read data for the address
+    it latched. A value assigned after RisingEdge is not seen by the flops on
+    that same edge, so the data appears just after the clock: one cycle of
+    latency. Read-first: reading the word being written returns the old value.
+
+    Sampling just before the edge, not at the falling edge, matters: a test
+    that releases reset at the falling edge changes imem_addr_o in that same
+    instant, and a model reading it then could see either value.
+
+    mem maps word-aligned byte addresses to 32-bit words. For DMEM the write
+    port is dmem_we_o / dmem_wstrb_o / dmem_wdata_o; IMEM has none.
+    """
+    addr_sig = getattr(dut, f"{prefix}_addr_o")
+    rdata_sig = getattr(dut, f"{prefix}_rdata_i")
+    writable = prefix == "dmem"
+    # Started at a falling edge, so each iteration begins half a cycle before a
+    # rising edge. Waiting for FallingEdge first would sleep through the very
+    # next edge -- the reset edge that latches address 0 -- and lose mem[0].
+    while True:
+        await Timer(CLK_PERIOD_NS // 2 - 1, unit="ns")
+        addr = int(addr_sig.value) & ~0b11
+        if writable:
+            we = int(dut.dmem_we_o.value)
+            wstrb = int(dut.dmem_wstrb_o.value)
+            wdata = int(dut.dmem_wdata_o.value)
+        await RisingEdge(dut.clk_i)
+        old = mem.get(addr, default)
+        if writable and we:
+            keep = sum(0xFF << (8 * i) for i in range(4) if not (wstrb >> i) & 1)
+            mem[addr] = (old & keep) | (wdata & ~keep & MASK32)
+        rdata_sig.value = old
+        await FallingEdge(dut.clk_i)
+
+
+async def reset(dut, program=(), mem=None):
+    """Start the clock and both memories, and hold reset for two edges.
+
+    Leaves rst_i asserted, so a test can inspect reset state; release() ends it.
+    Two edges, not one, because the IMEM model needs one edge with the reset
+    vector on imem_addr_o before mem[0] is waiting at its output -- exactly as a
+    real BRAM does.
+
+    program is loaded from address 0. Returns the DMEM contents dict.
+    """
+    _imem.clear()
+    _imem.update({4 * i: w for i, w in enumerate(program)})
+    mem = {} if mem is None else mem
+
     dut.rst_i.value = 1
-    dut.imem_rdata_i.value = 0
+    dut.imem_rdata_i.value = NOP
     dut.dmem_rdata_i.value = 0
     cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start())
     await RisingEdge(dut.clk_i)
     await FallingEdge(dut.clk_i)
+    cocotb.start_soon(bram_model(dut, "imem", _imem, NOP))
+    cocotb.start_soon(bram_model(dut, "dmem", mem, 0))
+    await RisingEdge(dut.clk_i)
+    await FallingEdge(dut.clk_i)
+    return mem
+
+
+async def release(dut):
+    """Deassert reset and let the combinational outputs settle.
+
+    imem_addr_o depends on rst_i combinationally. A read in the same instant as
+    the write returns the old value, so wait 1 ns before anyone looks.
+    """
+    dut.rst_i.value = 0
+    await Timer(1, unit="ns")
 
 
 async def feed(dut, instr):
-    """Present one instruction to IF and advance a cycle."""
-    dut.imem_rdata_i.value = instr
+    """Place one instruction at the address the core is fetching, then advance
+    a cycle. It reaches IF/ID IF_ID edges after feed() starts."""
+    _imem[int(dut.imem_addr_o.value)] = instr
     await RisingEdge(dut.clk_i)
     await FallingEdge(dut.clk_i)
+
+
+async def feed_to(dut, instr, stage):
+    """Feed instr and walk it into the given pipeline register (IF_ID ... MEM_WB)."""
+    await feed(dut, instr)
+    for _ in range(stage - 1):
+        await feed(dut, NOP)
 
 
 async def set_reg(dut, rd, value):
@@ -94,42 +180,52 @@ async def set_reg(dut, rd, value):
 
 @cocotb.test()
 async def test_reset_state(dut):
-    """Out of reset the core fetches from the reset vector with a NOP in IF/ID."""
+    """In reset the core presents the reset vector, with a NOP in IF/ID."""
     await reset(dut)
-    assert dut.imem_addr_o.value == 0, f"pc={dut.imem_addr_o.value}"
-    assert dut.if_id_instr_o.value == NOP, f"if_id_instr_o={dut.if_id_instr_o.value}"
+    assert int(dut.imem_addr_o.value) == 0, f"fetch addr={dut.imem_addr_o.value}"
+    assert int(dut.if_id_instr_o.value) == NOP, f"if_id_instr_o={dut.if_id_instr_o.value}"
 
 
 @cocotb.test()
-async def test_pc_increments_by_four(dut):
-    """PC advances one word per cycle when nothing stalls it."""
+async def test_fetch_address_runs_one_word_ahead(dut):
+    """imem_addr_o is pc_next: one word ahead of the pc whose word is arriving,
+    advancing a word per cycle when nothing stalls it."""
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
     for expected in (4, 8, 12, 16):
+        assert int(dut.imem_addr_o.value) == expected, (
+            f"expected fetch addr {expected}, got {int(dut.imem_addr_o.value)}"
+        )
         await RisingEdge(dut.clk_i)
         await FallingEdge(dut.clk_i)
-        assert dut.imem_addr_o.value == expected, (
-            f"expected pc={expected}, got {dut.imem_addr_o.value}"
-        )
 
 
 @cocotb.test()
-async def test_if_id_captures_fetched_word(dut):
-    """Each fetched instruction lands in IF/ID the cycle after its address is driven."""
-    await reset(dut)
-    dut.rst_i.value = 0
+async def test_if_id_pairs_each_word_with_its_own_pc(dut):
+    """The regression for the IF timing bug: every cycle, the word in IF/ID is
+    the word stored at IF/ID's pc. Driving pc rather than pc_next into a BRAM
+    tags each word with the next word's pc, and this fails on every cycle.
 
-    for _ in range(len(PROGRAM)):
-        word = int(dut.imem_addr_o.value) >> 2
-        fetched = PROGRAM[word] if word < len(PROGRAM) else NOP
-        dut.imem_rdata_i.value = fetched
+    Every word in the program is distinct, so a one-word skew cannot pass by
+    coincidence; the pcs seen are checked so the test cannot pass vacuously.
+    """
+    program = [enc_i(i + 1, rd=i + 1) for i in range(6)]
+    await reset(dut, program)
+    await release(dut)
 
+    seen = set()
+    for _ in range(len(program) + 2):
         await RisingEdge(dut.clk_i)
         await FallingEdge(dut.clk_i)
-
-        assert int(dut.if_id_instr_o.value) == fetched, (
-            f"word {word}: expected {fetched:#010x}, got {int(dut.if_id_instr_o.value):#010x}"
+        pc = int(dut.if_id_pc_o.value)
+        word = int(dut.if_id_instr_o.value)
+        expected = program[pc >> 2] if pc >> 2 < len(program) else NOP
+        assert word == expected, (
+            f"IF/ID pc={pc:#x} holds {word:#010x}, but that address holds "
+            f"{expected:#010x}"
         )
+        seen.add(pc)
+    assert {0, 4, 8, 12, 16, 20} <= seen, f"pcs seen: {sorted(seen)}"
 
 
 # --- ID stage --------------------------------------------------------------
@@ -153,10 +249,9 @@ async def test_id_ex_resets_to_a_nop_decode(dut):
 async def test_id_ex_captures_decode(dut):
     """Register addresses, immediate and destination reach ID/EX together."""
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
 
-    await feed(dut, ADDI_X5_X3_M1)   # lands in IF/ID
-    await feed(dut, NOP)             # IF/ID -> ID/EX
+    await feed_to(dut, ADDI_X5_X3_M1, ID_EX)
 
     assert int(dut.id_ex_instr_o.value) == ADDI_X5_X3_M1
     assert int(dut.id_ex_rs1_addr_o.value) == 3
@@ -168,10 +263,9 @@ async def test_id_ex_captures_decode(dut):
 async def test_id_ex_carries_rvfi_shadow_addresses(dut):
     """rs1/rs2 addresses ride ID/EX as RVFI shadow fields -- docs/rvfi-plan.md."""
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
 
-    await feed(dut, ADD_X7_X3_X4)
-    await feed(dut, NOP)
+    await feed_to(dut, ADD_X7_X3_X4, ID_EX)
 
     assert int(dut.id_ex_rs1_addr_o.value) == 3
     assert int(dut.id_ex_rs2_addr_o.value) == 4
@@ -182,13 +276,12 @@ async def test_id_ex_carries_rvfi_shadow_addresses(dut):
 async def test_regfile_read_reaches_id_ex(dut):
     """Values written through the WB port show up as ID/EX operands."""
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
 
     await set_reg(dut, 3, 0x1111_1111)
     await set_reg(dut, 4, 0x2222_2222)
 
-    await feed(dut, ADD_X7_X3_X4)
-    await feed(dut, NOP)
+    await feed_to(dut, ADD_X7_X3_X4, ID_EX)
 
     assert int(dut.id_ex_rs1_rdata_o.value) == 0x1111_1111
     assert int(dut.id_ex_rs2_rdata_o.value) == 0x2222_2222
@@ -198,35 +291,29 @@ async def test_regfile_read_reaches_id_ex(dut):
 async def test_x0_reads_zero_through_the_core(dut):
     """x0 invariance holds at the core level, not just in the unit test."""
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
 
     # addi x0, x0, -1 really does reach WB as a write to x0; the register
     # file has to throw it away.
-    await feed(dut, enc_i(-1, rs1=0, rd=0))
-    for _ in range(HAZARD_GAP):
-        await feed(dut, NOP)
+    await feed_to(dut, enc_i(-1, rs1=0, rd=0), MEM_WB)
     assert int(dut.wb_rd_we_o.value) == 1 and int(dut.wb_rd_addr_o.value) == 0, (
         "the write to x0 never reached WB, so this test proves nothing"
     )
 
     # add x7, x0, x0 -- both operands read x0
-    await feed(dut, 0x0000_03B3)
-    await feed(dut, NOP)
+    await feed_to(dut, 0x0000_03B3, ID_EX)
 
     assert int(dut.id_ex_rs1_rdata_o.value) == 0
     assert int(dut.id_ex_rs2_rdata_o.value) == 0
 
 
 # --- EX stage --------------------------------------------------------------
-# An instruction fed at cycle N reaches IF/ID at N+1, ID/EX at N+2, EX/MEM at
-# N+3. drain() walks it the whole way so a test can assert on EX/MEM.
+# drain() walks an instruction into EX/MEM so a test can assert on it.
 
 async def drain(dut, instr):
     """Feed one instruction and walk it to EX/MEM. Returns the PC it saw."""
     pc = int(dut.imem_addr_o.value)
-    await feed(dut, instr)
-    await feed(dut, NOP)
-    await feed(dut, NOP)
+    await feed_to(dut, instr, EX_MEM)
     return pc
 
 
@@ -242,7 +329,7 @@ async def test_ex_mem_resets_inert(dut):
 async def test_addi_computes_in_ex(dut):
     """addi x5, x0, 42 -> 42 reaches EX/MEM addressed to x5."""
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
 
     await drain(dut, enc_i(42, rs1=0, rd=5))
     assert int(dut.ex_mem_alu_result_o.value) == 42
@@ -258,7 +345,7 @@ async def test_addi_negative_immediate_adds(dut):
     this computes 100 - (-1) = 101 instead of 99.
     """
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
     await set_reg(dut, 3, 100)
 
     await drain(dut, enc_i(-1, rs1=3, rd=6))
@@ -268,7 +355,7 @@ async def test_addi_negative_immediate_adds(dut):
 @cocotb.test()
 async def test_register_register_add_and_sub(dut):
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
     await set_reg(dut, 3, 70)
     await set_reg(dut, 4, 12)
 
@@ -283,7 +370,7 @@ async def test_register_register_add_and_sub(dut):
 async def test_lui_places_upper_immediate(dut):
     """lui x8, 0x12345 -> 0x12345000, with rs1 ignored."""
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
     await set_reg(dut, 1, 0xFFFF_FFFF)   # must not leak into the result
 
     await drain(dut, enc_u(0x1234_5000, rd=8))
@@ -295,7 +382,7 @@ async def test_lui_places_upper_immediate(dut):
 async def test_auipc_adds_its_own_pc(dut):
     """auipc uses the PC of the auipc itself, not the fetch PC three stages on."""
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
 
     pc = await drain(dut, enc_u(0x0001_0000, rd=9, opcode=OPCODE_AUIPC))
     assert int(dut.ex_mem_alu_result_o.value) == (pc + 0x0001_0000) & 0xFFFF_FFFF, (
@@ -307,7 +394,7 @@ async def test_auipc_adds_its_own_pc(dut):
 async def test_slt_signed_through_the_core(dut):
     """slt x10, x3, x4 with x3 = -1, x4 = 1 -> 1. Unsigned would give 0."""
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
     await set_reg(dut, 3, 0xFFFF_FFFF)
     await set_reg(dut, 4, 1)
 
@@ -322,7 +409,7 @@ async def test_slt_signed_through_the_core(dut):
 async def test_unimplemented_instruction_is_inert(dut):
     """A branch decodes to no register write until branches are implemented."""
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
 
     await drain(dut, 0x0000_0063 | (1 << 15) | (2 << 20))   # beq x1, x2, 0
     assert int(dut.ex_mem_rd_we_o.value) == 0, "unimplemented branch writes rd"
@@ -337,15 +424,13 @@ async def test_control_travels_with_its_instruction(dut):
     wrong rd_we reaching EX/MEM.
     """
     await reset(dut)
-    dut.rst_i.value = 0
+    await release(dut)
     await set_reg(dut, 3, 5)
     await set_reg(dut, 4, 6)
 
     branch = 0x0000_0063 | (1 << 15) | (2 << 20)
     await feed(dut, branch)
-    await feed(dut, enc_r(0b000, rs1=3, rs2=4, rd=7))
-    await feed(dut, NOP)
-    await feed(dut, NOP)
+    await feed_to(dut, enc_r(0b000, rs1=3, rs2=4, rd=7), EX_MEM)
     # branch is now past EX/MEM; the add is in EX/MEM
     assert int(dut.ex_mem_rd_we_o.value) == 1
     assert int(dut.ex_mem_rd_addr_o.value) == 7
@@ -353,34 +438,7 @@ async def test_control_travels_with_its_instruction(dut):
 
 
 # --- MEM and WB -------------------------------------------------------------
-# Whole programs from here on, against two memory models: IMEM answers within
-# the cycle, exactly as feed() does, and DMEM behaves like a BRAM.
-
-async def dmem_model(dut, mem):
-    """Byte-strobed, synchronous-read RAM: the timing of an Arty A7 BRAM.
-
-    Samples the port mid-cycle, when it is stable, then acts at the rising
-    edge: apply the write, and drive the read data for the address the core
-    presented. A value assigned after RisingEdge is not seen by the flops on
-    that same edge, so the data appears just after the clock -- one cycle of
-    latency, as a real BRAM output register gives. Read-first: a read of the
-    word being written returns the old contents.
-
-    mem maps word-aligned byte addresses to 32-bit words; absent reads as 0.
-    """
-    while True:
-        await FallingEdge(dut.clk_i)
-        addr = int(dut.dmem_addr_o.value)
-        we = int(dut.dmem_we_o.value)
-        wstrb = int(dut.dmem_wstrb_o.value)
-        wdata = int(dut.dmem_wdata_o.value)
-        await RisingEdge(dut.clk_i)
-        old = mem.get(addr, 0)
-        if we:
-            keep = sum(0xFF << (8 * i) for i in range(4) if not (wstrb >> i) & 1)
-            mem[addr] = (old & keep) | (wdata & ~keep & MASK32)
-        dut.dmem_rdata_i.value = old
-
+# Whole programs from here on, loaded into IMEM from address 0.
 
 async def run(dut, program, mem=None):
     """Reset, run program from address 0, drain it to WB.
@@ -389,15 +447,11 @@ async def run(dut, program, mem=None):
     order, as (rd, value) -- x0 included, since a write to x0 still happens --
     and the data memory as the program left it.
     """
-    mem = {} if mem is None else mem
-    await reset(dut)
-    dut.rst_i.value = 0
-    cocotb.start_soon(dmem_model(dut, mem))
+    mem = await reset(dut, program, mem)
+    await release(dut)
 
     writebacks = []
-    for _ in range(len(program) + 5):
-        word = int(dut.imem_addr_o.value) >> 2
-        dut.imem_rdata_i.value = program[word] if word < len(program) else NOP
+    for _ in range(len(program) + MEM_WB + 1):
         await RisingEdge(dut.clk_i)
         await FallingEdge(dut.clk_i)
         if int(dut.wb_rd_we_o.value):
@@ -534,3 +588,15 @@ async def test_misaligned_access_uses_the_containing_word(dut):
     regs = final_regs(writebacks)
     assert regs.get(1) == 0x8765_4321, f"lw @66: {regs.get(1)}"
     assert regs.get(2) == 0xFFFF_8765, f"lh @67: {regs.get(2)}"
+
+
+@cocotb.test()
+async def test_auipc_at_a_known_address(dut):
+    """The IF bug as first observed: auipc x5, 0 at pc 8 must write 8, not 12.
+
+    test_auipc_adds_its_own_pc uses whatever pc feed() lands on; this one pins
+    an absolute address, so the expected value does not come from the DUT.
+    """
+    program = [NOP, NOP, enc_u(0, rd=5, opcode=OPCODE_AUIPC)]
+    writebacks, _ = await run(dut, program)
+    assert final_regs(writebacks).get(5) == 8, f"writebacks {writebacks}"

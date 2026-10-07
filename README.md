@@ -12,7 +12,7 @@ Current state of the work: [docs/PROGRESS.md](docs/PROGRESS.md).
 
 **Stage 1, Phase A — working core. In progress.** All five stages
 implemented: the core runs straight-line programs end to end, including all
-eight loads and stores through a BRAM-timed data memory port. Branches and
+eight loads and stores. Both memory ports are BRAM-timed. Branches and
 jumps, the hazard unit and forwarding still to come; branches and jumps decode
 inert rather than half-working, and dependent instructions need NOP padding
 until forwarding exists.
@@ -24,7 +24,7 @@ until forwarding exists.
 
 ```
 make lint    # Verilator 5.050 lint, zero warnings
-make sim     # cocotb 2.1.0 regression, 77/77 passing
+make sim     # cocotb 2.1.0 regression, 78/78 passing
 make synth   # out-of-context synth + P&R, reports to docs/reports/
 ```
 
@@ -43,9 +43,9 @@ share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
 
 | Metric | Value |
 |---|---|
-| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 136.9 MHz *(no branches or forwarding yet)* |
+| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 139.8 MHz *(no branches or forwarding yet)* |
 | Fmax, board-level | — |
-| LUT / FF / BRAM / DSP | 682 / 484 / 0 / 0 *(no branches or forwarding yet)* |
+| LUT / FF / BRAM / DSP | 712 / 489 / 0 / 0 *(no branches or forwarding yet)* |
 | CPI / IPC (Dhrystone, CoreMark) | — |
 | Formal: properties proven, proof depth | — |
 | Bugs formal caught that simulation missed | — |

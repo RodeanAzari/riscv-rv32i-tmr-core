@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — working core (all five stages built; IF timing fix, then branches + hazard unit)
+**Phase:** A — working core (all five stages built; branches + hazard unit next)
 
 ---
 
@@ -23,12 +23,11 @@ stores. Branches and jumps decode **inert** (`rd_we = 0`, no memory access)
 rather than half-working. **There is no forwarding yet**: a dependent
 instruction must trail its producer by three instructions.
 
-**Known bug, not yet fixed: IF is off by one word under real BRAM timing.**
-See Next up §1. Every test so far answers `imem_rdata_i` within the cycle,
-which hides it.
+Both memories are now BRAM-timed in the testbench as well as in the design.
+The IF timing bug found during MEM + WB is fixed — see Decisions.
 
-Everything is committed but **not yet pushed** — the MEM + WB commit is local
-only (`git push` to sync, and CI runs on push). `make lint`, `make sim` and
+Everything is committed but **not yet pushed** — the MEM + WB and IF-fix
+commits are local only (`git push` to sync, and CI runs on push). `make lint`, `make sim` and
 `make synth` all pass from a clean checkout.
 
 ### Working and verified
@@ -36,7 +35,7 @@ only (`git push` to sync, and CI runs on push). `make lint`, `make sim` and
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 77/77 passing across 5 toplevels (core, alu, regfile, decoder, mem_align) |
+| `make sim` | 78/78 passing across 5 toplevels (core, alu, regfile, decoder, mem_align) |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | CI on push | green (lint + sim) |
 
@@ -50,7 +49,9 @@ MEM/WB) and WB (load alignment, writeback mux).
 - **Synchronous, active-high `rst_i`** per CLAUDE.md §4 — flops map to FDRE/FDSE
   on their dedicated SR pin, with no inverter and no async recovery/removal arc
 - IMEM is an **external port**, synchronous read, 1-cycle latency — matches
-  BRAM timing on the Arty A7 so Phase D bring-up needs no rewrite
+  BRAM timing on the Arty A7 so Phase D bring-up needs no rewrite. The core
+  presents **`pc_next`** (the reset vector during reset), so the BRAM and the
+  pc register latch the same address on the same edge
 - IF/ID resets to a NOP (`0x0000_0013`) so ID never sees X on cycle one
   (heads off the X-propagation failure mode in CLAUDE.md §9)
 - `if_id_pc_o` / `if_id_instr_o` / `id_ex_*` exposed as outputs for ILA probing
@@ -85,10 +86,15 @@ would have forced. x0 invariance and WB→ID write-first forwarding are both
 implemented here rather than in the surrounding pipeline, because both are
 formal properties in CLAUDE.md §5.5.
 
-`tb/cocotb/` — 77 tests across five toplevels: `test_core` (24), `test_alu`
+`tb/cocotb/` — 78 tests across five toplevels: `test_core` (25), `test_alu`
 (16), `test_regfile` (8), `test_decoder` (25), `test_mem_align` (4, each an
-exhaustive sweep). `test_core` runs whole programs against a BRAM-timed DMEM
-model, and its `li()` helper pads for the missing forwarding. Submodules get their own toplevel rather than being
+exhaustive sweep). In `test_core` **both** memories are BRAM-timed models that
+sample 1 ns before each rising edge, like a flop's setup window. `feed()`
+writes an instruction at the address being fetched, and `feed_to()` walks it to
+a named pipeline register, so no test hand-counts the fetch latency. `li()`
+pads for the missing forwarding.
+
+Submodules get their own toplevel rather than being
 poked through the core's hierarchy, so a unit test survives refactoring and can
 drive ports the core does not expose.
 
@@ -131,6 +137,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-09-17 | ID: decode + regfile + ID/EX | 108 | 249 | 8 | +6.029 | 251.8 | −123.9 |
 | 2026-09-17 | EX: ALU + operand sel + EX/MEM | 592 | 352 | 24 | +3.095 | 144.8 | −107.0 |
 | 2026-10-07 | MEM + WB: DMEM port, lane align, MEM/WB, writeback | 682 | 484 | 24 | +2.696 | 136.9 | −7.9 |
+| 2026-10-07 | IF fix: IMEM driven from `pc_next` | 712 | 489 | 24 | +2.846 | 139.8 | +2.9 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -164,6 +171,20 @@ same bit — `mem_funct3` equals `instr[14:12]` in three stages, and
 `mem_wb_rd_addr` equals `instr[11:7]`. 352 + 148 − 16 = 484. Checked in the
 routed netlist, not assumed: `mem_wb_instr_o` keeps 29 flops (its funct3 bits
 merged into `mem_wb_mem_funct3`), and `mem_wb_rd_addr` keeps none.
+
+The IF-fix row: **+30 LUTs** is the reset gating on `imem_addr_o`, one LUT for
+each of the 30 bits that are not constant zero. **+5 FFs** is `pc[1]`, which no
+longer constant-folds in any of the five PC registers (seen in the routed
+netlist: each holds bits 31:1). It is always zero, and before this change
+Vivado knew it; the cause is not established. The +2.9 MHz is placement
+variation, not an improvement.
+
+**The fix moved logic onto a path this table cannot see.** `imem_addr_o` now
+comes out of the `pc + 4` adder rather than straight off a flop, and the
+out-of-context constraints set no output delays, so the path from the pc
+register through the adder to the BRAM address pins is **untimed** here. It
+gets timed when the board-level top puts a real BRAM on the other end — see
+Next up.
 
 ---
 
@@ -329,6 +350,24 @@ the honest answer rather than pretending it fits on a hosted one.
   forward from. Branch resolution needs the flush machinery, which belongs with
   the hazard unit. Loads and stores need MEM. Half a branch is worse than none,
   so the unimplemented classes decode inert instead.
+- **IMEM is driven from `pc_next`, not `pc`** (2026-10-07). Fixes a bug found
+  during the MEM + WB slice: a BRAM latches its address at a clock edge and
+  answers during the next cycle, so presenting `pc` made it return `mem[P]`
+  while the pc already held `P + 4`. Every instruction reached IF/ID tagged
+  with the next instruction's PC — `auipc x5, 0` at pc 8 wrote 12. It went
+  unseen because the testbench answered IMEM within the cycle, which no BRAM
+  can do. Now the BRAM and the pc register latch the same address on the same
+  edge. The alternative, keeping a registered address and delaying the pc by a
+  cycle to match, gives the address path better timing but adds one more
+  wrong-path fetch to discard on every taken branch. Branch redirect and the
+  stall both enter at `pc_next`, so one mux feeds both the pc and the BRAM.
+  Proven both ways: the new testbench fails 4 tests on the old RTL (including
+  the exact `auipc` symptom) and passes on the new.
+- **Testbench memories sample just before the clock edge, not at the falling
+  edge** (2026-10-07). `imem_addr_o` depends on `rst_i` combinationally, so a
+  test releasing reset at the falling edge changes it in the same instant a
+  falling-edge sampler reads it. Sampling 1 ns before the rising edge removes
+  the race, and it is also how a real flop behaves (setup window).
 - **Misaligned loads/stores are assumed not to happen** (decided 2026-10-07).
   RV32I demands support or a trap; traps are out of scope (§5.1) and hardware
   support means a MEM-stage FSM and a stall before any hazard unit exists.
@@ -365,31 +404,19 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-### 1. Fix IF timing — found 2026-10-07, before anything uses the PC
-
-**IF pairs each instruction with the next instruction's PC when IMEM has real
-BRAM timing.** `imem_addr_o = pc`, and IF/ID captures `pc` and `imem_rdata_i`
-on the same edge. A BRAM latches `pc` at the end of the cycle and returns its
-data the cycle *after*, by which time `pc` has moved on by 4. Shown, not
-inferred: with a BRAM-timed IMEM model, `auipc x5, 0` at pc 8 wrote **12**. It
-has gone unnoticed because every test answers `imem_rdata_i` within the cycle,
-which no BRAM can do — while DMEM, built in this slice, is correct by
-construction (its address comes off EX/MEM and its data lands with the
-instruction in MEM/WB).
-
-Today only `auipc` reads the PC. Branches and JAL will, so this goes first. The
-usual fix: drive the BRAM from `pc_next` (reset vector during reset), so the
-BRAM's own output register *is* the instruction half of IF/ID. That puts the
-stall into the address mux — a stalled fetch must re-present the same address
-— so design it with the hazard unit in mind. Then move every core test onto a
-BRAM-timed IMEM model, so the testbench can never again be more forgiving than
-the hardware.
-
-### 2. Branches, jumps and the hazard unit
+### 1. Branches, jumps and the hazard unit
 
 Branch resolution in EX with static not-taken prediction, IF/ID and ID/EX flush
 on taken, EX→EX and MEM→EX forwarding, and the load-use stall. CLAUDE.md §9
 calls load-use the most commonly botched case, so directed tests before random.
+
+**How redirect meets BRAM fetch.** A taken branch resolved in EX replaces
+`pc_next`, which also feeds `imem_addr_o`, so the target is fetched on the very
+next edge. Two wrong-path words are already in flight by then: the one in IF/ID
+and the one at the BRAM output that IF/ID is about to capture. Flushing means
+IF/ID and ID/EX load NOPs on the redirect edge — a 2-cycle taken-branch
+penalty. The stall works the same way: re-present `pc` so the BRAM re-reads the
+word it is holding.
 
 The RVFI taps for `rs1_rdata`/`rs2_rdata` **move to the forwarding mux outputs**
 in this slice. Tapped from ID/EX they go stale in exactly the cycles forwarding
@@ -397,19 +424,22 @@ fires, and riscv-formal reports it as what looks like a forwarding bug. This is
 written down in [rvfi-plan.md](rvfi-plan.md) precisely so it is not rediscovered
 the hard way.
 
-### 3. RVFI port + riscv-formal
+### 2. RVFI port + riscv-formal
 
 Once WB retires instructions there is something non-vacuous to prove. Needs
 yosys and SymbiYosys installed, which is also the first thing `make formal`
 stops complaining about. Check reachability on every property — a vacuous pass
 proves nothing (§5.5, §9).
 
-### 4. Board-level top
+### 3. Board-level top
 
 Deferred until the core executes instructions: `constr/arty_a7.xdc` pin
 constraints, a top with BRAM instruction memory and clocking, then `make prog`
 (still blocked on WSL2 USB passthrough, §6 of vivado-setup.md). Only then does
-Fmax become a board number, and it gets its own table.
+Fmax become a board number, and it gets its own table. It is also the first run
+that times `pc + 4` → `imem_addr_o` → BRAM address, which the out-of-context
+flow leaves unconstrained; expect it, plus the branch-target mux added in §1,
+to be a candidate critical path.
 
 ---
 
@@ -432,10 +462,9 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-07 — MEM + WB slice landed (committed, not pushed): DMEM
-port, `riscv_mem_align`, MEM/WB and the writeback mux; the temporary
-`wb_rd_*_i` port is gone. Misaligned accesses decided: assumed aligned, low
-address bits below the access size ignored. 77 tests across five toplevels.
-Fmax 144.8 → 136.9 MHz with the critical path unchanged (still the EX carry
-chain). Found and reproduced an IF timing bug under BRAM-timed IMEM — next
-session starts there, Next up §1, before branches.*
+*Last updated: 2026-10-07 — IF timing fixed (committed, not pushed): IMEM is
+driven from `pc_next`, and both testbench memories are BRAM-timed, so the
+testbench is no longer more forgiving than the hardware. 78 tests; the new
+testbench was shown to fail on the old RTL. 139.8 MHz out-of-context, but the
+`pc + 4` → `imem_addr_o` path is untimed here until the board-level top
+exists. Next session: branches, jumps and the hazard unit (Next up §1).*

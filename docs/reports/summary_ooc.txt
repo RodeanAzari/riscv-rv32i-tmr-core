@@ -2,16 +2,16 @@
 === riscv_core, out-of-context, post-route ===
 part            xc7a100tcsg324-1
 constraint      10.000 ns (100.0 MHz)
-WNS             2.696 ns
-achieved period 7.304 ns
-Fmax            136.9 MHz
+WNS             2.846 ns
+achieved period 7.154 ns
+Fmax            139.8 MHz
 
 Caveat: out-of-context, so HD.CLK_SRC is unset and Vivado cannot
 estimate clock delay or skew. Read Fmax as the core logic limit,
 not a board-level number -- that arrives with the Arty A7 top.
 
-LUT        682 /    63400  ( 1.08%)
-FF         484 /   126800  ( 0.38%)
+LUT        712 /    63400  ( 1.12%)
+FF         489 /   126800  ( 0.39%)
 BRAM         0 /      135  ( 0.00%)
 DSP          0 /      240  ( 0.00%)
 CARRY       24   (no device total)
