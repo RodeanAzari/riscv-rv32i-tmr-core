@@ -54,7 +54,8 @@ TESTS ?= riscv_core:test_core \
          riscv_regfile:test_regfile \
          riscv_decoder:test_decoder \
          riscv_mem_align:test_mem_align \
-         riscv_hazard:test_hazard
+         riscv_hazard:test_hazard \
+         riscv_branch:test_branch
 
 ifdef TEST_ONE
   TOPLEVEL              := $(word 1,$(subst :, ,$(TEST_ONE)))

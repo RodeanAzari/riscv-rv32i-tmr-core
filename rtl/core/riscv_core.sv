@@ -1,8 +1,13 @@
 // RV32I core. Phase A: all five stages -- IF, ID, EX, MEM, WB.
 //
-// Not yet here, and deliberately so: branches and jumps, which pair with the
-// flush machinery. They decode inert -- see the decoder -- rather than
-// half-working.
+// Not yet here: FENCE, ECALL and EBREAK. They decode inert -- see the decoder
+// -- rather than half-working.
+//
+// Branches and jumps resolve in EX (CLAUDE.md 5.2) with static not-taken
+// prediction: fetch carries on at pc + 4, and a taken branch or any jump
+// redirects the pc and flushes the two younger instructions already fetched,
+// in IF/ID and at the instruction memory's output. Taken costs two cycles;
+// not taken costs none.
 //
 // Data hazards are handled in full (CLAUDE.md 5.3): EX/MEM and MEM/WB forward
 // into EX, the register file's write-first bypass covers WB->ID, and a load
@@ -85,16 +90,30 @@ module riscv_core #(
   // During reset the address is forced to the reset vector, so the word
   // waiting at the BRAM output on the first cycle after reset is mem[0],
   // matching pc. A stall re-presents pc, so the BRAM reads the word it is
-  // already holding again while the pc stays put -- one mux feeds both the pc
-  // and the BRAM. Branch redirection will enter the same mux.
+  // already holding again while the pc stays put. A redirect presents the
+  // target, so the BRAM fetches it on the same edge the pc takes it -- the
+  // first useful instruction after a taken branch is waiting one cycle later.
+  // One mux feeds both the pc and the BRAM.
   //
-  // Cost: imem_addr_o comes out of the pc + 4 adder and the stall mux rather
-  // than straight off a flop, so both sit on the path into the BRAM address
-  // pins -- and the stall comes from comparing IF/ID against ID/EX.
+  // Redirect outranks stall in the mux, although the two cannot both fire:
+  // the stall needs a load in EX, the redirect a branch or jump in EX, and EX
+  // holds one instruction. (A Phase B property.) If they could, the redirect
+  // would have to win -- the stalled instruction is on the wrong path.
+  //
+  // Cost: imem_addr_o comes out of this mux rather than straight off a flop,
+  // so the pc + 4 adder, the stall comparator and now the branch comparator
+  // and target adder in EX all sit on the path into the BRAM address pins.
   logic [XLEN-1:0] pc, pc_next;
-  logic            stall;   // load-use; driven by riscv_hazard in ID
+  logic            stall;      // load-use; driven by riscv_hazard in ID
+  logic            redirect;   // taken branch or jump; driven in EX
+  logic [XLEN-1:0] redirect_target;
 
-  assign pc_next     = stall ? pc : pc + 32'd4;
+  always_comb begin
+    if      (redirect) pc_next = redirect_target;
+    else if (stall)    pc_next = pc;
+    else               pc_next = pc + 32'd4;
+  end
+
   assign imem_addr_o = rst_i ? RESET_VECTOR : pc_next;
 
   always_ff @(posedge clk_i) begin
@@ -104,8 +123,10 @@ module riscv_core #(
 
   // IF/ID. Reset injects a NOP so ID never sees X on the first cycle. A stall
   // holds it: the instruction waiting on a load stays in ID for another cycle.
+  // A redirect flushes it: the word at the BRAM output is the one after the
+  // branch, on the wrong path.
   always_ff @(posedge clk_i) begin
-    if (rst_i) begin
+    if (rst_i || redirect) begin
       if_id_pc_o    <= RESET_VECTOR;
       if_id_instr_o <= NOP;
     end else if (!stall) begin
@@ -119,6 +140,7 @@ module riscv_core #(
   logic [XLEN-1:0]   dec_imm;
   logic [2:0]        dec_funct3;
   logic              dec_alu_alt, dec_a_sel_pc, dec_a_sel_zero, dec_b_sel_imm;
+  logic              dec_branch, dec_jump, dec_jalr;
   logic              dec_mem_read, dec_mem_write;
   logic [2:0]        dec_mem_funct3;
   logic              dec_rd_we;
@@ -137,6 +159,9 @@ module riscv_core #(
       .alu_a_sel_pc_o   (dec_a_sel_pc),
       .alu_a_sel_zero_o (dec_a_sel_zero),
       .alu_b_sel_imm_o  (dec_b_sel_imm),
+      .branch_o         (dec_branch),
+      .jump_o           (dec_jump),
+      .jalr_o           (dec_jalr),
       .mem_read_o       (dec_mem_read),
       .mem_write_o      (dec_mem_write),
       .mem_funct3_o     (dec_mem_funct3),
@@ -165,7 +190,8 @@ module riscv_core #(
   // ID/EX. Resets to a NOP's decode: x0 sources and destination, zero data, so
   // EX never sees X and never appears to write a real register on cycle one.
   // A stall loads the same NOP decode -- a bubble -- while IF/ID holds the
-  // waiting instruction.
+  // waiting instruction. A redirect loads it too: the instruction in ID is
+  // the one directly behind the branch, on the wrong path.
   //
   // RVFI note: id_ex_rs1_rdata_o / id_ex_rs2_rdata_o are what the register
   // file returned, which is NOT what the instruction computed with whenever
@@ -178,6 +204,7 @@ module riscv_core #(
   // to be kept in step with the decoder by hand.
   logic [2:0] id_ex_funct3;
   logic       id_ex_alu_alt, id_ex_a_sel_pc, id_ex_a_sel_zero, id_ex_b_sel_imm;
+  logic       id_ex_branch, id_ex_jump, id_ex_jalr;
   logic       id_ex_mem_read, id_ex_mem_write;
   logic [2:0] id_ex_mem_funct3;
   logic       id_ex_rd_we;
@@ -207,7 +234,7 @@ module riscv_core #(
   );
 
   always_ff @(posedge clk_i) begin
-    if (rst_i || stall) begin
+    if (rst_i || stall || redirect) begin
       id_ex_pc_o        <= RESET_VECTOR;
       id_ex_instr_o     <= NOP;
       id_ex_rs1_addr_o  <= '0;
@@ -221,6 +248,9 @@ module riscv_core #(
       id_ex_a_sel_pc    <= 1'b0;
       id_ex_a_sel_zero  <= 1'b1;
       id_ex_b_sel_imm   <= 1'b1;
+      id_ex_branch      <= 1'b0;
+      id_ex_jump        <= 1'b0;
+      id_ex_jalr        <= 1'b0;
       id_ex_mem_read    <= 1'b0;
       id_ex_mem_write   <= 1'b0;
       id_ex_mem_funct3  <= 3'b000;
@@ -239,6 +269,9 @@ module riscv_core #(
       id_ex_a_sel_pc    <= dec_a_sel_pc;
       id_ex_a_sel_zero  <= dec_a_sel_zero;
       id_ex_b_sel_imm   <= dec_b_sel_imm;
+      id_ex_branch      <= dec_branch;
+      id_ex_jump        <= dec_jump;
+      id_ex_jalr        <= dec_jalr;
       id_ex_mem_read    <= dec_mem_read;
       id_ex_mem_write   <= dec_mem_write;
       id_ex_mem_funct3  <= dec_mem_funct3;
@@ -289,8 +322,47 @@ module riscv_core #(
       .result_o (alu_result)
   );
 
+  // Branch resolution. The condition and the target each have their own logic
+  // rather than borrowing the ALU: the ALU is busy with a jump's link address,
+  // and the redirect path -- comparator or adder, into pc_next, into the pc
+  // and the BRAM address -- should not pass through the ALU's result mux.
+  // Both take the FORWARDED operands: `addi x1, ...; beq x1, ...` back to back
+  // compares the new x1.
+  //
+  // The branch condition is funct3, which travels as mem_funct3 -- for a
+  // branch, nothing in MEM reads it.
+  //
+  // Target bits [1:0] are dropped. JALR clears bit 0 by the spec; bit 1 set
+  // means a misaligned target, which RV32I would trap on. Traps are out of
+  // scope, so this follows the load/store misalignment assumption: the low
+  // bits are ignored, and the pc stays word-aligned. They are masked off the
+  // sum, not left out of the add: base[1:0] + imm[1:0] can carry into bit 2.
+  logic            branch_cond;
+  logic [XLEN-1:0] target_base;
+
+  riscv_branch #(
+      .XLEN (XLEN)
+  ) u_branch (
+      .a_i      (ex_rs1),
+      .b_i      (ex_rs2),
+      .funct3_i (id_ex_mem_funct3),
+      .cond_o   (branch_cond)
+  );
+
+  assign target_base     = id_ex_jalr ? ex_rs1 : id_ex_pc_o;
+  assign redirect_target = (target_base + id_ex_imm_o) & ~XLEN'(2'b11);
+  assign redirect        = id_ex_jump || (id_ex_branch && branch_cond);
+
+  // A jump writes its link address, pc + 4, in place of the ALU result -- so
+  // it forwards from EX/MEM and MEM/WB like any result, and WB needs no third
+  // source. The select comes straight off a flop and pc + 4 off a short adder,
+  // so the only cost on the ALU's path is this one mux.
+  logic [XLEN-1:0] ex_result;
+  assign ex_result = id_ex_jump ? id_ex_pc_o + 32'd4 : alu_result;
+
   // EX/MEM. rd_we and mem_write reset low so nothing appears to retire, and
-  // nothing is stored, on cycle one. rs2_rdata is a store's data, and it must
+  // nothing is stored, on cycle one. alu_result_o is the EX result: the ALU's,
+  // or a jump's link address. rs2_rdata is a store's data, and it must
   // be the FORWARDED value: `addi x1, ...` directly followed by `sw x1, ...`
   // would otherwise store x1's stale contents.
   logic [XLEN-1:0] ex_mem_rs2_rdata;
@@ -311,7 +383,7 @@ module riscv_core #(
     end else begin
       ex_mem_pc_o         <= id_ex_pc_o;
       ex_mem_instr_o      <= id_ex_instr_o;
-      ex_mem_alu_result_o <= alu_result;
+      ex_mem_alu_result_o <= ex_result;
       ex_mem_rs2_rdata    <= ex_rs2;
       ex_mem_rd_addr_o    <= id_ex_rd_addr_o;
       ex_mem_mem_read     <= id_ex_mem_read;

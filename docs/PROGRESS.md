@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — working core (forwarding + load-use stall done; branches and jumps next)
+**Phase:** A — working core (branches and jumps done; RVFI port next)
 
 ---
 
@@ -18,21 +18,25 @@ WB, and loads and stores go through an external, BRAM-timed data memory port.
 The temporary `wb_rd_*_i` testbench port is gone; tests set registers by
 executing instructions.
 
-Working today: every ALU instruction, `lui`, `auipc`, and all eight loads and
-stores, **with full data-hazard handling** — EX/MEM→EX and MEM/WB→EX
-forwarding, WB→ID through the register file, and a one-cycle load-use stall.
-Programs need no NOP padding. Branches and jumps decode **inert**
-(`rd_we = 0`, no memory access) rather than half-working.
+Working today: **37 of the 40 RV32I instructions** — every ALU instruction,
+`lui`, `auipc`, all eight loads and stores, all six branches, `jal` and
+`jalr` — with full data-hazard handling (EX/MEM→EX and MEM/WB→EX forwarding,
+WB→ID through the register file, a one-cycle load-use stall) and branches
+resolved in EX with static not-taken prediction: a taken branch or jump
+flushes IF/ID and ID/EX and costs two cycles, not taken costs none. FENCE,
+ECALL and EBREAK decode **inert** (`rd_we = 0`, no memory access, no
+redirect).
 
-**Timing margin is now thin: 0.94 ns at 100 MHz out-of-context**, and the
-paths that cross the memory ports are not yet timed at all. See the synthesis
-trend notes.
+**Timing margin is now gone: +0.059 ns at 100 MHz out-of-context**, and the
+paths that cross the memory ports are not yet timed at all. The critical path
+is branch resolution ending in the ID/EX flush. See the synthesis trend notes;
+the two levers are in Next up.
 
 Both memories are now BRAM-timed in the testbench as well as in the design.
 The IF timing bug found during MEM + WB is fixed — see Decisions.
 
-Everything is committed but **not yet pushed** — the MEM + WB, IF-fix and
-forwarding commits are local only (`git push` to sync, and CI runs on push). `make lint`, `make sim` and
+Everything is committed but **not yet pushed** — the MEM + WB, IF-fix,
+forwarding and branch commits are local only (`git push` to sync, and CI runs on push). `make lint`, `make sim` and
 `make synth` all pass from a clean checkout.
 
 ### Working and verified
@@ -40,7 +44,7 @@ forwarding commits are local only (`git push` to sync, and CI runs on push). `ma
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 95/95 passing across 6 toplevels (core, alu, regfile, decoder, mem_align, hazard) |
+| `make sim` | 113/113 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch) |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | CI on push | green (lint + sim) |
 
@@ -67,11 +71,25 @@ MEM/WB) and WB (load alignment, writeback mux).
   pipeline register for it
 - WB's register write is exposed as `wb_rd_*_o` **outputs** — what the tests
   observe, and `rvfi_rd_addr`/`rvfi_rd_wdata` in waiting
+- **Branches and jumps resolve in EX.** `redirect` (a jump, or a branch whose
+  condition holds) puts `redirect_target` on `pc_next`, so the pc and the BRAM
+  take the target on the same edge, and loads NOPs into IF/ID and ID/EX — the
+  two younger words already fetched. Redirect outranks stall in the `pc_next`
+  mux, though the two cannot coincide (see Decisions). The target is a
+  dedicated adder, `(jalr ? rs1 : pc) + imm` on the **forwarded** rs1, with
+  bits [1:0] masked off. A jump's link address `pc + 4` replaces the ALU
+  result going into EX/MEM, so it forwards like any other result
 
 `rtl/core/riscv_decoder.sv` — register addresses, all five RV32I immediate
-formats (I/S/B/U/J), the EX control signals, and `mem_read`/`mem_write`/
-`mem_funct3`. `mem_read` doubles as the writeback select until JAL/JALR add a
-third writeback source.
+formats (I/S/B/U/J), the EX control signals, `branch`/`jump`/`jalr`, and
+`mem_read`/`mem_write`/`mem_funct3`. `mem_funct3` is `instr[14:12]`
+unconditionally, so it also carries a branch's condition. `mem_read` remains
+the only writeback select: a jump's link address enters in EX, not WB.
+
+`rtl/core/riscv_branch.sv` — the branch condition from funct3 and the two
+forwarded operands. One magnitude comparison serves BLT and BLTU: when the sign
+bits agree, signed and unsigned order are the same; when they differ, the
+operand with its sign bit set is smaller. Reserved funct3 010/011 never take.
 
 `rtl/core/riscv_hazard.sv` — forwarding selects for EX and load-use detection
 for ID, purely combinational. Selects are one-hot per operand with priority
@@ -101,10 +119,12 @@ would have forced. x0 invariance and WB→ID write-first forwarding are both
 implemented here rather than in the surrounding pipeline, because both are
 formal properties in CLAUDE.md §5.5.
 
-`tb/cocotb/` — 95 tests across six toplevels: `test_core` (40), `test_alu`
-(16), `test_regfile` (8), `test_decoder` (25), `test_mem_align` (4, each an
+`tb/cocotb/` — 113 tests across seven toplevels: `test_core` (52), `test_alu`
+(16), `test_regfile` (8), `test_decoder` (29), `test_mem_align` (4, each an
 exhaustive sweep), `test_hazard` (2; one sweeps all 17,496 input combinations
-over x0–x2). In `test_core` **both** memories are BRAM-timed models that
+over x0–x2), `test_branch` (2: corner pairs, and random pairs that are equal,
+one apart or opposite in sign, against a reference using Python's own signed
+compare rather than the RTL's sign-bit shortcut). In `test_core` **both** memories are BRAM-timed models that
 sample 1 ns before each rising edge, like a flop's setup window. `feed()`
 writes an instruction at the address being fetched, and `feed_to()` walks it to
 a named pipeline register, so no test hand-counts the fetch latency. `feed()`
@@ -112,16 +132,29 @@ assumes no stall — a stall re-presents the same address, and feed() would
 overwrite it — so anything with a load-use pair goes through `run()`, whose
 `timed=True` records the cycle each instruction retires. That is how the
 load-use tests prove the stall costs **exactly** one cycle, and that a load
-followed by an unrelated instruction, or a load to x0, costs none.
+followed by an unrelated instruction, or a load to x0, costs none — and how
+the branch tests prove a taken branch costs exactly two and a not-taken one
+none. `run(cycles=n)` lifts the default budget for programs with backward
+branches. Tests that depend on forwarding preset the registers first: the
+register file has no reset, so a stale value could otherwise happen to equal
+the forwarded one and pass vacuously.
 
 `tb/cocotb/rv32i_model.py` — the golden model (CLAUDE.md §11): one instruction
 at a time, no pipeline, written from the ISA spec. It follows one design
-decision rather than the spec — the misalignment rule — and raises on
-everything not yet implemented rather than guessing. `test_core` runs random
+decision rather than the spec — the misalignment rule, for data and for jump
+targets — and raises on everything not yet implemented rather than guessing.
+Its B- and J-immediate decode was checked against **GNU `as`**, an encoder
+independent of anything written here: 211 instructions, every single-bit
+offset and both extremes, plus the test encoders `enc_b`/`enc_jal`/`enc_jalr`
+bit for bit. `test_core` runs random
 programs over x0–x4 against it, comparing **retirement order** (not just final
 state, which a dropped or doubled instruction can survive) and final memory:
 120 instructions padded (validates the model), 400 dense (finds hazards).
-`SEED=n` reruns a seed; seeds 1–8 pass.
+Random branches and jumps go **forward only**, 1–6 words, so every program
+terminates; offset 2 skips exactly the word in IF/ID. Each run asserts a floor
+on taken redirects (5 padded, 20 dense, against measured minimums of 8 and 35
+over 200 seeds) so a generator that stops branching fails rather than passing
+vacuously. `SEED=n` reruns a seed; seeds 1–20 pass.
 
 Submodules get their own toplevel rather than being
 poked through the core's hierarchy, so a unit test survives refactoring and can
@@ -134,8 +167,8 @@ estimate and post-route is measured.
 
 ### Not started
 
-Branches and jumps (and the flush they need), the RVFI port itself, formal,
-UVM, TMR, hardware bring-up, and all of Stage 2.
+FENCE / ECALL / EBREAK, the RVFI port itself, the official `riscv-tests`
+suite, formal, UVM, TMR, hardware bring-up, and all of Stage 2.
 
 **Instructions not yet implemented decode inert** (`rd_we = 0`) rather than
 half-working. A branch or load that wrote a plausible-looking value would later
@@ -167,6 +200,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-07 | MEM + WB: DMEM port, lane align, MEM/WB, writeback | 682 | 484 | 24 | +2.696 | 136.9 | −7.9 |
 | 2026-10-07 | IF fix: IMEM driven from `pc_next` | 712 | 489 | 24 | +2.846 | 139.8 | +2.9 |
 | 2026-10-07 | Forwarding + load-use stall (hazard unit) | 818 | 489 | 24 | +0.942 | 110.4 | −29.4 |
+| 2026-10-07 | Branches + JAL/JALR: comparator, target adder, flush | 963 | 492 | 47 | +0.059 | 100.6 | −9.8 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -226,9 +260,20 @@ register them into ID/EX, so in EX they come straight off flops. FF count is
 unchanged because the stall uses clock enables and the bubble reuses the reset
 values.
 
-**0.94 ns of slack is the out-of-context number, and it is optimistic.** Three
+The branch row: **the critical path moved to branch resolution, and it ends
+in the flush.** `mem_wb` rd → hazard comparator (fo 99) → forward select
+(fo 54) → forwarding mux → the comparator's `ltu` carry chain (4 CARRY4) →
+`redirect` (fo 33) → the synchronous reset pins of ID/EX, fanout **171**. 11
+levels, 77% routing. The forwarding decision is still in series at the front,
+so registering the selects in ID still helps; the new lever is the back end
+(Next up). FF +3 is exactly `id_ex_branch`/`jump`/`jalr`. CARRY4 +23 is the
+three new carry structures: the target adder, the `pc + 4` link adder, and
+the comparator.
+
+**The out-of-context slack is optimistic, now +0.059 ns.** Three
 paths that matter on the board cross the core's ports and are untimed here:
-`pc + 4` / stall mux → `imem_addr_o`, the stall comparator → `imem_addr_o`, and
+`pc + 4` / stall mux → `imem_addr_o`, the stall comparator and now the whole
+branch-resolution path → `imem_addr_o`, and
 `dmem_rdata_i` → load alignment → writeback mux → forwarding mux → ALU — the
 last one starts at a BRAM clock-to-out of roughly 2 ns on Artix-7. The board-
 level run will say whether 100 MHz survives.
@@ -410,6 +455,33 @@ the honest answer rather than pretending it fits on a hosted one.
   remembering: the register file has no reset, so a random program reading a
   register before writing it got Verilator's initial value in the core and 0
   in the model. Random programs now load x1–x4 first, as real software would.
+- **Branch resolution has its own comparator and target adder** (2026-10-07).
+  Not the ALU: during a jump the ALU's result is replaced by the link address,
+  and routing the redirect through the ALU's result mux would lengthen the
+  path that now sets Fmax anyway. The comparator shares one carry chain
+  between BLT and BLTU (sign bits decide when they differ).
+- **A jump's link address replaces the ALU result in EX** (2026-10-07). The
+  plan left open whether `pc + 4` is a third writeback source or goes through
+  the ALU. Neither: a third WB source would break EX/MEM→EX forwarding of the
+  link, and feeding a constant 4 into the ALU puts a mux on `alu_b`, which was
+  already on the critical path at fanout 115. A 2:1 mux after the ALU, selected
+  off a flop, costs the least. (No correct-path instruction can actually
+  consume a link from EX/MEM — a jump's successor arrives two flushed cycles
+  later and reads it through the register file — but the value is right on
+  every path, which is what Phase B will check.)
+- **Stall and redirect cannot coincide** (2026-10-07). The plan called for a
+  directed test of both firing in one cycle. They cannot: the stall needs a
+  load in EX and the redirect a branch or jump in EX, and EX holds one
+  instruction. Redirect still outranks stall in the mux, at no cost.
+  Confirmed by mutation: swapping the priority passes all 52 core tests.
+  Belongs in Phase B as `!(stall && redirect)`.
+- **Misaligned jump and branch targets drop bits [1:0]** (2026-10-07). Same
+  reasoning as data misalignment: RV32I would trap, traps are out of scope.
+  Masked off the sum rather than left out of the add, since `rs1[1:0] +
+  imm[1:0]` can carry into bit 2. The directed test reads the landing pc with
+  `auipc`: checking which instruction ran is not enough, because IMEM ignores
+  the low bits too — a first version of the test missed a planted bug for
+  exactly that reason, and only the random tests caught it.
 - **Store data is forwarded** (2026-10-07). Not in the original plan. EX/MEM
   was copying rs2 out of ID/EX, so `addi x1; sw x1` back to back would have
   stored a stale x1. Found while designing the muxes, not in test, and covered
@@ -441,7 +513,8 @@ the honest answer rather than pretending it fits on a hosted one.
   `test_misaligned_access_uses_the_containing_word`. **Open for Phase B:**
   riscv-formal must be told; check what `RISCV_FORMAL_ALIGNED_MEM` expects of a
   misaligned access (it may expect `rvfi_trap`) before relying on it, otherwise
-  constrain the harness to aligned addresses.
+  constrain the harness to aligned addresses. The same question now applies to
+  misaligned jump and branch targets.
 - **Load/store width is its own field, not the ALU's `funct3`** (2026-10-07).
   The earlier plan said the carried `funct3` doubled as the width. It cannot:
   loads and stores use the ALU to compute `rs1 + imm`, so the ALU's `funct3`
@@ -468,45 +541,38 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-### 1. Branches and jumps
+### 1. Timing margin (decide before RVFI)
 
-Branch resolution in EX with static not-taken prediction, IF/ID and ID/EX flush
-on taken, JAL and JALR. Then all 40 RV32I instructions except FENCE and
-ECALL/EBREAK exist, and FENCE can decode as a NOP on an in-order core with no
-caches. CLAUDE.md §9's failure mode for this slice: **branch flush off by one
-stage** — a wrong-path instruction reaches WB. The golden model gains branches
-first, and the dense random test with them is the check.
++0.059 ns is no margin, and the board-level run will be worse (the memory-port
+paths are untimed here). Two levers, each its own measured slice:
 
-**How redirect meets BRAM fetch.** A taken branch resolved in EX replaces
-`pc_next`, which also feeds `imem_addr_o`, so the target is fetched on the very
-next edge. Two wrong-path words are already in flight by then: the one in IF/ID
-and the one at the BRAM output that IF/ID is about to capture. Flushing means
-IF/ID and ID/EX load NOPs on the redirect edge — a 2-cycle taken-branch
-penalty.
-
-**Redirect and stall in the same cycle.** A load-use stall is raised by the
-instruction in ID; a branch resolving in EX is older. If both fire, the branch
-wins: the stalled instruction is on the wrong path and is about to be flushed
-anyway. Getting this priority wrong either loses the redirect or keeps a
-wrong-path instruction alive — a directed test for exactly this pair.
-
-**Writeback select.** JAL/JALR write `pc + 4`, a third writeback source, so the
-decoder's `mem_read` stops doubling as the writeback select — or `pc + 4` goes
-through the ALU, which already has the pc on its A side. Decide which.
-
-**Timing.** The branch comparison and target add go into EX, which already
-holds the critical path, and the redirect mux goes in front of
-`imem_addr_o`. Expect Fmax to fall again; registering the forwarding selects
-(see the trend notes) is the first lever if it falls below 100 MHz.
+- **Flush only the control bits of ID/EX.** The flush drives the sync-reset
+  pin of all 171 ID/EX flops. A bubble only needs to be inert: `rd_we`,
+  `mem_read`, `mem_write`, `branch`, `jump` low. Clearing those five and
+  letting the data fields hold wrong-path junk cuts the fanout ~30x. Cost: the
+  ILA/RVFI view of ID/EX shows junk in a bubble — which the RVFI valid bit has
+  to cover anyway.
+- **Register the forwarding selects in ID** (from the forwarding row): takes
+  the hazard comparators off the front of both the ALU path and this one.
 
 ### 2. RVFI port + riscv-formal
+
+Needs a **valid bit** through the pipeline first: a load-use bubble and a flush
+bubble are both NOP decodes today, indistinguishable from a real NOP.
+`rvfi_pc_wdata` is `redirect ? redirect_target : pc + 4` in EX.
 
 Once WB retires instructions there is something non-vacuous to prove. Needs
 yosys and SymbiYosys installed, which is also the first thing `make formal`
 stops complaining about. Check reachability on every property — a vacuous pass
 proves nothing (§5.5, §9).
 
-### 3. Board-level top
+### 3. FENCE, ECALL, EBREAK; `riscv-tests`
+
+FENCE can decode as a NOP on an in-order core with no caches. ECALL/EBREAK
+need a decision — no traps are in scope, but `riscv-tests` signals pass/fail
+with ECALL — then the official suite (a Phase A box).
+
+### 4. Board-level top
 
 Deferred until the core executes instructions: `constr/arty_a7.xdc` pin
 constraints, a top with BRAM instruction memory and clocking, then `make prog`
@@ -514,7 +580,8 @@ constraints, a top with BRAM instruction memory and clocking, then `make prog`
 Fmax become a board number, and it gets its own table. It is also the first run
 that times `pc + 4` → `imem_addr_o` → BRAM address, which the out-of-context
 flow leaves unconstrained; expect it, plus the branch-target mux added in §1,
-to be a candidate critical path.
+to be a candidate critical path — it now carries the branch comparator and
+target adder too.
 
 ---
 
@@ -537,9 +604,9 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-07 — forwarding and the load-use stall landed
-(committed, not pushed): `riscv_hazard`, forwarding muxes in EX, store data
-forwarded, one-cycle stall with a bubble. Golden model `rv32i_model.py` and
-dense random programs against it. 95 tests. Fmax 139.8 → 110.4 MHz, 0.94 ns of
-slack at 100 MHz, with the memory-port paths still untimed. Next session:
-branches and jumps (Next up §1).*
+*Last updated: 2026-10-07 — branches, JAL and JALR landed (committed, not
+pushed): `riscv_branch` comparator, target adder, link address in EX, IF/ID +
+ID/EX flush, 2-cycle taken penalty. Golden model gained control flow, checked
+against GNU `as`; random programs now branch. 113 tests. Fmax 110.4 → 100.6
+MHz, +0.059 ns at 100 MHz. Next session: decide on the timing levers (Next up
+§1), then RVFI.*

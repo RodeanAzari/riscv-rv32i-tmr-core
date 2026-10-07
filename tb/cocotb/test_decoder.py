@@ -18,6 +18,9 @@ OPCODE_BRANCH = 0b1100011
 OPCODE_LUI    = 0b0110111
 OPCODE_AUIPC  = 0b0010111
 OPCODE_JAL    = 0b1101111
+OPCODE_JALR   = 0b1100111
+OPCODE_FENCE  = 0b0001111
+OPCODE_SYSTEM = 0b1110011
 OPCODE_OP     = 0b0110011
 
 MASK32 = 0xFFFF_FFFF
@@ -287,14 +290,70 @@ async def test_auipc_is_pc_plus_immediate(dut):
 
 @cocotb.test()
 async def test_unimplemented_classes_are_inert(dut):
-    """Branches and jumps write no register and touch no memory until their
-    stages exist. Inert beats plausibly wrong -- a half-implemented instruction
+    """FENCE, ECALL and EBREAK write no register, touch no memory and do not
+    redirect. Inert beats plausibly wrong -- a half-implemented instruction
     that writes something is what riscv-formal would later blame on forwarding."""
-    for instr in (enc_b(8), enc_j(8)):
+    for instr in (enc_i(0x0FF, opcode=OPCODE_FENCE),          # fence iorw, iorw
+                  enc_i(0, opcode=OPCODE_SYSTEM),              # ecall
+                  enc_i(1, opcode=OPCODE_SYSTEM)):             # ebreak
         await decode(dut, instr)
         assert int(dut.rd_we_o.value) == 0, f"{instr:#010x} writes a register"
         assert int(dut.mem_read_o.value) == 0, f"{instr:#010x} reads memory"
         assert int(dut.mem_write_o.value) == 0, f"{instr:#010x} writes memory"
+        assert int(dut.branch_o.value) == 0, f"{instr:#010x} branches"
+        assert int(dut.jump_o.value) == 0, f"{instr:#010x} jumps"
+
+
+# --- control flow ------------------------------------------------------------
+
+@cocotb.test()
+async def test_branch_decodes_as_branch_and_writes_nothing(dut):
+    """All six conditions: branch_o, the B-form immediate, and funct3 carried
+    through mem_funct3_o as the condition. rd's field is immediate bits."""
+    for funct3 in (0b000, 0b001, 0b100, 0b101, 0b110, 0b111):
+        await decode(dut, enc_b(-8, rs1=1, rs2=2, funct3=funct3))
+        assert int(dut.branch_o.value) == 1
+        assert int(dut.jump_o.value) == 0
+        assert int(dut.rd_we_o.value) == 0, "branch writes a register"
+        assert int(dut.mem_read_o.value) == 0
+        assert int(dut.mem_write_o.value) == 0
+        assert int(dut.imm_o.value) == u32(-8)
+        assert int(dut.mem_funct3_o.value) == funct3
+
+
+@cocotb.test()
+async def test_jal_jumps_and_writes_rd(dut):
+    await decode(dut, enc_j(-2048, rd=1))
+    assert int(dut.jump_o.value) == 1
+    assert int(dut.jalr_o.value) == 0, "jal's target is pc-relative"
+    assert int(dut.branch_o.value) == 0
+    assert int(dut.rd_we_o.value) == 1
+    assert int(dut.rd_addr_o.value) == 1
+    assert int(dut.imm_o.value) == u32(-2048)
+
+
+@cocotb.test()
+async def test_jalr_jumps_off_rs1_with_the_i_form(dut):
+    await decode(dut, enc_i(-1, rs1=5, rd=1, opcode=OPCODE_JALR))
+    assert int(dut.jump_o.value) == 1
+    assert int(dut.jalr_o.value) == 1
+    assert int(dut.branch_o.value) == 0
+    assert int(dut.rd_we_o.value) == 1
+    assert int(dut.rs1_addr_o.value) == 5
+    assert int(dut.imm_o.value) == u32(-1)
+
+
+@cocotb.test()
+async def test_non_control_instructions_never_redirect(dut):
+    """A stray branch_o or jump_o on an ordinary instruction would redirect
+    the pc to wherever its immediate happens to point."""
+    for instr in (enc_r(F3_ADD_SUB), enc_i(-1), enc_u(0xFFFF_F000),
+                  enc_u(0xFFFF_F000, opcode=OPCODE_AUIPC),
+                  enc_i(-1, rs1=1, rd=2, opcode=OPCODE_LOAD), enc_s(-1, rs1=1, rs2=2)):
+        await decode(dut, instr)
+        assert int(dut.branch_o.value) == 0, f"{instr:#010x} branches"
+        assert int(dut.jump_o.value) == 0, f"{instr:#010x} jumps"
+        assert int(dut.jalr_o.value) == 0, f"{instr:#010x} sets jalr"
 
 
 # --- MEM / WB control --------------------------------------------------------

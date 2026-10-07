@@ -40,6 +40,8 @@ OPCODE_OP_IMM = 0b0010011
 OPCODE_LUI    = 0b0110111
 OPCODE_AUIPC  = 0b0010111
 OPCODE_BRANCH = 0b1100011
+OPCODE_JAL    = 0b1101111
+OPCODE_JALR   = 0b1100111
 OPCODE_LOAD   = 0b0000011
 OPCODE_STORE  = 0b0100011
 
@@ -64,6 +66,25 @@ def enc_s(imm, rs1=0, rs2=0, funct3=0):
 
 def enc_load(funct3, rd, imm, rs1=0):
     return enc_i(imm, rs1=rs1, funct3=funct3, rd=rd, opcode=OPCODE_LOAD)
+
+
+def enc_b(funct3, rs1, rs2, offset):
+    """Conditional branch to pc + offset; offset is even, +/-4 KiB."""
+    return (((offset >> 12) & 1) << 31) | (((offset >> 5) & 0x3F) << 25) \
+        | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) \
+        | (((offset >> 1) & 0xF) << 8) | (((offset >> 11) & 1) << 7) | OPCODE_BRANCH
+
+
+def enc_jal(rd, offset):
+    """rd = pc + 4, jump to pc + offset; offset is even, +/-1 MiB."""
+    return (((offset >> 20) & 1) << 31) | (((offset >> 1) & 0x3FF) << 21) \
+        | (((offset >> 11) & 1) << 20) | (((offset >> 12) & 0xFF) << 12) \
+        | (rd << 7) | OPCODE_JAL
+
+
+def enc_jalr(rd, rs1, imm):
+    """rd = pc + 4, jump to (rs1 + imm) & ~1."""
+    return enc_i(imm, rs1=rs1, rd=rd, opcode=OPCODE_JALR)
 
 
 def li(rd, value):
@@ -420,31 +441,30 @@ async def test_slt_signed_through_the_core(dut):
 
 @cocotb.test()
 async def test_unimplemented_instruction_is_inert(dut):
-    """A branch decodes to no register write until branches are implemented."""
+    """ECALL decodes to no register write until it is implemented."""
     await reset(dut)
     await release(dut)
 
-    await drain(dut, 0x0000_0063 | (1 << 15) | (2 << 20))   # beq x1, x2, 0
-    assert int(dut.ex_mem_rd_we_o.value) == 0, "unimplemented branch writes rd"
+    await drain(dut, 0x0000_0073)                            # ecall
+    assert int(dut.ex_mem_rd_we_o.value) == 0, "unimplemented ecall writes rd"
 
 
 @cocotb.test()
 async def test_control_travels_with_its_instruction(dut):
     """Back-to-back instructions keep their own control through the pipeline.
 
-    Feeds add (writes x7) directly behind a branch (writes nothing) with no NOPs
-    between, so a control signal latched in the wrong stage shows up as the
-    wrong rd_we reaching EX/MEM.
+    Feeds add (writes x7) directly behind a store (writes no register) with no
+    NOPs between, so a control signal latched in the wrong stage shows up as
+    the wrong rd_we reaching EX/MEM.
     """
     await reset(dut)
     await release(dut)
     await set_reg(dut, 3, 5)
     await set_reg(dut, 4, 6)
 
-    branch = 0x0000_0063 | (1 << 15) | (2 << 20)
-    await feed(dut, branch)
+    await feed(dut, enc_s(0, rs1=0, rs2=0, funct3=0b010))   # sw x0, 0(x0)
     await feed_to(dut, enc_r(0b000, rs1=3, rs2=4, rd=7), EX_MEM)
-    # branch is now past EX/MEM; the add is in EX/MEM
+    # the store is now past EX/MEM; the add is in EX/MEM
     assert int(dut.ex_mem_rd_we_o.value) == 1
     assert int(dut.ex_mem_rd_addr_o.value) == 7
     assert int(dut.ex_mem_alu_result_o.value) == 11
@@ -453,20 +473,26 @@ async def test_control_travels_with_its_instruction(dut):
 # --- MEM and WB -------------------------------------------------------------
 # Whole programs from here on, loaded into IMEM from address 0.
 
-async def run(dut, program, mem=None, timed=False):
+async def run(dut, program, mem=None, timed=False, cycles=None):
     """Reset, run program from address 0, drain it to WB.
 
     Returns (writebacks, mem): every register write WB performed, in retirement
     order, as (rd, value) -- x0 included, since a write to x0 still happens --
     and the data memory as the program left it. With timed=True each writeback
     is (cycle, rd, value), so a test can measure what a stall cost.
+
+    The default budget is three cycles per instruction: at worst each one is a
+    taken branch (two flushed cycles) or stalls once. A program with a
+    backward branch executes more instructions than it holds, and passes
+    cycles. Past the end the core fetches NOPs, which write only x0.
     """
     mem = await reset(dut, program, mem)
     await release(dut)
 
     writebacks = []
-    # Twice the program length: every instruction could, at worst, stall once.
-    for cycle in range(2 * len(program) + MEM_WB + 1):
+    if cycles is None:
+        cycles = 3 * len(program) + MEM_WB + 1
+    for cycle in range(cycles):
         await RisingEdge(dut.clk_i)
         await FallingEdge(dut.clk_i)
         if int(dut.wb_rd_we_o.value):
@@ -484,6 +510,7 @@ GAP = [NOP] * HAZARD_GAP
 
 LB, LH, LW, LBU, LHU = 0b000, 0b001, 0b010, 0b100, 0b101
 SB, SH, SW = 0b000, 0b001, 0b010
+BEQ, BNE, BLT, BGE, BLTU, BGEU = 0b000, 0b001, 0b100, 0b101, 0b110, 0b111
 
 
 @cocotb.test()
@@ -768,6 +795,200 @@ async def test_address_operand_is_forwarded(dut):
     assert mem.get(36) == 0x1234_5678, f"mem {mem}"
 
 
+# --- branches and jumps ------------------------------------------------------
+# Resolved in EX with static not-taken prediction. When a branch or jump is in
+# EX, two younger words have already been fetched: one in IF/ID, one waiting at
+# the IMEM output. A taken redirect must discard both -- the CLAUDE.md 9
+# failure mode is discarding only one, so a wrong-path instruction reaches WB.
+
+def li_all(**regs):
+    """li for several registers, e.g. li_all(x1=5, x2=-1)."""
+    return [w for name, v in regs.items() for w in li(int(name[1:]), v)]
+
+
+@cocotb.test()
+async def test_taken_branch_flushes_both_wrong_path_instructions(dut):
+    """beq taken over two instructions: neither the one in IF/ID nor the one at
+    the IMEM output may retire. Flushing only one stage lets one through."""
+    program = [enc_i(5, rd=1), enc_i(5, rd=2),
+               enc_b(BEQ, 1, 2, 12),
+               enc_i(1, rd=3),                 # in IF/ID when beq resolves
+               enc_i(1, rd=4),                 # at the IMEM output
+               enc_i(7, rd=5)]                 # target
+    writebacks, _ = await run(dut, program)
+    regs = [r for r, _ in writebacks if r]
+    assert regs == [1, 2, 5], f"retired {writebacks}"
+    assert final_regs(writebacks)[5] == 7
+
+
+@cocotb.test()
+async def test_wrong_path_store_does_not_write_memory(dut):
+    """A store behind a taken branch is squashed before MEM, not after: a
+    flushed store that still reached the memory port could not be undone."""
+    program = [enc_jal(0, 8),
+               enc_s(16, rs1=0, rs2=0, funct3=SW),       # wrong path
+               enc_i(3, rd=1)]
+    _, mem = await run(dut, program, mem={16: 0xDEAD_BEEF})
+    assert mem[16] == 0xDEAD_BEEF, f"wrong-path store wrote {mem[16]:#010x}"
+
+
+@cocotb.test()
+async def test_taken_branch_costs_exactly_two_cycles(dut):
+    """Taken to the very next instruction: same path either way, so the
+    difference in retire time is purely the flush. Not taken costs nothing."""
+    program = [enc_i(1, rd=1),
+               enc_b(BNE, 0, 0, 4),                    # never taken
+               enc_i(2, rd=2),
+               enc_b(BEQ, 0, 0, 4),                    # always taken, to pc + 4
+               enc_i(3, rd=3)]
+    writebacks, _ = await run(dut, program, timed=True)
+    c1, c2, c3 = (retire_cycle(writebacks, rd) for rd in (1, 2, 3))
+    assert c2 - c1 == 2, f"not-taken branch cost {c2 - c1 - 2} cycles, expected 0"
+    assert c3 - c2 == 4, f"taken branch cost {c3 - c2 - 2} cycles, expected 2"
+
+
+@cocotb.test()
+async def test_each_condition_taken_and_not_taken(dut):
+    """Every condition on operands that take it and operands that do not,
+    including the pair where signed and unsigned order disagree (-1 vs 1).
+
+    One program walks through every case: each branch skips an `addi x3, x0,
+    id` when taken, so the x3 writebacks list exactly the cases not taken."""
+    cases = [  # (funct3, rs1 value, rs2 value, taken)
+        (BEQ, 5, 5, True), (BEQ, 5, 6, False),
+        (BNE, 5, 6, True), (BNE, 5, 5, False),
+        (BLT, -1, 1, True), (BLT, 1, -1, False), (BLT, 4, 4, False),
+        (BGE, 1, -1, True), (BGE, 4, 4, True), (BGE, -1, 1, False),
+        (BLTU, 1, -1, True), (BLTU, -1, 1, False), (BLTU, 4, 4, False),
+        (BGEU, -1, 1, True), (BGEU, 4, 4, True), (BGEU, 1, -1, False),
+    ]
+    program = []
+    for i, (funct3, a, b, _) in enumerate(cases):
+        program += li_all(x1=a, x2=b)
+        program += [enc_b(funct3, 1, 2, 8), enc_i(i, rd=3)]
+    writebacks, _ = await run(dut, program)
+    got = [v for r, v in writebacks if r == 3]
+    want = [i for i, c in enumerate(cases) if not c[3]]
+    assert got == want, f"cases not taken: got {got}, expected {want}"
+
+
+@cocotb.test()
+async def test_branch_compares_forwarded_operands(dut):
+    """The comparator sits behind the forwarding muxes: back-to-back producers
+    feed it from EX/MEM and MEM/WB, and a load feeds it after its stall.
+
+    The registers are preset to unequal values first, so a comparator reading
+    stale register-file values sees them differ and does not branch."""
+    program = li_all(x1=1, x2=2, x4=4) + GAP + [
+        enc_i(9, rd=1),                                 # -> MEM/WB
+        enc_i(9, rd=2),                                 # -> EX/MEM
+        enc_b(BEQ, 1, 2, 8),                            # taken only if both forwarded
+        enc_i(1, rd=3),
+        enc_load(LW, rd=4, imm=16),
+        enc_b(BEQ, 4, 1, 8),                            # load-use, then compare
+        enc_i(2, rd=3),
+        enc_i(3, rd=5)]
+    writebacks, _ = await run(dut, program, mem={16: 9})
+    assert [v for r, v in writebacks if r == 3] == [], f"retired {writebacks}"
+    assert final_regs(writebacks).get(5) == 3
+
+
+@cocotb.test()
+async def test_jal_writes_link_and_jumps(dut):
+    program = [enc_i(1, rd=2),
+               enc_jal(1, 12),                          # at 4: link 8, target 16
+               enc_i(1, rd=3), enc_i(1, rd=4),
+               enc_r(0b000, rs1=1, rs2=0, rd=5)]        # reads the link
+    writebacks, _ = await run(dut, program)
+    assert [r for r, _ in writebacks if r] == [2, 1, 5], f"retired {writebacks}"
+    regs = final_regs(writebacks)
+    assert regs[1] == 8 and regs[5] == 8, f"link {regs}"
+
+
+@cocotb.test()
+async def test_jalr_uses_forwarded_base_and_drops_low_bits(dut):
+    """addi x2 directly before jalr off x2: the base comes from EX/MEM. The
+    target is odd -- JALR clears bit 0 -- so the jump lands one byte lower.
+    x2 is preset first, so a stale base would jump somewhere else."""
+    head = li_all(x2=0x400) + GAP
+    jalr_at = 4 * (len(head) + 1)
+    target = jalr_at + 12
+    program = head + [enc_i(target + 1, rd=2),
+                      enc_jalr(1, 2, 0),
+                      enc_i(1, rd=3), enc_i(1, rd=4),
+                      enc_i(5, rd=5)]                   # at target
+    writebacks, _ = await run(dut, program)
+    assert [r for r, _ in writebacks if r][-3:] == [2, 1, 5], f"retired {writebacks}"
+    assert final_regs(writebacks)[1] == jalr_at + 4
+
+
+@cocotb.test()
+async def test_jalr_base_from_a_load(dut):
+    """lw x2 then jalr off x2: load-use stall, then the base from MEM/WB."""
+    head = li_all(x2=0x400) + GAP
+    target = 4 * (len(head) + 4)
+    program = head + [enc_load(LW, rd=2, imm=32),
+                      enc_jalr(1, 2, 0),
+                      enc_i(1, rd=3), enc_i(1, rd=4),
+                      enc_i(5, rd=5)]                   # at target
+    writebacks, _ = await run(dut, program, mem={32: target})
+    assert [r for r, _ in writebacks if r][-3:] == [2, 1, 5], f"retired {writebacks}"
+
+
+@cocotb.test()
+async def test_jalr_rd_equal_to_rs1_reads_before_writing(dut):
+    """jalr x1, 0(x1): the target is the OLD x1, then x1 becomes the link."""
+    program = [enc_i(16, rd=1),
+               enc_jalr(1, 1, 0),                       # at 4: link 8
+               enc_i(1, rd=3), enc_i(1, rd=4),
+               enc_i(5, rd=5)]                          # at 16
+    writebacks, _ = await run(dut, program)
+    assert [r for r, _ in writebacks if r] == [1, 1, 5], f"retired {writebacks}"
+    assert final_regs(writebacks)[1] == 8
+
+
+@cocotb.test()
+async def test_jump_to_x0_writes_nothing_visible(dut):
+    """jal x0 is a plain jump (`j`): the link goes nowhere."""
+    program = [enc_jal(0, 8), enc_i(1, rd=3), enc_i(5, rd=5)]
+    writebacks, _ = await run(dut, program)
+    assert final_regs(writebacks) == {5: 5}, f"retired {writebacks}"
+
+
+@cocotb.test()
+async def test_misaligned_target_drops_low_bits(dut):
+    """beq to pc + 10: bit 1 set. RV32I would trap; this core ignores the low
+    bits (the misalignment assumption) and lands on pc + 8.
+
+    Checking which instruction ran is not enough: IMEM ignores the low address
+    bits too, so a pc of 10 still fetches the word at 8. auipc at the target
+    reads the pc itself."""
+    program = [enc_b(BEQ, 0, 0, 10), enc_i(1, rd=3),
+               enc_u(0, rd=5, opcode=OPCODE_AUIPC)]
+    writebacks, _ = await run(dut, program)
+    assert final_regs(writebacks) == {5: 8}, f"retired {writebacks}"
+
+
+@cocotb.test()
+async def test_backward_branch_loop(dut):
+    """A counted loop: the backward branch, the flush on every iteration, and
+    the fall-through on the last, checked against the golden model."""
+    program = [enc_i(4, rd=1),                          # x1 = 4
+               enc_i(10, rs1=2, rd=2),                  # loop: x2 += 10
+               enc_i(-1, rs1=1, rd=1),                  #       x1 -= 1
+               enc_b(BNE, 1, 0, -8),                    #       until x1 == 0
+               enc_i(0x55, rd=3)]
+    want, _ = run_model(program)
+    writebacks, _ = await run(dut, program, cycles=60)
+    got = [(r, v) for r, v in writebacks if r]
+    # x2 starts undefined (no regfile reset), so compare x1 and x3 exactly and
+    # x2 by its increments.
+    assert [v for r, v in got if r == 1] == [v for r, v in want if r == 1]
+    assert [v for r, v in got if r == 3] == [0x55]
+    x2 = [v for r, v in got if r == 2]
+    assert len(x2) == 4 and all((b - a) & MASK32 == 10 for a, b in zip(x2, x2[1:])), x2
+
+
 # --- random programs against the golden model --------------------------------
 # Directed tests above pin the cases we thought of; these find the ones we did
 # not. Few registers, so nearly every instruction depends on a recent one, and
@@ -777,10 +998,30 @@ RANDOM_REGS = range(5)                 # x0-x4
 IMM_CORNERS = [0, 1, -1, 2047, -2048, 0x400, -0x400]
 
 
-def random_instruction(rng):
+def random_instruction(rng, pc):
+    """One random instruction for address pc.
+
+    Branches and jumps only go forward, 1-6 words, so every program ends:
+    offset 1 is taken-but-to-the-next-instruction (still a redirect, still a
+    flush), offset 2 skips exactly the instruction in IF/ID -- the classic
+    flush-off-by-one case. One in ten targets has bit 1 set, which the
+    misalignment assumption drops. jalr bases off x0, so its target is an
+    absolute address known to be ahead; a forwarded jalr base is a directed
+    test.
+    """
     rd, rs1, rs2 = (rng.choice(RANDOM_REGS) for _ in range(3))
-    kind = rng.choices(["op", "op_imm", "lui", "auipc", "load", "store"],
-                       weights=[4, 4, 1, 1, 3, 2])[0]
+    kind = rng.choices(["op", "op_imm", "lui", "auipc", "load", "store",
+                        "branch", "jal", "jalr"],
+                       weights=[4, 4, 1, 1, 3, 2, 3, 1, 1])[0]
+    if kind in ("branch", "jal", "jalr"):
+        offset = 4 * rng.randint(1, 6) + (2 if rng.random() < 0.1 else 0)
+        if kind == "branch":
+            funct3 = rng.choice([BEQ, BNE, BLT, BGE, BLTU, BGEU])
+            return enc_b(funct3, rs1, rs2, offset)
+        if kind == "jal":
+            return enc_jal(rd, offset)
+        assert pc + offset < 2048, "jalr's absolute target outgrew its immediate"
+        return enc_jalr(rd, 0, pc + offset)
     if kind == "op":
         funct3 = rng.randrange(8)
         alt = rng.random() < 0.5 and funct3 in (0b000, 0b101)
@@ -822,12 +1063,15 @@ def random_program(rng, length, gap):
     for rd in RANDOM_REGS[1:]:
         program += li(rd, rng.getrandbits(32))
     for _ in range(length):
-        program += [random_instruction(rng)] + [NOP] * gap
+        program += [random_instruction(rng, 4 * len(program))] + [NOP] * gap
     return program
 
 
-async def check_against_model(dut, program, mem):
+async def check_against_model(dut, program, mem, min_taken=0):
     want_wb, model = run_model(program, mem)
+    dut._log.info(f"model: {len(want_wb)} writebacks, {model.taken} redirects")
+    # A random test whose branches are never taken tests nothing about flushing.
+    assert model.taken >= min_taken, f"only {model.taken} redirects in the program"
     got_wb, got_mem = await run(dut, program, dict(mem))
 
     # Retirement order, not just final state: a dropped or duplicated
@@ -864,11 +1108,13 @@ async def test_random_padded_programs_match_model(dut):
     wrong.
     """
     rng = seeded_rng(dut)
-    await check_against_model(dut, random_program(rng, 120, HAZARD_GAP), random_mem(rng))
+    await check_against_model(dut, random_program(rng, 120, HAZARD_GAP), random_mem(rng),
+                              min_taken=5)
 
 
 @cocotb.test()
 async def test_random_dense_programs_match_model(dut):
     """No padding: every hazard the random stream happens to produce."""
     rng = seeded_rng(dut)
-    await check_against_model(dut, random_program(rng, 400, 0), random_mem(rng))
+    await check_against_model(dut, random_program(rng, 400, 0), random_mem(rng),
+                              min_taken=20)

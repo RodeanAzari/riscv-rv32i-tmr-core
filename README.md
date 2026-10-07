@@ -11,11 +11,12 @@ Current state of the work: [docs/PROGRESS.md](docs/PROGRESS.md).
 ## Status
 
 **Stage 1, Phase A — working core. In progress.** All five stages
-implemented: the core runs straight-line programs end to end, including all
-eight loads and stores, with full forwarding and a one-cycle load-use stall.
-Both memory ports are BRAM-timed. Checked against a Python golden model on
-dense random programs. Branches and jumps still to come; they decode inert
-rather than half-working.
+implemented, and 37 of the 40 RV32I instructions: all ALU operations, loads
+and stores, branches, JAL and JALR. Full forwarding, a one-cycle load-use
+stall, and branches resolved in EX with static not-taken prediction (taken
+costs two cycles). Both memory ports are BRAM-timed. Checked against a Python
+golden model on dense random programs with branches and jumps. FENCE, ECALL
+and EBREAK still decode inert rather than half-working.
 
 | Stage | Phases | State |
 |---|---|---|
@@ -24,7 +25,7 @@ rather than half-working.
 
 ```
 make lint    # Verilator 5.050 lint, zero warnings
-make sim     # cocotb 2.1.0 regression, 95/95 passing
+make sim     # cocotb 2.1.0 regression, 113/113 passing
 make synth   # out-of-context synth + P&R, reports to docs/reports/
 ```
 
@@ -43,9 +44,9 @@ share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
 
 | Metric | Value |
 |---|---|
-| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 110.4 MHz *(no branches yet)* |
+| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 100.6 MHz *(Phase A in progress)* |
 | Fmax, board-level | — |
-| LUT / FF / BRAM / DSP | 818 / 489 / 0 / 0 *(no branches yet)* |
+| LUT / FF / BRAM / DSP | 963 / 492 / 0 / 0 *(Phase A in progress)* |
 | CPI / IPC (Dhrystone, CoreMark) | — |
 | Formal: properties proven, proof depth | — |
 | Bugs formal caught that simulation missed | — |

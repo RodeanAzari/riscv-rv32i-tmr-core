@@ -1,8 +1,8 @@
 // RV32I instruction decode: register addresses, the immediate, and the control
 // the EX, MEM and WB stages consume.
 //
-// Instructions not yet implemented (branches, jumps, FENCE, ECALL, EBREAK)
-// decode to rd_we_o = 0 and no memory access. They are inert rather than
+// Instructions not yet implemented (FENCE, ECALL, EBREAK) decode to
+// rd_we_o = 0, no memory access and no redirect. They are inert rather than
 // wrong. That matters more than it sounds: a half-implemented instruction that
 // writes a plausible-looking value is exactly the kind of fault riscv-formal
 // will later report as a forwarding bug, sending the hunt to the wrong place.
@@ -30,9 +30,17 @@ module riscv_decoder #(
     output logic              alu_a_sel_zero_o,
     output logic              alu_b_sel_imm_o,
 
+    // Control flow, resolved in EX. branch_o: conditional, funct3 is the
+    // condition. jump_o: JAL or JALR -- always taken, and rd gets the link
+    // address pc + 4. jalr_o: the target is rs1 + imm rather than pc + imm.
+    output logic              branch_o,
+    output logic              jump_o,
+    output logic              jalr_o,
+
     // MEM / WB control. mem_read_o doubles as the writeback select (load data
-    // rather than the ALU result) -- in RV32I the two are the same question
-    // until JAL/JALR add a third writeback source.
+    // rather than the EX result). The link address of a jump is not a third
+    // writeback source: it replaces the ALU result in EX, so it forwards from
+    // EX/MEM like any other result.
     output logic              mem_read_o,
     output logic              mem_write_o,
     output logic [2:0]        mem_funct3_o,
@@ -43,6 +51,7 @@ module riscv_decoder #(
   localparam logic [6:0] OPCODE_LUI    = 7'b0110111;
   localparam logic [6:0] OPCODE_AUIPC  = 7'b0010111;
   localparam logic [6:0] OPCODE_JAL    = 7'b1101111;
+  localparam logic [6:0] OPCODE_JALR   = 7'b1100111;
   localparam logic [6:0] OPCODE_BRANCH = 7'b1100011;
   localparam logic [6:0] OPCODE_LOAD   = 7'b0000011;
   localparam logic [6:0] OPCODE_STORE  = 7'b0100011;
@@ -62,9 +71,9 @@ module riscv_decoder #(
   assign rs2_addr_o = instr_i[24:20];
   assign rd_addr_o  = instr_i[11:7];
 
-  // Load/store width and signedness. Not funct3_o: for a load or store the ALU
-  // computes the address, so funct3_o must say ADD and cannot also carry the
-  // width. Extracted unconditionally like the register fields; mem_read_o and
+  // Load/store width and signedness, and a branch's condition. Not funct3_o:
+  // for a load or store the ALU computes the address, so funct3_o must say ADD
+  // and cannot also carry the width. Extracted unconditionally like the register fields; mem_read_o and
   // mem_write_o decide whether anything uses it.
   assign mem_funct3_o = funct3;
 
@@ -121,6 +130,9 @@ module riscv_decoder #(
     alu_a_sel_pc_o   = 1'b0;
     alu_a_sel_zero_o = 1'b1;
     alu_b_sel_imm_o  = 1'b1;
+    branch_o         = 1'b0;
+    jump_o           = 1'b0;
+    jalr_o           = 1'b0;
     mem_read_o       = 1'b0;
     mem_write_o      = 1'b0;
     rd_we_o          = 1'b0;
@@ -168,6 +180,23 @@ module riscv_decoder #(
       OPCODE_STORE: begin
         alu_a_sel_zero_o = 1'b0;      // rs1
         mem_write_o      = 1'b1;
+      end
+
+      // The ALU is idle for all three: the condition and target have their
+      // own logic in EX, and a jump's link address replaces the ALU result.
+      OPCODE_BRANCH: begin
+        branch_o = 1'b1;
+      end
+
+      OPCODE_JAL: begin
+        jump_o  = 1'b1;
+        rd_we_o = 1'b1;
+      end
+
+      OPCODE_JALR: begin
+        jump_o  = 1'b1;
+        jalr_o  = 1'b1;
+        rd_we_o = 1'b1;
       end
 
       default: ;  // inert: defaults above already write nothing

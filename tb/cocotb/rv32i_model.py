@@ -5,13 +5,13 @@ the core -- that is the point (CLAUDE.md 11, golden model before RTL). It has no
 notion of stages, forwarding or stalls: whatever the pipeline does to get there,
 the architectural result of a program must match this.
 
-Memory matches the core's documented misalignment assumption (docs/PROGRESS.md):
-address bits below the access size are ignored. That is this core's chosen
-behaviour, not RV32I's, and it is the one place the model follows a design
-decision rather than the spec.
+Memory and control flow match the core's documented misalignment assumption
+(docs/PROGRESS.md): address bits below the access size are ignored, and a jump
+or branch target drops bits [1:0]. RV32I would trap on both instead; this is
+the one place the model follows a design decision rather than the spec.
 
-Not yet modelled: branches, JAL/JALR, FENCE, ECALL/EBREAK. They raise rather
-than guess, so a random generator that emits one fails loudly.
+Not yet modelled: FENCE, ECALL/EBREAK. They raise rather than guess, so a
+random generator that emits one fails loudly.
 """
 
 MASK32 = 0xFFFF_FFFF
@@ -19,6 +19,7 @@ NOP = 0x0000_0013
 
 OP, OP_IMM, LUI, AUIPC = 0b0110011, 0b0010011, 0b0110111, 0b0010111
 LOAD, STORE = 0b0000011, 0b0100011
+BRANCH, JAL, JALR = 0b1100011, 0b1101111, 0b1100111
 
 
 def sext(value, bits):
@@ -49,6 +50,14 @@ def alu(funct3, alt, a, b):
     return a & b
 
 
+def branch_taken(funct3, a, b):
+    """BEQ BNE - - BLT BGE BLTU BGEU, by funct3. 010/011 are reserved."""
+    if funct3 in (0b010, 0b011):
+        raise NotImplementedError(f"model: reserved branch funct3 {funct3:#05b}")
+    cond = {0b00: a == b, 0b10: signed(a) < signed(b), 0b11: a < b}[funct3 >> 1]
+    return cond != bool(funct3 & 1)        # odd funct3 is the negation
+
+
 class RV32I:
     """Architectural state: pc, x0-x31, and data memory.
 
@@ -59,6 +68,7 @@ class RV32I:
         self.pc = 0
         self.x = [0] * 32
         self.mem = dict(mem or {})
+        self.taken = 0          # redirects: taken branches and jumps
 
     def _write(self, rd, value):
         if rd:
@@ -68,6 +78,10 @@ class RV32I:
         size = 1 << (funct3 & 0b11)
         addr &= MASK32 & ~(size - 1)            # the misalignment assumption
         return addr & ~0b11, (addr & 0b11) * 8, size * 8
+
+    def _jump(self, target):
+        self.pc = target & MASK32 & ~0b11       # the misalignment assumption
+        self.taken += 1
 
     def step(self, instr):
         """Execute one instruction. Returns (rd, value) if it writes a
@@ -80,6 +94,22 @@ class RV32I:
         imm_i = sext(instr >> 20, 12)
         imm_s = sext(((instr >> 25) << 5) | ((instr >> 7) & 0x1F), 12)
         imm_u = instr & 0xFFFF_F000
+        imm_b = sext((((instr >> 31) & 1) << 12) | (((instr >> 7) & 1) << 11)
+                     | (((instr >> 25) & 0x3F) << 5) | (((instr >> 8) & 0xF) << 1), 13)
+        imm_j = sext((((instr >> 31) & 1) << 20) | (((instr >> 12) & 0xFF) << 12)
+                     | (((instr >> 20) & 1) << 11) | (((instr >> 21) & 0x3FF) << 1), 21)
+
+        if opcode == BRANCH:
+            if branch_taken(funct3, rs1, rs2):
+                self._jump(self.pc + imm_b)
+            else:
+                self.pc += 4
+            return None
+        if opcode in (JAL, JALR):
+            link = (self.pc + 4) & MASK32
+            self._jump(self.pc + imm_j if opcode == JAL else rs1 + imm_i)
+            self._write(rd, link)      # after reading rs1: jalr x1, 0(x1) is legal
+            return rd, link
 
         if opcode == OP:
             result = alu(funct3, (instr >> 30) & 1, rs1, rs2)
@@ -110,12 +140,18 @@ class RV32I:
         return rd, result & MASK32
 
 
-def run_model(program, mem=None):
-    """Run program from address 0 to its end. Returns (writebacks, model)."""
+def run_model(program, mem=None, max_steps=100_000):
+    """Run program from address 0 until the pc leaves it -- past the end, as a
+    forward jump can. Returns (writebacks, model). max_steps stops a program
+    that loops forever from hanging the test instead of failing it."""
     model = RV32I(mem)
     writebacks = []
-    while model.pc // 4 < len(program):
+    for _ in range(max_steps):
+        if model.pc // 4 >= len(program):
+            break
         wb = model.step(program[model.pc // 4])
         if wb is not None:
             writebacks.append(wb)
+    else:
+        raise RuntimeError(f"model: still running after {max_steps} instructions")
     return writebacks, model
