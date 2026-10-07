@@ -25,7 +25,7 @@ and EBREAK still decode inert rather than half-working.
 
 ```
 make lint    # Verilator 5.050 lint, zero warnings
-make sim     # cocotb 2.1.0 regression, 113/113 passing
+make sim     # cocotb 2.1.0 regression, 116/116 passing
 make synth   # out-of-context synth + P&R, reports to docs/reports/
 ```
 
@@ -44,7 +44,7 @@ share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
 
 | Metric | Value |
 |---|---|
-| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 100.6 MHz *(Phase A in progress)* |
+| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 100.7 MHz *(Phase A in progress)* |
 | Fmax, board-level | — |
 | LUT / FF / BRAM / DSP | 963 / 492 / 0 / 0 *(Phase A in progress)* |
 | CPI / IPC (Dhrystone, CoreMark) | — |

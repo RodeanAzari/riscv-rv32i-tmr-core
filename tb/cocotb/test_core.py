@@ -736,6 +736,48 @@ async def test_load_use_on_rs2(dut):
 
 
 @cocotb.test()
+async def test_pointer_chase_load_after_load(dut):
+    """lw x1, 16(x0); lw x1, 0(x1) -- a linked-list walk. The bubble the stall
+    inserts is a copy of the waiting load (ID/EX clears only its control
+    bits), so if it kept mem_read it would stall on itself forever."""
+    program = [enc_load(LW, rd=1, imm=16), enc_load(LW, rd=1, imm=0, rs1=1),
+               enc_i(3, rd=2)]
+    writebacks, _ = await run(dut, program, mem={16: 32, 32: 7})
+    assert [(r, v) for r, v in writebacks if r] == [(1, 32), (1, 7), (2, 3)], (
+        f"writebacks {writebacks}"
+    )
+
+
+@cocotb.test()
+async def test_load_use_branch_is_not_evaluated_in_the_bubble(dut):
+    """lw x4, 16(x0); beq x4, x1. During the stall, EX/MEM holds the load's
+    ADDRESS. With x1 = 16 a bubble that kept the branch bit would compare 16
+    == 16 and take; the real branch compares the data, 5, and must not."""
+    program = li_all(x1=16) + GAP + [
+        enc_load(LW, rd=4, imm=16),
+        enc_b(BEQ, 4, 1, 8),
+        enc_i(1, rd=3),                                 # not taken: runs
+        enc_i(2, rd=5)]
+    writebacks, _ = await run(dut, program, mem={16: 5})
+    assert final_regs(writebacks).get(3) == 1, f"retired {writebacks}"
+
+
+@cocotb.test()
+async def test_branch_in_the_shadow_of_a_jump_does_not_redirect(dut):
+    """jal over an always-taken beq: the beq is the wrong-path word in ID
+    when the jal redirects. Its bubble must not redirect a second time."""
+    program = [enc_jal(0, 12),                          # 0  -> 12
+               enc_b(BEQ, 0, 0, 20),                    # 4  wrong path, -> 24
+               enc_i(1, rd=3),                          # 8  wrong path
+               enc_i(5, rd=5),                          # 12 target
+               enc_i(6, rd=6),                          # 16
+               NOP,                                     # 20
+               enc_i(7, rd=7)]                          # 24
+    writebacks, _ = await run(dut, program)
+    assert [r for r, _ in writebacks if r] == [5, 6, 7], f"retired {writebacks}"
+
+
+@cocotb.test()
 async def test_load_with_one_between_does_not_stall(dut):
     """lw; nop; use -- the load is already in MEM/WB when the use reaches EX,
     so forwarding suffices. A stall here would be a wasted cycle."""

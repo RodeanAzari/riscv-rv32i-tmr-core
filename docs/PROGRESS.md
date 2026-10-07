@@ -27,10 +27,11 @@ flushes IF/ID and ID/EX and costs two cycles, not taken costs none. FENCE,
 ECALL and EBREAK decode **inert** (`rd_we = 0`, no memory access, no
 redirect).
 
-**Timing margin is now gone: +0.059 ns at 100 MHz out-of-context**, and the
-paths that cross the memory ports are not yet timed at all. The critical path
-is branch resolution ending in the ID/EX flush. See the synthesis trend notes;
-the two levers are in Next up.
+**Timing margin is still effectively zero: +0.073 ns at 100 MHz
+out-of-context**, and the paths that cross the memory ports are not yet timed
+at all. The critical path is branch resolution, and more than half of it is the
+forwarding decision in front of the comparator. See the synthesis trend notes
+and Next up §1.
 
 Both memories are now BRAM-timed in the testbench as well as in the design.
 The IF timing bug found during MEM + WB is fixed — see Decisions.
@@ -44,7 +45,7 @@ forwarding and branch commits are local only (`git push` to sync, and CI runs on
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 113/113 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch) |
+| `make sim` | 116/116 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch) |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | CI on push | green (lint + sim) |
 
@@ -73,8 +74,8 @@ MEM/WB) and WB (load alignment, writeback mux).
   observe, and `rvfi_rd_addr`/`rvfi_rd_wdata` in waiting
 - **Branches and jumps resolve in EX.** `redirect` (a jump, or a branch whose
   condition holds) puts `redirect_target` on `pc_next`, so the pc and the BRAM
-  take the target on the same edge, and loads NOPs into IF/ID and ID/EX — the
-  two younger words already fetched. Redirect outranks stall in the `pc_next`
+  take the target on the same edge, flushes IF/ID to a NOP and inserts a
+  bubble into ID/EX — the two younger words already fetched. Redirect outranks stall in the `pc_next`
   mux, though the two cannot coincide (see Decisions). The target is a
   dedicated adder, `(jalr ? rs1 : pc) + imm` on the **forwarded** rs1, with
   bits [1:0] masked off. A jump's link address `pc + 4` replaces the ALU
@@ -98,8 +99,18 @@ no second copy of an encoding. Writes to x0 are never forwarded. The stall
 compares the rs1/rs2 **fields** whether or not the instruction uses them — a
 false match costs a cycle, never correctness. In the core, a stall holds the
 pc and IF/ID (the pc mux re-presents `pc`, so the BRAM re-reads the word it
-holds) and loads a NOP-decode bubble into ID/EX. Store data in EX/MEM is the
+holds) and inserts a bubble into ID/EX. Store data in EX/MEM is the
 **forwarded** rs2.
+
+**A bubble clears five bits, not the whole of ID/EX:** `rd_we`, `mem_read`,
+`mem_write`, `branch`, `jump` — the only fields that can act. The rest hold the
+squashed instruction's values, which compute a result nothing writes. So
+`id_ex_pc_o`/`id_ex_instr_o` show the squashed instruction during a bubble,
+not a NOP; RVFI's valid bit has to distinguish bubbles regardless. Each of the
+five is pinned by a test that fails if it is left set: notably `mem_read`
+(a stall bubble copying `lw x1, 0(x1)` would stall on itself forever) and
+`branch` (a stall bubble would evaluate the branch on the load's *address*
+forwarded from EX/MEM; a redirect bubble would redirect a second time).
 
 `rtl/core/riscv_mem_align.sv` — byte lanes for both directions: stores
 replicate data across lanes and raise strobes; loads pick the lane and sign- or
@@ -119,7 +130,7 @@ would have forced. x0 invariance and WB→ID write-first forwarding are both
 implemented here rather than in the surrounding pipeline, because both are
 formal properties in CLAUDE.md §5.5.
 
-`tb/cocotb/` — 113 tests across seven toplevels: `test_core` (52), `test_alu`
+`tb/cocotb/` — 116 tests across seven toplevels: `test_core` (55), `test_alu`
 (16), `test_regfile` (8), `test_decoder` (29), `test_mem_align` (4, each an
 exhaustive sweep), `test_hazard` (2; one sweeps all 17,496 input combinations
 over x0–x2), `test_branch` (2: corner pairs, and random pairs that are equal,
@@ -201,6 +212,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-07 | IF fix: IMEM driven from `pc_next` | 712 | 489 | 24 | +2.846 | 139.8 | +2.9 |
 | 2026-10-07 | Forwarding + load-use stall (hazard unit) | 818 | 489 | 24 | +0.942 | 110.4 | −29.4 |
 | 2026-10-07 | Branches + JAL/JALR: comparator, target adder, flush | 963 | 492 | 47 | +0.059 | 100.6 | −9.8 |
+| 2026-10-07 | Bubble clears 5 control bits, not all of ID/EX | 963 | 492 | 47 | +0.073 | 100.7 | +0.1 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -270,7 +282,16 @@ so registering the selects in ID still helps; the new lever is the back end
 three new carry structures: the target adder, the `pc + 4` link adder, and
 the comparator.
 
-**The out-of-context slack is optimistic, now +0.059 ns.** Three
+The bubble row: **a fix that worked and did not help.** The flush's endpoint
+fanout fell 171 → 5 and that last net 1.06 → 0.64 ns, but placement shifted
+the rest of the same path and absorbed it: +0.014 ns overall, noise. LUT and
+FF unchanged — the reset pins were free; their cost was purely routing. What
+the report shows instead is where the time is: `mem_wb` rd → hazard compare
+(fo 98) → forward select (fo 54) → forwarding mux is ~5.1 ns of the 9.2 ns
+path, before the comparator has an operand. That is the registered-selects
+lever.
+
+**The out-of-context slack is optimistic, now +0.073 ns.** Three
 paths that matter on the board cross the core's ports and are untimed here:
 `pc + 4` / stall mux → `imem_addr_o`, the stall comparator and now the whole
 branch-resolution path → `imem_addr_o`, and
@@ -482,6 +503,15 @@ the honest answer rather than pretending it fits on a hosted one.
   `auipc`: checking which instruction ran is not enough, because IMEM ignores
   the low bits too — a first version of the test missed a planted bug for
   exactly that reason, and only the random tests caught it.
+- **A bubble clears only ID/EX's five control bits** (2026-10-07). Done to
+  take the flush off 171 reset pins; measured gain was noise (see the trend
+  notes), kept anyway because the bits it no longer drives are free and the
+  analysis behind it — which fields can act — is the one the RVFI valid bit
+  needs. It exposed two test gaps the full flush had been hiding, since a
+  zeroed bubble could never resemble a real instruction: a load-after-load
+  pointer chase, and a branch in a stall or redirect bubble. The random test
+  missed both: it addresses loads off x0, and evidently rarely puts a taken
+  branch directly behind a redirect.
 - **Store data is forwarded** (2026-10-07). Not in the original plan. EX/MEM
   was copying rs2 out of ID/EX, so `addi x1; sw x1` back to back would have
   stored a stale x1. Found while designing the muxes, not in test, and covered
@@ -541,19 +571,14 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-### 1. Timing margin (decide before RVFI)
+### 1. Timing margin: register the forwarding selects
 
-+0.059 ns is no margin, and the board-level run will be worse (the memory-port
-paths are untimed here). Two levers, each its own measured slice:
-
-- **Flush only the control bits of ID/EX.** The flush drives the sync-reset
-  pin of all 171 ID/EX flops. A bubble only needs to be inert: `rd_we`,
-  `mem_read`, `mem_write`, `branch`, `jump` low. Clearing those five and
-  letting the data fields hold wrong-path junk cuts the fanout ~30x. Cost: the
-  ILA/RVFI view of ID/EX shows junk in a bubble — which the RVFI valid bit has
-  to cover anyway.
-- **Register the forwarding selects in ID** (from the forwarding row): takes
-  the hazard comparators off the front of both the ALU path and this one.
++0.073 ns is no margin, and the board-level run will be worse (the memory-port
+paths are untimed here). The bubble change took the flush's fanout off the
+path; the front half — the forwarding decision — is what remains. Compute the
+selects in ID, comparing ID's rs1/rs2 against the rd of ID/EX and EX/MEM (the
+instructions that will be in EX/MEM and MEM/WB next cycle), and register them
+into ID/EX, so EX's muxes switch off flops. Helps the ALU path too.
 
 ### 2. RVFI port + riscv-formal
 
@@ -604,9 +629,8 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-07 — branches, JAL and JALR landed (committed, not
-pushed): `riscv_branch` comparator, target adder, link address in EX, IF/ID +
-ID/EX flush, 2-cycle taken penalty. Golden model gained control flow, checked
-against GNU `as`; random programs now branch. 113 tests. Fmax 110.4 → 100.6
-MHz, +0.059 ns at 100 MHz. Next session: decide on the timing levers (Next up
-§1), then RVFI.*
+*Last updated: 2026-10-07 — branches, JAL and JALR landed, then a bubble
+that clears only ID/EX's five control bits (+3 tests pinning each bit). Fmax
+100.7 MHz, +0.073 ns at 100 MHz: the flush fanout is gone, the forwarding
+decision remains. Next: register the forwarding selects (Next up §1), then
+RVFI.*

@@ -189,9 +189,20 @@ module riscv_core #(
 
   // ID/EX. Resets to a NOP's decode: x0 sources and destination, zero data, so
   // EX never sees X and never appears to write a real register on cycle one.
-  // A stall loads the same NOP decode -- a bubble -- while IF/ID holds the
-  // waiting instruction. A redirect loads it too: the instruction in ID is
-  // the one directly behind the branch, on the wrong path.
+  //
+  // A stall inserts a bubble while IF/ID holds the waiting instruction; a
+  // redirect inserts one in place of the wrong-path instruction in ID. A
+  // bubble only has to be INERT, so only the five bits that can act are
+  // cleared: rd_we (register write, forwarding), mem_read (load-use stall, WB
+  // select), mem_write, branch and jump (redirect). Every other field is
+  // consumed only under one of those five, so in a bubble it may hold the
+  // wrong-path instruction's values -- they compute a result nothing writes.
+  //
+  // Clearing all ~170 flops instead puts redirect, the end of the critical
+  // path, onto that many synchronous-reset pins. The cost of not doing so is
+  // visibility: id_ex_pc_o / id_ex_instr_o show the squashed instruction
+  // during a bubble, not a NOP. RVFI's valid bit has to tell bubbles apart
+  // anyway (docs/rvfi-plan.md).
   //
   // RVFI note: id_ex_rs1_rdata_o / id_ex_rs2_rdata_o are what the register
   // file returned, which is NOT what the instruction computed with whenever
@@ -234,7 +245,7 @@ module riscv_core #(
   );
 
   always_ff @(posedge clk_i) begin
-    if (rst_i || stall || redirect) begin
+    if (rst_i) begin
       id_ex_pc_o        <= RESET_VECTOR;
       id_ex_instr_o     <= NOP;
       id_ex_rs1_addr_o  <= '0;
@@ -248,13 +259,8 @@ module riscv_core #(
       id_ex_a_sel_pc    <= 1'b0;
       id_ex_a_sel_zero  <= 1'b1;
       id_ex_b_sel_imm   <= 1'b1;
-      id_ex_branch      <= 1'b0;
-      id_ex_jump        <= 1'b0;
       id_ex_jalr        <= 1'b0;
-      id_ex_mem_read    <= 1'b0;
-      id_ex_mem_write   <= 1'b0;
       id_ex_mem_funct3  <= 3'b000;
-      id_ex_rd_we       <= 1'b0;
     end else begin
       id_ex_pc_o        <= if_id_pc_o;
       id_ex_instr_o     <= if_id_instr_o;
@@ -269,13 +275,25 @@ module riscv_core #(
       id_ex_a_sel_pc    <= dec_a_sel_pc;
       id_ex_a_sel_zero  <= dec_a_sel_zero;
       id_ex_b_sel_imm   <= dec_b_sel_imm;
-      id_ex_branch      <= dec_branch;
-      id_ex_jump        <= dec_jump;
       id_ex_jalr        <= dec_jalr;
+      id_ex_mem_funct3  <= dec_mem_funct3;
+    end
+  end
+
+  // The five bits a bubble clears.
+  always_ff @(posedge clk_i) begin
+    if (rst_i || stall || redirect) begin
+      id_ex_rd_we       <= 1'b0;
+      id_ex_mem_read    <= 1'b0;
+      id_ex_mem_write   <= 1'b0;
+      id_ex_branch      <= 1'b0;
+      id_ex_jump        <= 1'b0;
+    end else begin
+      id_ex_rd_we       <= dec_rd_we;
       id_ex_mem_read    <= dec_mem_read;
       id_ex_mem_write   <= dec_mem_write;
-      id_ex_mem_funct3  <= dec_mem_funct3;
-      id_ex_rd_we       <= dec_rd_we;
+      id_ex_branch      <= dec_branch;
+      id_ex_jump        <= dec_jump;
     end
   end
 
