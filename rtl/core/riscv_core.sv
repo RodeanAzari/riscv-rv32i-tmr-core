@@ -220,23 +220,23 @@ module riscv_core #(
   logic [2:0] id_ex_mem_funct3;
   logic       id_ex_rd_we;
 
-  // Hazard detection. Forwarding selects are consumed in EX, the stall in IF,
-  // IF/ID and here.
+  // Hazard detection. The forwarding selects are decided here in ID and
+  // registered into ID/EX (id_ex_fwd_*), so EX's muxes switch off flops --
+  // see riscv_hazard. The stall is consumed in IF, IF/ID and here.
   logic fwd_rs1_ex_mem, fwd_rs1_mem_wb, fwd_rs2_ex_mem, fwd_rs2_mem_wb;
+  logic id_ex_fwd_rs1_ex_mem, id_ex_fwd_rs1_mem_wb;
+  logic id_ex_fwd_rs2_ex_mem, id_ex_fwd_rs2_mem_wb;
 
   riscv_hazard #(
       .ADDR_W (ADDR_W)
   ) u_hazard (
       .id_rs1_addr_i    (dec_rs1_addr),
       .id_rs2_addr_i    (dec_rs2_addr),
-      .ex_rs1_addr_i    (id_ex_rs1_addr_o),
-      .ex_rs2_addr_i    (id_ex_rs2_addr_o),
       .ex_rd_addr_i     (id_ex_rd_addr_o),
+      .ex_rd_we_i       (id_ex_rd_we),
       .ex_mem_read_i    (id_ex_mem_read),
       .mem_rd_addr_i    (ex_mem_rd_addr_o),
       .mem_rd_we_i      (ex_mem_rd_we_o),
-      .wb_rd_addr_i     (wb_rd_addr_o),
-      .wb_rd_we_i       (wb_rd_we_o),
       .fwd_rs1_ex_mem_o (fwd_rs1_ex_mem),
       .fwd_rs1_mem_wb_o (fwd_rs1_mem_wb),
       .fwd_rs2_ex_mem_o (fwd_rs2_ex_mem),
@@ -261,6 +261,10 @@ module riscv_core #(
       id_ex_b_sel_imm   <= 1'b1;
       id_ex_jalr        <= 1'b0;
       id_ex_mem_funct3  <= 3'b000;
+      id_ex_fwd_rs1_ex_mem <= 1'b0;
+      id_ex_fwd_rs1_mem_wb <= 1'b0;
+      id_ex_fwd_rs2_ex_mem <= 1'b0;
+      id_ex_fwd_rs2_mem_wb <= 1'b0;
     end else begin
       id_ex_pc_o        <= if_id_pc_o;
       id_ex_instr_o     <= if_id_instr_o;
@@ -277,6 +281,10 @@ module riscv_core #(
       id_ex_b_sel_imm   <= dec_b_sel_imm;
       id_ex_jalr        <= dec_jalr;
       id_ex_mem_funct3  <= dec_mem_funct3;
+      id_ex_fwd_rs1_ex_mem <= fwd_rs1_ex_mem;
+      id_ex_fwd_rs1_mem_wb <= fwd_rs1_mem_wb;
+      id_ex_fwd_rs2_ex_mem <= fwd_rs2_ex_mem;
+      id_ex_fwd_rs2_mem_wb <= fwd_rs2_mem_wb;
     end
   end
 
@@ -300,7 +308,7 @@ module riscv_core #(
   // ---------------------------------------------------------------- EX -----
   // Forwarding muxes, then operand selection. ex_rs1 / ex_rs2 are the values
   // this instruction architecturally read -- the RVFI rs1_rdata / rs2_rdata
-  // taps.
+  // taps. The selects were decided in ID and arrive here off flops.
   //
   // The MEM/WB source is wb_rd_wdata, the writeback mux output, so a load's
   // data forwards along with ALU results. That makes the longest path into EX
@@ -311,15 +319,15 @@ module riscv_core #(
   logic [XLEN-1:0] alu_a, alu_b, alu_result;
 
   always_comb begin
-    if      (fwd_rs1_ex_mem) ex_rs1 = ex_mem_alu_result_o;
-    else if (fwd_rs1_mem_wb) ex_rs1 = wb_rd_wdata;
-    else                     ex_rs1 = id_ex_rs1_rdata_o;
+    if      (id_ex_fwd_rs1_ex_mem) ex_rs1 = ex_mem_alu_result_o;
+    else if (id_ex_fwd_rs1_mem_wb) ex_rs1 = wb_rd_wdata;
+    else                           ex_rs1 = id_ex_rs1_rdata_o;
   end
 
   always_comb begin
-    if      (fwd_rs2_ex_mem) ex_rs2 = ex_mem_alu_result_o;
-    else if (fwd_rs2_mem_wb) ex_rs2 = wb_rd_wdata;
-    else                     ex_rs2 = id_ex_rs2_rdata_o;
+    if      (id_ex_fwd_rs2_ex_mem) ex_rs2 = ex_mem_alu_result_o;
+    else if (id_ex_fwd_rs2_mem_wb) ex_rs2 = wb_rd_wdata;
+    else                           ex_rs2 = id_ex_rs2_rdata_o;
   end
 
   always_comb begin

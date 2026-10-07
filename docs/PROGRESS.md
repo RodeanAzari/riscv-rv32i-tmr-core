@@ -27,11 +27,10 @@ flushes IF/ID and ID/EX and costs two cycles, not taken costs none. FENCE,
 ECALL and EBREAK decode **inert** (`rd_we = 0`, no memory access, no
 redirect).
 
-**Timing margin is still effectively zero: +0.073 ns at 100 MHz
-out-of-context**, and the paths that cross the memory ports are not yet timed
-at all. The critical path is branch resolution, and more than half of it is the
-forwarding decision in front of the comparator. See the synthesis trend notes
-and Next up §1.
+**Timing margin: +0.394 ns at 100 MHz out-of-context (104.1 MHz)**, after
+registering the forwarding selects. Thin, and the paths that cross the memory
+ports are not yet timed at all. The critical path is branch resolution fed by
+the MEM/WB forward of the writeback mux. See the synthesis trend notes.
 
 Both memories are now BRAM-timed in the testbench as well as in the design.
 The IF timing bug found during MEM + WB is fixed — see Decisions.
@@ -92,10 +91,15 @@ forwarded operands. One magnitude comparison serves BLT and BLTU: when the sign
 bits agree, signed and unsigned order are the same; when they differ, the
 operand with its sign bit set is smaller. Reserved funct3 010/011 never take.
 
-`rtl/core/riscv_hazard.sv` — forwarding selects for EX and load-use detection
-for ID, purely combinational. Selects are one-hot per operand with priority
-already resolved (EX/MEM beats MEM/WB: the younger write), so the core holds
-no second copy of an encoding. Writes to x0 are never forwarded. The stall
+`rtl/core/riscv_hazard.sv` — forwarding selects and load-use detection, both
+decided **in ID**, purely combinational. The selects compare ID's rs1/rs2
+against ID/EX's and EX/MEM's rd — the instructions that will be in EX/MEM and
+MEM/WB when the consumer reaches EX, which is exact because every stage past
+ID always advances — and the core registers them into ID/EX, so EX's muxes
+switch off flops. When ID does not advance (stall, redirect) the selects land
+in a bubble and ID decides again next cycle. One-hot per operand with priority
+already resolved (the ID/EX producer wins: the younger write), so the core
+holds no second copy of an encoding. Writes to x0 are never forwarded. The stall
 compares the rs1/rs2 **fields** whether or not the instruction uses them — a
 false match costs a cycle, never correctness. In the core, a stall holds the
 pc and IF/ID (the pc mux re-presents `pc`, so the BRAM re-reads the word it
@@ -132,8 +136,8 @@ formal properties in CLAUDE.md §5.5.
 
 `tb/cocotb/` — 116 tests across seven toplevels: `test_core` (55), `test_alu`
 (16), `test_regfile` (8), `test_decoder` (29), `test_mem_align` (4, each an
-exhaustive sweep), `test_hazard` (2; one sweeps all 17,496 input combinations
-over x0–x2), `test_branch` (2: corner pairs, and random pairs that are equal,
+exhaustive sweep), `test_hazard` (2; one sweeps all 2,048 input combinations
+over x0–x3), `test_branch` (2: corner pairs, and random pairs that are equal,
 one apart or opposite in sign, against a reference using Python's own signed
 compare rather than the RTL's sign-bit shortcut). In `test_core` **both** memories are BRAM-timed models that
 sample 1 ns before each rising edge, like a flop's setup window. `feed()`
@@ -213,6 +217,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-07 | Forwarding + load-use stall (hazard unit) | 818 | 489 | 24 | +0.942 | 110.4 | −29.4 |
 | 2026-10-07 | Branches + JAL/JALR: comparator, target adder, flush | 963 | 492 | 47 | +0.059 | 100.6 | −9.8 |
 | 2026-10-07 | Bubble clears 5 control bits, not all of ID/EX | 963 | 492 | 47 | +0.073 | 100.7 | +0.1 |
+| 2026-10-07 | Forwarding selects decided in ID, registered | 1095 | 496 | 47 | +0.394 | 104.1 | +3.4 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -291,7 +296,21 @@ the report shows instead is where the time is: `mem_wb` rd → hazard compare
 path, before the comparator has an operand. That is the registered-selects
 lever.
 
-**The out-of-context slack is optimistic, now +0.073 ns.** Three
+The registered-selects row: **the forwarding decision is off the critical
+path.** The new worst path starts at `mem_wb_mem_read` (the writeback select,
+fo 97) → writeback mux → forwarding mux → comparator carry chain → `redirect`
+→ the IF/ID flush (fo 95) → ID/EX control; 11 levels, 73% route. FF +4 is
+exactly the four `id_ex_fwd_*` flops. **LUT +132 is not explained.** It is in
+synthesis itself — the post-synthesis cell table already sums to 1095, and
+phys_opt reports no replication or retiming — and the mix shifted to smaller
+LUTs (LUT2 39 → 70, LUT5 108 → 172), consistent with the forwarding/operand
+muxes being restructured once their selects come off flops. Cause not
+established. Two levers remain in sight on this path: the IF/ID flush fanout
+(the same treatment as ID/EX, but IF/ID's instruction word drives decode, so it
+needs a valid bit rather than a five-bit clear), and the load data on the
+MEM/WB forward — which on the board starts at a BRAM's ~2 ns clock-to-out.
+
+**The out-of-context slack is optimistic, now +0.394 ns.** Three
 paths that matter on the board cross the core's ports and are untimed here:
 `pc + 4` / stall mux → `imem_addr_o`, the stall comparator and now the whole
 branch-resolution path → `imem_addr_o`, and
@@ -503,6 +522,13 @@ the honest answer rather than pretending it fits on a hosted one.
   `auipc`: checking which instruction ran is not enough, because IMEM ignores
   the low bits too — a first version of the test missed a planted bug for
   exactly that reason, and only the random tests caught it.
+- **Forwarding selects are decided in ID and registered** (2026-10-07). The
+  lever recorded with the forwarding row. Exact rather than speculative,
+  because stages past ID never hold: ID/EX's instruction is in EX/MEM next
+  cycle, EX/MEM's in MEM/WB. Checked by mutation in both directions it could
+  go wrong — selects used a cycle early (unregistered), and registered but
+  compared against producers a stage late — each fails ~25 core tests. +3.4
+  MHz for 4 flops (and +132 LUTs, unexplained; see the trend notes).
 - **A bubble clears only ID/EX's five control bits** (2026-10-07). Done to
   take the flush off 171 reset pins; measured gain was noise (see the trend
   notes), kept anyway because the bits it no longer drives are free and the
@@ -571,19 +597,13 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-### 1. Timing margin: register the forwarding selects
-
-+0.073 ns is no margin, and the board-level run will be worse (the memory-port
-paths are untimed here). The bubble change took the flush's fanout off the
-path; the front half — the forwarding decision — is what remains. Compute the
-selects in ID, comparing ID's rs1/rs2 against the rd of ID/EX and EX/MEM (the
-instructions that will be in EX/MEM and MEM/WB next cycle), and register them
-into ID/EX, so EX's muxes switch off flops. Helps the ALU path too.
-
-### 2. RVFI port + riscv-formal
+### 1. RVFI port + riscv-formal
 
 Needs a **valid bit** through the pipeline first: a load-use bubble and a flush
-bubble are both NOP decodes today, indistinguishable from a real NOP.
+bubble are not marked as such today — a bubble in ID/EX even carries the
+squashed instruction's pc and instr — so neither can be told from a real
+instruction. The same valid bit would let IF/ID's flush clear one bit instead
+of 64, the next timing lever on the current critical path.
 `rvfi_pc_wdata` is `redirect ? redirect_target : pc + 4` in EX.
 
 Once WB retires instructions there is something non-vacuous to prove. Needs
@@ -591,13 +611,13 @@ yosys and SymbiYosys installed, which is also the first thing `make formal`
 stops complaining about. Check reachability on every property — a vacuous pass
 proves nothing (§5.5, §9).
 
-### 3. FENCE, ECALL, EBREAK; `riscv-tests`
+### 2. FENCE, ECALL, EBREAK; `riscv-tests`
 
 FENCE can decode as a NOP on an in-order core with no caches. ECALL/EBREAK
 need a decision — no traps are in scope, but `riscv-tests` signals pass/fail
 with ECALL — then the official suite (a Phase A box).
 
-### 4. Board-level top
+### 3. Board-level top
 
 Deferred until the core executes instructions: `constr/arty_a7.xdc` pin
 constraints, a top with BRAM instruction memory and clocking, then `make prog`
@@ -629,8 +649,8 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-07 — branches, JAL and JALR landed, then a bubble
-that clears only ID/EX's five control bits (+3 tests pinning each bit). Fmax
-100.7 MHz, +0.073 ns at 100 MHz: the flush fanout is gone, the forwarding
-decision remains. Next: register the forwarding selects (Next up §1), then
-RVFI.*
+*Last updated: 2026-10-07 — branches, JAL and JALR; then two timing slices:
+a bubble clears only ID/EX's five control bits (noise), and forwarding selects
+decided in ID and registered (+3.4 MHz). 104.1 MHz, +0.394 ns at 100 MHz out of
+context. 116 tests. Next session: the RVFI port with a pipeline valid bit
+(Next up §1).*

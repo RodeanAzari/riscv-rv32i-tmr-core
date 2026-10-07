@@ -44,9 +44,9 @@ share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
 
 | Metric | Value |
 |---|---|
-| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 100.7 MHz *(Phase A in progress)* |
+| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 104.1 MHz *(Phase A in progress)* |
 | Fmax, board-level | — |
-| LUT / FF / BRAM / DSP | 963 / 492 / 0 / 0 *(Phase A in progress)* |
+| LUT / FF / BRAM / DSP | 1095 / 496 / 0 / 0 *(Phase A in progress)* |
 | CPI / IPC (Dhrystone, CoreMark) | — |
 | Formal: properties proven, proof depth | — |
 | Bugs formal caught that simulation missed | — |
