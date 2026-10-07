@@ -51,9 +51,34 @@ module riscv_core #(
     output logic [ADDR_W-1:0] wb_rd_addr_o,
     output logic [XLEN-1:0]   wb_rd_wdata_o,
 
-    // Pipeline registers, exposed for bring-up and ILA probing. The RVFI
-    // shadow fields (instr, pc, rs1_addr, rs2_addr) are carried here and go to
-    // the RVFI port when WB exists -- see docs/rvfi-plan.md.
+`ifdef RISCV_FORMAL
+    // RISC-V Formal Interface (CLAUDE.md 5.4, docs/rvfi-plan.md): one record
+    // per retired instruction, valid in WB. Verification-only -- compiled in
+    // for simulation and riscv-formal, absent from synthesis, so the trend
+    // table measures the core and not its trace harness.
+    output logic              rvfi_valid_o,
+    output logic [63:0]       rvfi_order_o,
+    output logic [XLEN-1:0]   rvfi_insn_o,
+    output logic              rvfi_trap_o,
+    output logic              rvfi_halt_o,
+    output logic              rvfi_intr_o,
+    output logic [ADDR_W-1:0] rvfi_rs1_addr_o,
+    output logic [ADDR_W-1:0] rvfi_rs2_addr_o,
+    output logic [XLEN-1:0]   rvfi_rs1_rdata_o,
+    output logic [XLEN-1:0]   rvfi_rs2_rdata_o,
+    output logic [ADDR_W-1:0] rvfi_rd_addr_o,
+    output logic [XLEN-1:0]   rvfi_rd_wdata_o,
+    output logic [XLEN-1:0]   rvfi_pc_rdata_o,
+    output logic [XLEN-1:0]   rvfi_pc_wdata_o,
+    output logic [XLEN-1:0]   rvfi_mem_addr_o,
+    output logic [3:0]        rvfi_mem_rmask_o,
+    output logic [3:0]        rvfi_mem_wmask_o,
+    output logic [XLEN-1:0]   rvfi_mem_rdata_o,
+    output logic [XLEN-1:0]   rvfi_mem_wdata_o,
+`endif
+
+    // Pipeline registers, exposed for bring-up and ILA probing. Several carry
+    // RVFI shadow fields (instr, pc, rs1_addr, rs2_addr) on their way to WB.
     output logic [XLEN-1:0]   if_id_pc_o,
     output logic [XLEN-1:0]   if_id_instr_o,
     output logic [XLEN-1:0]   id_ex_pc_o,
@@ -383,8 +408,9 @@ module riscv_core #(
   // it forwards from EX/MEM and MEM/WB like any result, and WB needs no third
   // source. The select comes straight off a flop and pc + 4 off a short adder,
   // so the only cost on the ALU's path is this one mux.
-  logic [XLEN-1:0] ex_result;
-  assign ex_result = id_ex_jump ? id_ex_pc_o + 32'd4 : alu_result;
+  logic [XLEN-1:0] ex_link, ex_result;
+  assign ex_link   = id_ex_pc_o + 32'd4;
+  assign ex_result = id_ex_jump ? ex_link : alu_result;
 
   // EX/MEM. rd_we and mem_write reset low so nothing appears to retire, and
   // nothing is stored, on cycle one. alu_result_o is the EX result: the ALU's,
@@ -484,5 +510,108 @@ module riscv_core #(
   assign wb_rd_we_o    = mem_wb_rd_we;
   assign wb_rd_addr_o  = mem_wb_rd_addr;
   assign wb_rd_wdata_o = wb_rd_wdata;
+
+`ifdef RISCV_FORMAL
+  // ------------------------------------------------------------- RVFI -----
+  // Every field is captured in the stage where it is born and rides shadow
+  // registers to WB, so one record describes one instruction. See
+  // docs/rvfi-plan.md for the field-by-field capture points.
+  //
+  // Valid bit. A bubble is not a retirement: reset NOPs, load-use bubbles and
+  // flushed wrong-path words must not raise rvfi_valid, and a bubble in ID/EX
+  // can even carry the squashed instruction's pc and instr. IF/ID's word is
+  // valid unless reset or a redirect squashed it, and holds through a stall;
+  // ID/EX's is cleared by every bubble, exactly like its five control bits.
+  // Past ID nothing holds or is squashed, so the bit simply rides along.
+  logic if_id_valid, id_ex_valid, ex_mem_valid, mem_wb_valid;
+
+  always_ff @(posedge clk_i) begin
+    if (rst_i || redirect) if_id_valid <= 1'b0;
+    else if (!stall)       if_id_valid <= 1'b1;
+  end
+
+  always_ff @(posedge clk_i) begin
+    if (rst_i) begin
+      id_ex_valid  <= 1'b0;
+      ex_mem_valid <= 1'b0;
+      mem_wb_valid <= 1'b0;
+    end else begin
+      id_ex_valid  <= if_id_valid && !stall && !redirect;
+      ex_mem_valid <= id_ex_valid;
+      mem_wb_valid <= ex_mem_valid;
+    end
+  end
+
+  // EX: the operands the instruction architecturally read -- the forwarding
+  // mux outputs, NOT id_ex_rs*_rdata_o, which is stale whenever forwarding
+  // fired (the "one that bites" in the plan) -- and the next pc. rs2's value
+  // already rides EX/MEM as store data, ex_mem_rs2_rdata.
+  //
+  // The shadow registers have no reset: a shadow is read only when the valid
+  // bit says its instruction retired, and that instruction wrote it.
+  logic [XLEN-1:0]   ex_pc_wdata;
+  assign ex_pc_wdata = redirect ? redirect_target : ex_link;
+
+  logic [ADDR_W-1:0] ex_mem_rs1_addr, ex_mem_rs2_addr;
+  logic [XLEN-1:0]   ex_mem_rs1_rdata, ex_mem_pc_wdata;
+
+  always_ff @(posedge clk_i) begin
+    ex_mem_rs1_addr  <= id_ex_rs1_addr_o;
+    ex_mem_rs2_addr  <= id_ex_rs2_addr_o;
+    ex_mem_rs1_rdata <= ex_rs1;
+    ex_mem_pc_wdata  <= ex_pc_wdata;
+  end
+
+  // MEM: the access, lane-style like the port itself -- a word address, byte
+  // masks, data in its lanes. The store strobes are the write mask. The read
+  // mask reuses the same lane logic: mem_funct3[1:0] is the access size for
+  // loads as for stores, so st_wstrb is a load's lanes too.
+  logic [ADDR_W-1:0] mem_wb_rs1_addr, mem_wb_rs2_addr;
+  logic [XLEN-1:0]   mem_wb_rs1_rdata, mem_wb_rs2_rdata, mem_wb_pc_wdata;
+  logic [XLEN-1:0]   mem_wb_mem_addr, mem_wb_mem_wdata;
+  logic [3:0]        mem_wb_mem_rmask, mem_wb_mem_wmask;
+
+  always_ff @(posedge clk_i) begin
+    mem_wb_rs1_addr  <= ex_mem_rs1_addr;
+    mem_wb_rs2_addr  <= ex_mem_rs2_addr;
+    mem_wb_rs1_rdata <= ex_mem_rs1_rdata;
+    mem_wb_rs2_rdata <= ex_mem_rs2_rdata;
+    mem_wb_pc_wdata  <= ex_mem_pc_wdata;
+    mem_wb_mem_addr  <= dmem_addr_o;
+    mem_wb_mem_rmask <= ex_mem_mem_read ? st_wstrb : 4'b0000;
+    mem_wb_mem_wmask <= dmem_wstrb_o;
+    mem_wb_mem_wdata <= dmem_wdata_o;
+  end
+
+  // WB: the record. rd reads zero when nothing is written, and rd_wdata reads
+  // zero whenever rd_addr does -- riscv-formal requires both. Load data is
+  // the BRAM output, which is this stage's register for it.
+  logic [63:0] order;
+
+  always_ff @(posedge clk_i) begin
+    if (rst_i)             order <= '0;
+    else if (mem_wb_valid) order <= order + 64'd1;
+  end
+
+  assign rvfi_valid_o     = mem_wb_valid;
+  assign rvfi_order_o     = order;
+  assign rvfi_insn_o      = mem_wb_instr_o;
+  assign rvfi_trap_o      = 1'b0;   // no traps in scope (5.1)
+  assign rvfi_halt_o      = 1'b0;
+  assign rvfi_intr_o      = 1'b0;
+  assign rvfi_rs1_addr_o  = mem_wb_rs1_addr;
+  assign rvfi_rs2_addr_o  = mem_wb_rs2_addr;
+  assign rvfi_rs1_rdata_o = mem_wb_rs1_rdata;
+  assign rvfi_rs2_rdata_o = mem_wb_rs2_rdata;
+  assign rvfi_rd_addr_o   = wb_rd_we_o ? wb_rd_addr_o : '0;
+  assign rvfi_rd_wdata_o  = (rvfi_rd_addr_o != '0) ? wb_rd_wdata : '0;
+  assign rvfi_pc_rdata_o  = mem_wb_pc_o;
+  assign rvfi_pc_wdata_o  = mem_wb_pc_wdata;
+  assign rvfi_mem_addr_o  = mem_wb_mem_addr;
+  assign rvfi_mem_rmask_o = mem_wb_mem_rmask;
+  assign rvfi_mem_wmask_o = mem_wb_mem_wmask;
+  assign rvfi_mem_rdata_o = dmem_rdata_i;
+  assign rvfi_mem_wdata_o = mem_wb_mem_wdata;
+`endif
 
 endmodule

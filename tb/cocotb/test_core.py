@@ -473,7 +473,17 @@ async def test_control_travels_with_its_instruction(dut):
 # --- MEM and WB -------------------------------------------------------------
 # Whole programs from here on, loaded into IMEM from address 0.
 
-async def run(dut, program, mem=None, timed=False, cycles=None):
+RVFI_FIELDS = ("order", "insn", "trap", "halt", "intr", "pc_rdata", "pc_wdata",
+               "rs1_addr", "rs1_rdata", "rs2_addr", "rs2_rdata",
+               "rd_addr", "rd_wdata", "mem_addr", "mem_rmask", "mem_wmask",
+               "mem_rdata", "mem_wdata")
+
+
+def rvfi_record(dut):
+    return {f: int(getattr(dut, f"rvfi_{f}_o").value) for f in RVFI_FIELDS}
+
+
+async def run(dut, program, mem=None, timed=False, cycles=None, rvfi=None):
     """Reset, run program from address 0, drain it to WB.
 
     Returns (writebacks, mem): every register write WB performed, in retirement
@@ -485,6 +495,8 @@ async def run(dut, program, mem=None, timed=False, cycles=None):
     taken branch (two flushed cycles) or stalls once. A program with a
     backward branch executes more instructions than it holds, and passes
     cycles. Past the end the core fetches NOPs, which write only x0.
+
+    Pass a list as rvfi to collect every RVFI retirement record.
     """
     mem = await reset(dut, program, mem)
     await release(dut)
@@ -498,7 +510,48 @@ async def run(dut, program, mem=None, timed=False, cycles=None):
         if int(dut.wb_rd_we_o.value):
             wb = (int(dut.wb_rd_addr_o.value), int(dut.wb_rd_wdata_o.value))
             writebacks.append((cycle, *wb) if timed else wb)
+        if rvfi is not None and int(dut.rvfi_valid_o.value):
+            rvfi.append(rvfi_record(dut))
     return writebacks, mem
+
+
+def bytes_in(mask, word):
+    """The bytes of word selected by a 4-bit lane mask, low lane first."""
+    return [(word >> (8 * i)) & 0xFF for i in range(4) if (mask >> i) & 1]
+
+
+def check_rvfi(got, want):
+    """Compare the core's RVFI retirements with the model's, one by one.
+
+    Every retirement counts -- stores, branches and NOPs too -- so a dropped,
+    duplicated or bubble-retired instruction anywhere misaligns the stream.
+    Register values are compared only where the model knows them (the
+    register file has no reset), and memory data only in the lanes the masks
+    select. Past the program's end the core retires the NOPs it fetches.
+    """
+    assert len(got) >= len(want), f"core retired {len(got)}, model {len(want)}"
+    for i, (g, w) in enumerate(zip(got, want)):
+        where = f"retirement #{i} pc={w['pc_rdata']:#x} insn={w['insn']:#010x}"
+        assert g["order"] == i, f"{where}: order {g['order']}"
+        assert (g["trap"], g["halt"], g["intr"]) == (0, 0, 0), where
+        for f in ("insn", "pc_rdata", "pc_wdata", "rs1_addr", "rs2_addr",
+                  "rd_addr", "rd_wdata", "mem_rmask", "mem_wmask"):
+            assert g[f] == w[f], f"{where}: {f} core {g[f]:#x}, model {w[f]:#x}"
+        for r in ("rs1", "rs2"):
+            if w[f"{r}_defined"]:
+                assert g[f"{r}_rdata"] == w[f"{r}_rdata"], (
+                    f"{where}: {r}_rdata core {g[f'{r}_rdata']:#x}, "
+                    f"model {w[f'{r}_rdata']:#x}")
+        if w["mem_rmask"] or w["mem_wmask"]:
+            assert g["mem_addr"] == w["mem_addr"], f"{where}: mem_addr {g['mem_addr']:#x}"
+        for f, m in (("mem_rdata", "mem_rmask"), ("mem_wdata", "mem_wmask")):
+            assert bytes_in(w[m], g[f]) == bytes_in(w[m], w[f]), (
+                f"{where}: {f} core {g[f]:#010x}, model {w[f]:#010x}")
+    for g in got[len(want):]:
+        assert g["insn"] == NOP, f"core retired {g['insn']:#010x} past the program"
+    return {"retirements": len(want),
+            "rs values checked": sum(w[f"{r}_defined"] for w in want for r in ("rs1", "rs2")),
+            "memory accesses": sum(bool(w["mem_rmask"] or w["mem_wmask"]) for w in want)}
 
 
 def final_regs(writebacks):
@@ -1110,11 +1163,14 @@ def random_program(rng, length, gap):
 
 
 async def check_against_model(dut, program, mem, min_taken=0):
-    want_wb, model = run_model(program, mem)
+    want_rvfi = []
+    want_wb, model = run_model(program, mem, traces=want_rvfi)
     dut._log.info(f"model: {len(want_wb)} writebacks, {model.taken} redirects")
     # A random test whose branches are never taken tests nothing about flushing.
     assert model.taken >= min_taken, f"only {model.taken} redirects in the program"
-    got_wb, got_mem = await run(dut, program, dict(mem))
+    got_rvfi = []
+    got_wb, got_mem = await run(dut, program, dict(mem), rvfi=got_rvfi)
+    dut._log.info(f"RVFI: {check_rvfi(got_rvfi, want_rvfi)}")
 
     # Retirement order, not just final state: a dropped or duplicated
     # instruction can leave the same final registers but not the same history.

@@ -2,7 +2,12 @@
 
 How the RISC-V Formal Interface gets built into this core, and why it is built
 the way it is. Written before the ID stage, because three more pipeline stages
-are about to be built on top of these decisions.
+were about to be built on top of these decisions.
+
+**Status (2026-10-07): the port is live in simulation.** `riscv_core` exposes
+every field below as `rvfi_*_o` under `` `ifdef RISCV_FORMAL ``, and
+`test_core` checks every retirement against the golden model. `riscv-formal`
+itself is still Phase B — yosys and SymbiYosys are not installed.
 
 CLAUDE.md §5.4 requires the port and lists its signals. This note covers the
 part a signal list does not: *where each value is captured*, and what goes
@@ -42,7 +47,7 @@ so they ride the pipeline registers as shadow fields alongside the real data.
 | `rvfi_mem_rdata` | MEM→WB | Load data lands a stage after its address |
 | `rvfi_rd_addr`, `rvfi_rd_wdata` | WB | Both read 0 when no write happens |
 | `rvfi_order` | WB | Free-running retirement counter |
-| `rvfi_valid` | WB | One pulse per retired instruction. Needs a valid bit riding the pipeline: a load-use bubble and a branch-flush bubble are both a NOP decode today, indistinguishable from a real NOP, and must not retire |
+| `rvfi_valid` | WB | One pulse per retired instruction. A valid bit rides the pipeline: cleared in IF/ID by reset and redirect (held through a stall), cleared in ID/EX by every bubble, then carried unchanged |
 | `rvfi_trap`, `rvfi_halt`, `rvfi_intr` | WB | Tied low — no traps or interrupts in scope (§5.1) |
 
 ---
@@ -70,12 +75,34 @@ until it costs a day.
 
 ---
 
-## Why the port is not being added yet
+## Implementation notes
+
+- **Guarded by `RISCV_FORMAL`**, the macro riscv-formal's own flow defines.
+  The shadow registers cost a few hundred flops of pure trace; synthesis does
+  not define it, so the trend table measures the core, not its harness. `make
+  lint` lints both configurations — code under a never-defined `ifdef` is
+  otherwise never checked — and cocotb compiles with it.
+- **Ports carry the `_o` suffix** (§4): `rvfi_valid_o`, not `rvfi_valid`. The
+  Phase B riscv-formal wrapper maps names.
+- **Memory fields are lane-style**, like the port: `mem_addr` is the word
+  address, masks select byte lanes, data sits in its lanes. Open for Phase B:
+  confirm this is what `RISCV_FORMAL_ALIGNED_MEM` expects (with the
+  misalignment question in PROGRESS.md).
+- **`rs1_addr`/`rs2_addr` are the instruction's fields**, even when it does
+  not read them (lui's "rs1" is immediate bits). riscv-formal allows any value
+  for an unused operand provided `rdata` is that register's real value — and it
+  is: forwarding and the stall act on the fields regardless of use.
+- **`rvfi_mode` / `rvfi_ixl` are not exposed** — not in §5.4's list. Add them
+  when wiring riscv-formal if its checkers require them.
+- **Shadow registers have no reset.** A shadow is read only when `valid` says
+  its instruction retired, and that instruction wrote it.
+
+## Why the port was not added earlier
 
 §5.4 says design RVFI in from Phase A, and this note is that design. The *port*
 waits for the WB stage, deliberately.
 
-Nothing retires yet — there is no WB — so `rvfi_valid` could only be tied low.
+Until WB existed nothing retired, so `rvfi_valid` could only be tied low.
 Wiring `riscv-formal` against a core whose `rvfi_valid` never rises makes every
 ISA compliance property **pass vacuously**: the checker constrains only cycles
 where `rvfi_valid` is high, and there are none. CLAUDE.md §5.5 requires

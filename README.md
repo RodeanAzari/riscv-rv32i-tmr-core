@@ -15,8 +15,9 @@ implemented, and 37 of the 40 RV32I instructions: all ALU operations, loads
 and stores, branches, JAL and JALR. Full forwarding, a one-cycle load-use
 stall, and branches resolved in EX with static not-taken prediction (taken
 costs two cycles). Both memory ports are BRAM-timed. Checked against a Python
-golden model on dense random programs with branches and jumps. FENCE, ECALL
-and EBREAK still decode inert rather than half-working.
+golden model on dense random programs with branches and jumps — every
+retirement compared field by field through the RVFI port. FENCE, ECALL and
+EBREAK still decode inert rather than half-working.
 
 | Stage | Phases | State |
 |---|---|---|

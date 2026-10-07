@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — working core (branches and jumps done; RVFI port next)
+**Phase:** A — working core (RVFI port live in simulation; FENCE/ECALL/EBREAK and riscv-tests next)
 
 ---
 
@@ -69,8 +69,13 @@ MEM/WB) and WB (load alignment, writeback mux).
   register, byte strobes, synchronous read. Load data arrives in WB and is
   **not** re-registered in MEM/WB: the BRAM's output register already is that
   pipeline register for it
-- WB's register write is exposed as `wb_rd_*_o` **outputs** — what the tests
-  observe, and `rvfi_rd_addr`/`rvfi_rd_wdata` in waiting
+- WB's register write is exposed as `wb_rd_*_o` **outputs** — what the
+  directed tests observe
+- **RVFI port** (`rvfi_*_o`, all §5.4 fields) under `` `ifdef RISCV_FORMAL ``:
+  defined for lint (which runs both ways) and simulation, not for synthesis.
+  A valid bit rides the pipeline so bubbles never retire; rs1/rs2 values are
+  tapped after the forwarding muxes; memory fields are lane-style. Details in
+  [rvfi-plan.md](rvfi-plan.md)
 - **Branches and jumps resolve in EX.** `redirect` (a jump, or a branch whose
   condition holds) puts `redirect_target` on `pc_next`, so the pc and the BRAM
   take the target on the same edge, flushes IF/ID to a NOP and inserts a
@@ -169,7 +174,14 @@ Random branches and jumps go **forward only**, 1–6 words, so every program
 terminates; offset 2 skips exactly the word in IF/ID. Each run asserts a floor
 on taken redirects (5 padded, 20 dense, against measured minimums of 8 and 35
 over 200 seeds) so a generator that stops branching fails rather than passing
-vacuously. `SEED=n` reruns a seed; seeds 1–20 pass.
+vacuously. **Every retirement is also checked through RVFI**: the model leaves an
+RVFI-shaped record per step, and `check_rvfi` compares the core's records
+field by field — insn, both pcs, rs addresses and values, rd, memory masks,
+address and the selected data lanes, and `order` — so stores, branches and
+NOPs count too, and a dropped, duplicated or bubble-retired instruction
+misaligns the stream. Register values are compared only where the model knows
+them (no regfile reset): 1,228 of 1,470 reads across the two seed-1 programs.
+`SEED=n` reruns a seed; seeds 1–20 pass.
 
 Submodules get their own toplevel rather than being
 poked through the core's hierarchy, so a unit test survives refactoring and can
@@ -182,8 +194,8 @@ estimate and post-route is measured.
 
 ### Not started
 
-FENCE / ECALL / EBREAK, the RVFI port itself, the official `riscv-tests`
-suite, formal, UVM, TMR, hardware bring-up, and all of Stage 2.
+FENCE / ECALL / EBREAK, the official `riscv-tests` suite, riscv-formal and
+the rest of formal, UVM, TMR, hardware bring-up, and all of Stage 2.
 
 **Instructions not yet implemented decode inert** (`rd_we = 0`) rather than
 half-working. A branch or load that wrote a plausible-looking value would later
@@ -218,6 +230,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-07 | Branches + JAL/JALR: comparator, target adder, flush | 963 | 492 | 47 | +0.059 | 100.6 | −9.8 |
 | 2026-10-07 | Bubble clears 5 control bits, not all of ID/EX | 963 | 492 | 47 | +0.073 | 100.7 | +0.1 |
 | 2026-10-07 | Forwarding selects decided in ID, registered | 1095 | 496 | 47 | +0.394 | 104.1 | +3.4 |
+| 2026-10-07 | RVFI port, under `RISCV_FORMAL` (not synthesized) | 1095 | 496 | 47 | +0.394 | 104.1 | 0.0 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -310,6 +323,11 @@ established. Two levers remain in sight on this path: the IF/ID flush fanout
 needs a valid bit rather than a five-bit clear), and the load data on the
 MEM/WB forward — which on the board starts at a BRAM's ~2 ns clock-to-out.
 
+The RVFI row is identical to the one above to the last digit, which is the
+point: everything RVFI adds sits under `` `ifdef RISCV_FORMAL ``, synthesis does
+not define it, and Vivado is deterministic for the same netlist. Neither report
+mentions `rvfi`.
+
 **The out-of-context slack is optimistic, now +0.394 ns.** Three
 paths that matter on the board cross the core's ports and are untimed here:
 `pc + 4` / stall mux → `imem_addr_o`, the stall comparator and now the whole
@@ -376,6 +394,11 @@ source, caches it on key `verilator-Linux-v5.050`, installs cocotb from
 job in Phase B — yosys and SymbiYosys install in minutes on a hosted runner.
 
 First run took 11m53s (the compile). Cached runs should be under a minute.
+**GitHub evicts a cache unused for 7 days**, so the first push after a break
+rebuilds Verilator (~8 min) and re-saves it — seen 2026-10-07 after a 20-day
+gap: `Cache not found for input keys: verilator-Linux-v5.050`, then lint and
+sim in about a minute. A slow first run after a pause is this, not a broken
+cache key.
 The regression is now three elaborations (core, regfile, decoder) rather than
 one; each gets its own build directory and results file.
 Bumping `VERILATOR_VERSION` forces a rebuild.
@@ -522,6 +545,17 @@ the honest answer rather than pretending it fits on a hosted one.
   `auipc`: checking which instruction ran is not enough, because IMEM ignores
   the low bits too — a first version of the test missed a planted bug for
   exactly that reason, and only the random tests caught it.
+- **The RVFI port is compiled only under `RISCV_FORMAL`** (2026-10-07). Its
+  shadow registers are trace, not CPU; an always-on port would have put them
+  in the OOC numbers, since every port of the top is kept. Same convention as
+  riscv-formal's own flow. The cost is a second configuration to keep honest,
+  so `make lint` runs both.
+- **RVFI checked in simulation before formal exists** (2026-10-07). A cocotb
+  monitor compares every retirement with the golden model. Seven planted RVFI
+  bugs were each caught by the random programs — including the plan's "one
+  that bites", rs1 tapped before the forwarding mux, which fails at
+  retirement #1 (the `addi` of the first `li`). When riscv-formal arrives,
+  disagreement between it and this monitor points at the harness, not the core.
 - **Forwarding selects are decided in ID and registered** (2026-10-07). The
   lever recorded with the forwarding row. Exact rather than speculative,
   because stages past ID never hold: ID/EX's instruction is in EX/MEM next
@@ -597,27 +631,27 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-### 1. RVFI port + riscv-formal
-
-Needs a **valid bit** through the pipeline first: a load-use bubble and a flush
-bubble are not marked as such today — a bubble in ID/EX even carries the
-squashed instruction's pc and instr — so neither can be told from a real
-instruction. The same valid bit would let IF/ID's flush clear one bit instead
-of 64, the next timing lever on the current critical path.
-`rvfi_pc_wdata` is `redirect ? redirect_target : pc + 4` in EX.
-
-Once WB retires instructions there is something non-vacuous to prove. Needs
-yosys and SymbiYosys installed, which is also the first thing `make formal`
-stops complaining about. Check reachability on every property — a vacuous pass
-proves nothing (§5.5, §9).
-
-### 2. FENCE, ECALL, EBREAK; `riscv-tests`
+### 1. FENCE, ECALL, EBREAK; `riscv-tests`
 
 FENCE can decode as a NOP on an in-order core with no caches. ECALL/EBREAK
 need a decision — no traps are in scope, but `riscv-tests` signals pass/fail
-with ECALL — then the official suite (a Phase A box).
+with ECALL — then the official suite (a Phase A box). After that, Phase A's
+only open box is CI, which already runs lint and sim.
 
-### 3. Board-level top
+### 2. Timing: IF/ID flush via the valid bit
+
+The current critical path ends in the IF/ID flush (fo 95). The valid bit now
+exists, but only under `RISCV_FORMAL`; moving `if_id_valid` into the core
+proper and gating decode with it would let a redirect clear one bit instead of
+64. Its own measured slice.
+
+### 3. riscv-formal (Phase B)
+
+Install yosys and SymbiYosys; wrap the core for riscv-formal; settle the
+lane-style memory and misalignment questions against `RISCV_FORMAL_ALIGNED_MEM`.
+Check reachability on every property — a vacuous pass proves nothing (§5.5, §9).
+
+### 4. Board-level top
 
 Deferred until the core executes instructions: `constr/arty_a7.xdc` pin
 constraints, a top with BRAM instruction memory and clocking, then `make prog`
@@ -649,8 +683,7 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-07 — branches, JAL and JALR; then two timing slices:
-a bubble clears only ID/EX's five control bits (noise), and forwarding selects
-decided in ID and registered (+3.4 MHz). 104.1 MHz, +0.394 ns at 100 MHz out of
-context. 116 tests. Next session: the RVFI port with a pipeline valid bit
-(Next up §1).*
+*Last updated: 2026-10-07 — RVFI port live in simulation (under
+`RISCV_FORMAL`, not synthesized): pipeline valid bit, shadow fields to WB, and a
+cocotb monitor checking every retirement against the golden model. 104.1 MHz
+unchanged. Next session: FENCE/ECALL/EBREAK and `riscv-tests` (Next up §1).*

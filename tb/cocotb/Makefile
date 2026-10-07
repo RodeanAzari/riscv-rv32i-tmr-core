@@ -42,6 +42,12 @@ ifdef WAVES
   VERILATOR_TRACE := 1
 endif
 
+# The RVFI port exists only under RISCV_FORMAL (rtl/core/riscv_core.sv), and
+# the core tests check every retirement through it. COMPILE_ARGS, not
+# EXTRA_ARGS: a define belongs on the Verilator command line only, for the
+# same reason as --trace-structs above.
+COMPILE_ARGS += -DRISCV_FORMAL
+
 # One entry per elaboration, <toplevel module>:<python test module>.
 #
 # Submodules get their own toplevel rather than being poked through the core's
