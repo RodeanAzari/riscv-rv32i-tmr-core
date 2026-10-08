@@ -41,8 +41,9 @@ EXCLUDED = {
     "fence_i": "FENCE.I is Zifencei, not one of the 40 RV32I instructions "
                "(CLAUDE.md 5.1); the test rewrites its own code, which "
                "separate instruction and data memories cannot see",
-    "ma_data": "misaligned loads and stores; this core ignores the low "
-               "address bits instead of trapping (PROGRESS.md, Decisions)",
+    "ma_data": "misaligned loads and stores, expecting each to succeed or "
+               "to trap into a handler that emulates it; this core traps by "
+               "halting, as it has no handler (PROGRESS.md, Decisions)",
 }
 
 

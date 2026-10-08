@@ -5,13 +5,17 @@ the core -- that is the point (CLAUDE.md 11, golden model before RTL). It has no
 notion of stages, forwarding or stalls: whatever the pipeline does to get there,
 the architectural result of a program must match this.
 
-It follows the core's design decisions in two places where RV32I would trap
-and the core has no trap machinery (docs/PROGRESS.md):
+Where RV32I raises an exception, the core has no handler to enter (no trap
+machinery is in scope), so it halts -- one rule, followed here
+(docs/PROGRESS.md):
 
-- Misalignment: address bits below the access size are ignored, and a jump or
-  branch target drops bits [1:0].
-- ECALL and EBREAK halt: the instruction retires, marked trap and halt as RVFI
-  defines them, and nothing after it executes.
+- ECALL and EBREAK.
+- A load or store whose address is not a multiple of its size.
+- A taken branch or jump whose target is not 4-byte aligned. (JALR clears
+  bit 0 first, as the spec says; a branch that is not taken never traps.)
+
+A trapping instruction retires marked trap and halt, as RVFI defines them,
+with no register write and no memory access, and nothing after it executes.
 
 FENCE is a NOP, which is the spec's own meaning for one hart with no caches.
 
@@ -92,9 +96,20 @@ class RV32I:
             self.defined.add(rd)
 
     def _access(self, addr, funct3):
+        """(word address, bit shift, bits) for an access, or None if it is
+        misaligned and traps."""
         size = 1 << (funct3 & 0b11)
-        addr &= MASK32 & ~(size - 1)            # the misalignment assumption
+        addr &= MASK32
+        if addr & (size - 1):
+            return None
         return addr & ~0b11, (addr & 0b11) * 8, size * 8
+
+    def _trap(self):
+        """An exception with no handler: retire marked, then stop. pc_wdata
+        is left at pc -- RVFI leaves it unconstrained for a trap."""
+        self.trace.update(trap=1, halt=1)
+        self.halted = True
+        return None
 
     def _trace_mem(self, word, shift, bits, rmask):
         mask = ((1 << (bits // 8)) - 1) << (shift // 8)
@@ -102,8 +117,13 @@ class RV32I:
                           **{"mem_rmask" if rmask else "mem_wmask": mask})
 
     def _jump(self, target):
-        self.pc = target & MASK32 & ~0b11       # the misalignment assumption
+        """Take a branch or jump. False if the target is misaligned and the
+        instruction traps instead."""
+        if target & 0b11:
+            return False
+        self.pc = target & MASK32
         self.taken += 1
+        return True
 
     def step(self, instr):
         """Execute one instruction. Returns (rd, value) if it writes a
@@ -144,24 +164,21 @@ class RV32I:
                      | (((instr >> 20) & 1) << 11) | (((instr >> 21) & 0x3FF) << 1), 21)
 
         if instr in (ECALL, EBREAK):
-            # No handler to enter, so the core stops. pc_wdata is pc + 4, as
-            # the core reports it; nothing reads it, since nothing follows.
-            self.trace.update(trap=1, halt=1)
-            self.halted = True
-            self.pc += 4
-            return None
+            return self._trap()
         if opcode == MISC_MEM and funct3 == 0b000:      # FENCE
             self.pc += 4
             return None
         if opcode == BRANCH:
-            if branch_taken(funct3, rs1, rs2):
-                self._jump(self.pc + imm_b)
-            else:
+            if not branch_taken(funct3, rs1, rs2):
                 self.pc += 4
+            elif not self._jump(self.pc + imm_b):
+                return self._trap()
             return None
         if opcode in (JAL, JALR):
             link = (self.pc + 4) & MASK32
-            self._jump(self.pc + imm_j if opcode == JAL else rs1 + imm_i)
+            target = self.pc + imm_j if opcode == JAL else (rs1 + imm_i) & ~1
+            if not self._jump(target):
+                return self._trap()
             self._write(rd, link)      # after reading rs1: jalr x1, 0(x1) is legal
             return rd, link
 
@@ -176,12 +193,18 @@ class RV32I:
         elif opcode == AUIPC:
             result = (self.pc + imm_u) & MASK32
         elif opcode == LOAD:
-            word, shift, bits = self._access(rs1 + imm_i, funct3)
+            access = self._access(rs1 + imm_i, funct3)
+            if access is None:
+                return self._trap()
+            word, shift, bits = access
             self._trace_mem(word, shift, bits, rmask=True)
             value = (self.mem.get(word, 0) >> shift) & ((1 << bits) - 1)
             result = value if funct3 & 0b100 else sext(value, bits) & MASK32
         elif opcode == STORE:
-            word, shift, bits = self._access(rs1 + imm_s, funct3)
+            access = self._access(rs1 + imm_s, funct3)
+            if access is None:
+                return self._trap()
+            word, shift, bits = access
             self._trace_mem(word, shift, bits, rmask=False)
             self.trace["mem_wdata"] = (rs2 << shift) & MASK32
             lane = ((1 << bits) - 1) << shift

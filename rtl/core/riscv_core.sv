@@ -1,8 +1,10 @@
 // RV32I core. Phase A: all five stages -- IF, ID, EX, MEM, WB.
 //
 // FENCE is a NOP, which is a complete FENCE on one in-order hart without
-// caches. ECALL and EBREAK halt the core: with no trap machinery in scope
-// (CLAUDE.md 5.1) there is no handler to enter. See the EX section.
+// caches. Every exception RV32I defines here -- ECALL, EBREAK, a misaligned
+// load or store, a misaligned taken branch or jump target -- halts the core:
+// with no trap machinery in scope (CLAUDE.md 5.1) there is no handler to
+// enter. See the EX section.
 //
 // Branches and jumps resolve in EX (CLAUDE.md 5.2) with static not-taken
 // prediction: fetch carries on at pc + 4, and a taken branch or any jump
@@ -52,8 +54,9 @@ module riscv_core #(
     output logic [ADDR_W-1:0] wb_rd_addr_o,
     output logic [XLEN-1:0]   wb_rd_wdata_o,
 
-    // High once an ECALL or EBREAK has retired, and with it everything older:
-    // architectural state is final. Sticky until reset.
+    // High once a trapping instruction (ECALL, EBREAK, a misaligned access or
+    // target) has retired, and with it everything older: architectural state
+    // is final. Sticky until reset.
     output logic              halt_o,
 
 `ifdef RISCV_FORMAL
@@ -137,7 +140,7 @@ module riscv_core #(
   logic            stall;      // load-use; driven by riscv_hazard in ID
   logic            redirect;   // taken branch or jump; driven in EX
   logic [XLEN-1:0] redirect_target;
-  logic            freeze;     // ECALL/EBREAK in EX, or after; driven in EX
+  logic            freeze;     // a trap in EX, or after; driven in EX
 
   always_comb begin
     if      (redirect)        pc_next = redirect_target;
@@ -399,13 +402,14 @@ module riscv_core #(
   // The branch condition is funct3, which travels as mem_funct3 -- for a
   // branch, nothing in MEM reads it.
   //
-  // Target bits [1:0] are dropped. JALR clears bit 0 by the spec; bit 1 set
-  // means a misaligned target, which RV32I would trap on. Traps are out of
-  // scope, so this follows the load/store misalignment assumption: the low
-  // bits are ignored, and the pc stays word-aligned. They are masked off the
-  // sum, not left out of the add: base[1:0] + imm[1:0] can carry into bit 2.
+  // Target bits [1:0]. JALR clears bit 0 by the spec, and branch and JAL
+  // offsets are even, so bit 1 alone marks a misaligned target -- which traps
+  // when the transfer is taken (see Halt below). The redirect still masks
+  // both bits, so even a trapping redirect leaves the pc word-aligned. They
+  // are masked off the sum, not left out of the add: base[1:0] + imm[1:0] can
+  // carry into bit 2.
   logic            branch_cond;
-  logic [XLEN-1:0] target_base;
+  logic [XLEN-1:0] target_base, target_sum;
 
   riscv_branch #(
       .XLEN (XLEN)
@@ -417,7 +421,8 @@ module riscv_core #(
   );
 
   assign target_base     = id_ex_jalr ? ex_rs1 : id_ex_pc_o;
-  assign redirect_target = (target_base + id_ex_imm_o) & ~XLEN'(2'b11);
+  assign target_sum      = target_base + id_ex_imm_o;
+  assign redirect_target = target_sum & ~XLEN'(2'b11);
   assign redirect        = id_ex_jump || (id_ex_branch && branch_cond);
 
   // A jump writes its link address, pc + 4, in place of the ALU result -- so
@@ -428,33 +433,71 @@ module riscv_core #(
   assign ex_link   = id_ex_pc_o + 32'd4;
   assign ex_result = id_ex_jump ? ex_link : alu_result;
 
-  // Halt. ECALL and EBREAK resolve here, where branches do, and for the same
+  // Halt. Every exception resolves here, where branches do, and for the same
   // reason: by EX an instruction is known to be on the right path -- an ECALL
-  // in ID may sit behind a taken branch. From the cycle one reaches EX the
-  // front end freezes: the pc holds and ID/EX takes bubbles, so the two
-  // younger words -- in IF/ID and at the BRAM output -- never issue. Nothing is
-  // fetched or issued again until reset. Stages past EX always advance, so
-  // everything older than the halt still retires, and the halt itself
-  // retires two cycles later.
+  // in ID may sit behind a taken branch. Two kinds:
   //
-  // freeze cannot coincide with redirect (EX holds one instruction, and after
-  // the halt ID/EX holds only bubbles) or with stall (neither the halting
-  // instruction nor the bubbles behind it read memory), so its place in the
-  // pc mux is arbitrary. Both its terms come off flops.
-  logic halted_q;
+  //   id_ex_halt  ECALL / EBREAK, decided in ID, arriving on a flop.
+  //   ex_trap     known only now: a load or store whose address is not a
+  //               multiple of its size, or a taken branch or jump whose
+  //               target has bit 1 set.
+  //
+  // The address's low bits get their own 2-bit add rather than coming from
+  // alu_result: bits [1:0] of a sum depend only on bits [1:0] of its
+  // operands, so two LUTs off the forwarding mux are exact. alu_result[0] is
+  // the ALU's final mux output, which also carries SLT's full 32-bit compare;
+  // synthesis cannot know a load only adds, and taking it from there put that
+  // compare and the pc + 4 carry chain in series (21 levels, -0.912 ns).
+  //
+  // A trapping instruction has no architectural effect: EX/MEM below drops
+  // its register write and memory access. riscv-formal checks exactly this
+  // (rvfi_trap must equal the spec's trap, under RISCV_FORMAL_ALIGNED_MEM).
+  //
+  // From the cycle a trap is in EX the front end freezes: the pc holds and
+  // ID/EX takes bubbles, so the two younger words -- in IF/ID and at the BRAM
+  // output -- never issue. Nothing is fetched or issued again until reset.
+  // Stages past EX always advance, so everything older still retires, and
+  // the trapping instruction itself retires two cycles later.
+  //
+  // freeze may coincide with stall (a misaligned load with a dependent
+  // instruction in ID) -- both hold the pc and bubble ID/EX, so they agree.
+  // A misaligned taken target is left out of freeze on purpose: it is a
+  // redirect, which already flushes IF/ID, bubbles ID/EX and wins the pc mux
+  // (landing on the masked target), and halted_q takes over the next cycle.
+  // Adding it to freeze would hang the branch comparator -- the slowest
+  // logic in EX -- on a second net for no change in behaviour.
+  logic [1:0] mem_addr_lo;
+  logic       mem_misaligned, ex_trap, halted_q;
 
-  always_ff @(posedge clk_i) begin
-    if      (rst_i)      halted_q <= 1'b0;
-    else if (id_ex_halt) halted_q <= 1'b1;
+  assign mem_addr_lo = ex_rs1[1:0] + id_ex_imm_o[1:0];
+
+  always_comb begin
+    mem_misaligned = 1'b0;
+    if (id_ex_mem_read || id_ex_mem_write) begin
+      case (id_ex_mem_funct3[1:0])
+        2'b01:   mem_misaligned = mem_addr_lo[0];              // halfword
+        2'b10:   mem_misaligned = (mem_addr_lo != 2'b00);      // word
+        default: mem_misaligned = 1'b0;                        // byte
+      endcase
+    end
   end
 
-  assign freeze = id_ex_halt || halted_q;
+  assign ex_trap = mem_misaligned || (redirect && target_sum[1]);
+
+  always_ff @(posedge clk_i) begin
+    if      (rst_i)                 halted_q <= 1'b0;
+    else if (id_ex_halt || ex_trap) halted_q <= 1'b1;
+  end
+
+  assign freeze = id_ex_halt || mem_misaligned || halted_q;
 
   // EX/MEM. rd_we and mem_write reset low so nothing appears to retire, and
   // nothing is stored, on cycle one. alu_result_o is the EX result: the ALU's,
   // or a jump's link address. rs2_rdata is a store's data, and it must
   // be the FORWARDED value: `addi x1, ...` directly followed by `sw x1, ...`
-  // would otherwise store x1's stale contents.
+  // would otherwise store x1's stale contents. A trap in EX drops the
+  // register write and both memory controls here, so the trapping
+  // instruction reaches WB with no effect but its halt bit.
   logic [XLEN-1:0] ex_mem_rs2_rdata;
   logic            ex_mem_mem_read, ex_mem_mem_write, ex_mem_halt;
   logic [2:0]      ex_mem_mem_funct3;
@@ -477,11 +520,11 @@ module riscv_core #(
       ex_mem_alu_result_o <= ex_result;
       ex_mem_rs2_rdata    <= ex_rs2;
       ex_mem_rd_addr_o    <= id_ex_rd_addr_o;
-      ex_mem_mem_read     <= id_ex_mem_read;
-      ex_mem_mem_write    <= id_ex_mem_write;
+      ex_mem_mem_read     <= id_ex_mem_read  && !ex_trap;
+      ex_mem_mem_write    <= id_ex_mem_write && !ex_trap;
       ex_mem_mem_funct3   <= id_ex_mem_funct3;
-      ex_mem_rd_we_o      <= id_ex_rd_we;
-      ex_mem_halt         <= id_ex_halt;
+      ex_mem_rd_we_o      <= id_ex_rd_we && !ex_trap;
+      ex_mem_halt         <= id_ex_halt || ex_trap;
     end
   end
 
@@ -647,10 +690,10 @@ module riscv_core #(
   assign rvfi_valid_o     = mem_wb_valid;
   assign rvfi_order_o     = order;
   assign rvfi_insn_o      = mem_wb_instr_o;
-  // ECALL/EBREAK set both. halt: the last retirement before the core stops.
-  // trap: the instruction's architectural effect is an exception, which this
-  // core does not take -- riscv-formal's NERV, built without CSRs, reports
-  // them the same way. Nothing else traps (5.1).
+  // Every trapping instruction sets both, since every trap halts. halt: the
+  // last retirement before the core stops. trap: the instruction raised an
+  // exception and had no other effect -- riscv-formal's NERV, built without
+  // CSRs, reports ECALL/EBREAK the same way.
   assign rvfi_trap_o      = mem_wb_halt;
   assign rvfi_halt_o      = mem_wb_halt;
   assign rvfi_intr_o      = 1'b0;

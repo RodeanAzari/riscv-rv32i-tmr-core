@@ -550,8 +550,11 @@ def check_rvfi(got, want):
         assert (g["trap"], g["halt"], g["intr"]) == (w["trap"], w["halt"], 0), (
             f"{where}: trap/halt/intr core {(g['trap'], g['halt'], g['intr'])}, "
             f"model {(w['trap'], w['halt'], 0)}")
-        for f in ("insn", "pc_rdata", "pc_wdata", "rs1_addr", "rs2_addr",
-                  "rd_addr", "rd_wdata", "mem_rmask", "mem_wmask"):
+        # A trap's next pc is unconstrained, as riscv-formal treats it: no
+        # instruction follows, and the core reports whatever its mux held.
+        fields = ("insn", "pc_rdata", "rs1_addr", "rs2_addr", "rd_addr",
+                  "rd_wdata", "mem_rmask", "mem_wmask")
+        for f in fields + (() if w["trap"] else ("pc_wdata",)):
             assert g[f] == w[f], f"{where}: {f} core {g[f]:#x}, model {w[f]:#x}"
         for r in ("rs1", "rs2"):
             if w[f"{r}_defined"]:
@@ -689,18 +692,55 @@ async def test_store_writes_no_register(dut):
 
 
 @cocotb.test()
-async def test_misaligned_access_uses_the_containing_word(dut):
-    """Pins the documented assumption: bits below the access size are ignored.
+async def test_misaligned_load_traps(dut):
+    """lw at 66 and lh at 67 are misaligned: RV32I raises an exception, and
+    with no handler the core halts. The load writes no register and reports
+    no read; the instruction before it retires, the one after does not."""
+    for load in (enc_load(LW, rd=2, imm=66), enc_load(LH, rd=2, imm=67)):
+        program = [enc_i(1, rd=1), load, enc_i(3, rd=3)]
+        rvfi = []
+        writebacks, _ = await run(dut, program, mem={64: 0x8765_4321}, rvfi=rvfi)
+        assert final_regs(writebacks) == {1: 1}, f"{load:#010x}: retired {writebacks}"
+        assert [r["insn"] for r in rvfi] == program[:2]
+        r = rvfi[-1]
+        assert (r["trap"], r["halt"]) == (1, 1), f"{load:#010x} not marked as a trap"
+        assert (r["rd_addr"], r["mem_rmask"], r["mem_wmask"]) == (0, 0, 0), r
+        await assert_stays_halted(dut, cycles=3)
 
-    Not RV32I-required behaviour -- misalignment is outside this core's scope --
-    but whatever the hardware does must be what docs/PROGRESS.md says it does,
-    because rvfi_mem_rmask/wmask will encode it.
-    """
-    program = [enc_load(LW, rd=1, imm=66), enc_load(LH, rd=2, imm=67)]
+
+@cocotb.test()
+async def test_misaligned_store_traps_and_writes_nothing(dut):
+    """sw at 66 and sh at 65 trap: memory is untouched, though the aligned sb
+    just before still lands."""
+    for store in (enc_s(66, rs2=1, funct3=SW), enc_s(65, rs2=1, funct3=SH)):
+        program = [enc_i(0x55, rd=1), enc_s(68, rs2=1, funct3=SB), store,
+                   enc_s(72, rs2=1, funct3=SW)]
+        rvfi = []
+        _, mem = await run(dut, program, mem={64: 0xAAAA_AAAA}, rvfi=rvfi)
+        assert mem == {64: 0xAAAA_AAAA, 68: 0x55}, f"{store:#010x}: memory {mem}"
+        assert rvfi[-1]["trap"] == 1 and rvfi[-1]["mem_wmask"] == 0
+
+
+@cocotb.test()
+async def test_aligned_narrow_accesses_do_not_trap(dut):
+    """The other side of the rule: lh at 66 and lb at 67 are aligned to their
+    size and must load, not trap."""
+    program = [enc_load(LH, rd=1, imm=66), enc_load(LB, rd=2, imm=67)]
     writebacks, _ = await run(dut, program, mem={64: 0x8765_4321})
-    regs = final_regs(writebacks)
-    assert regs.get(1) == 0x8765_4321, f"lw @66: {regs.get(1)}"
-    assert regs.get(2) == 0xFFFF_8765, f"lh @67: {regs.get(2)}"
+    assert final_regs(writebacks) == {1: 0xFFFF_8765, 2: 0xFFFF_FF87}, writebacks
+    assert int(dut.halt_o.value) == 0, "an aligned access halted the core"
+
+
+@cocotb.test()
+async def test_misaligned_load_traps_while_stalling(dut):
+    """lw x1 at a misaligned address, then a use of x1: the load-use stall and
+    the trap fire in the same cycle. The consumer must never issue."""
+    program = [enc_load(LW, rd=1, imm=2), enc_i(1, rs1=1, rd=2), enc_i(3, rd=3)]
+    rvfi = []
+    writebacks, _ = await run(dut, program, rvfi=rvfi)
+    assert final_regs(writebacks) == {}, f"retired {writebacks}"
+    assert [r["insn"] for r in rvfi] == program[:1]
+    await assert_stays_halted(dut, cycles=3)
 
 
 @cocotb.test()
@@ -1069,17 +1109,35 @@ async def test_jump_to_x0_writes_nothing_visible(dut):
 
 
 @cocotb.test()
-async def test_misaligned_target_drops_low_bits(dut):
-    """beq to pc + 10: bit 1 set. RV32I would trap; this core ignores the low
-    bits (the misalignment assumption) and lands on pc + 8.
+async def test_misaligned_branch_target_traps_only_when_taken(dut):
+    """beq to pc + 10 has bit 1 set. Taken, it traps and halts -- nothing at
+    the target or after the branch runs. Not taken, the target is never
+    used, so it is no exception: execution simply continues."""
+    taken = [enc_b(BEQ, 0, 0, 10), enc_i(1, rd=3), enc_i(5, rd=5)]
+    rvfi = []
+    writebacks, _ = await run(dut, taken, rvfi=rvfi)
+    assert final_regs(writebacks) == {}, f"taken: retired {writebacks}"
+    assert len(rvfi) == 1 and rvfi[0]["trap"] == 1
+    await assert_stays_halted(dut, cycles=3)
 
-    Checking which instruction ran is not enough: IMEM ignores the low address
-    bits too, so a pc of 10 still fetches the word at 8. auipc at the target
-    reads the pc itself."""
-    program = [enc_b(BEQ, 0, 0, 10), enc_i(1, rd=3),
-               enc_u(0, rd=5, opcode=OPCODE_AUIPC)]
-    writebacks, _ = await run(dut, program)
-    assert final_regs(writebacks) == {5: 8}, f"retired {writebacks}"
+    not_taken = [enc_b(BNE, 0, 0, 10), enc_i(1, rd=3), enc_i(5, rd=5)]
+    writebacks, _ = await run(dut, not_taken)
+    assert final_regs(writebacks) == {3: 1, 5: 5}, f"not taken: retired {writebacks}"
+    assert int(dut.halt_o.value) == 0
+
+
+@cocotb.test()
+async def test_misaligned_jump_traps_without_writing_the_link(dut):
+    """jal to pc + 6 and jalr to 0x406 (bit 1 set after JALR clears bit 0)
+    trap. A trapping instruction has no architectural effect, so rd keeps
+    its old value -- the link address is never written."""
+    for jump in (enc_jal(1, 6), enc_jalr(1, 2, 7)):
+        program = li_all(x1=0x1111, x2=0x3FF) + [jump, enc_i(5, rd=5)]
+        rvfi = []
+        writebacks, _ = await run(dut, program, rvfi=rvfi)
+        assert final_regs(writebacks) == {1: 0x1111, 2: 0x3FF}, (
+            f"{jump:#010x}: retired {writebacks}")
+        assert rvfi[-1]["insn"] == jump and rvfi[-1]["trap"] == 1
 
 
 @cocotb.test()
@@ -1221,8 +1279,9 @@ def random_instruction(rng, pc):
     Branches and jumps only go forward, 1-6 words, so every program ends:
     offset 1 is taken-but-to-the-next-instruction (still a redirect, still a
     flush), offset 2 skips exactly the instruction in IF/ID -- the classic
-    flush-off-by-one case. One in ten targets has bit 1 set, which the
-    misalignment assumption drops. jalr bases off x0, so its target is an
+    flush-off-by-one case. Targets are always aligned: a misaligned one
+    traps and halts, which would end most programs early -- the directed
+    tests and riscv-formal cover that. jalr bases off x0, so its target is an
     absolute address known to be ahead; a forwarded jalr base is a directed
     test.
     """
@@ -1233,7 +1292,7 @@ def random_instruction(rng, pc):
     if kind == "fence":
         return FENCE
     if kind in ("branch", "jal", "jalr"):
-        offset = 4 * rng.randint(1, 6) + (2 if rng.random() < 0.1 else 0)
+        offset = 4 * rng.randint(1, 6)
         if kind == "branch":
             funct3 = rng.choice([BEQ, BNE, BLT, BGE, BLTU, BGEU])
             return enc_b(funct3, rs1, rs2, offset)
@@ -1269,9 +1328,9 @@ def random_instruction(rng, pc):
     return enc_s(rng.randrange(0, 64, size), rs1=0, rs2=rs2, funct3=funct3)
 
 
-# The farthest a random branch or jump reaches is 6 words, plus a misaligned
-# half-word that the core drops, so a program that ends in this many halting
-# instructions halts whichever path its last control transfer takes.
+# The farthest a random branch or jump reaches is 6 words, so a program that
+# ends in this many halting instructions halts whichever path its last control
+# transfer takes.
 HALT_TAIL = 6
 
 

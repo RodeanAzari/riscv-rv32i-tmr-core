@@ -86,9 +86,11 @@ until it costs a day.
 - **Ports carry the `_o` suffix** (§4): `rvfi_valid_o`, not `rvfi_valid`. The
   Phase B riscv-formal wrapper maps names.
 - **Memory fields are lane-style**, like the port: `mem_addr` is the word
-  address, masks select byte lanes, data sits in its lanes. Open for Phase B:
-  confirm this is what `RISCV_FORMAL_ALIGNED_MEM` expects (with the
-  misalignment question in PROGRESS.md).
+  address, masks select byte lanes, data sits in its lanes. Confirmed
+  2026-10-08 against riscv-formal's `insn_*.v`: under
+  `RISCV_FORMAL_ALIGNED_MEM` the spec's `mem_addr` is `addr & ~3` and its mask
+  is shifted into the lane — exactly this. The same mode requires a
+  misaligned access to set `rvfi_trap`, which it now does (PROGRESS.md).
 - **`rs1_addr`/`rs2_addr` are the instruction's fields**, even when it does
   not read them (lui's "rs1" is immediate bits). riscv-formal allows any value
   for an unused operand provided `rdata` is that register's real value — and it

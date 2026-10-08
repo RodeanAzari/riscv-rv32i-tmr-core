@@ -24,12 +24,13 @@ Working today: **all 40 RV32I instructions** — every ALU instruction,
 WB→ID through the register file, a one-cycle load-use stall) and branches
 resolved in EX with static not-taken prediction: a taken branch or jump
 flushes IF/ID and ID/EX and costs two cycles, not taken costs none.
-**ECALL and EBREAK halt the core** (no trap machinery is in scope); FENCE is a
-NOP, which is complete on this core. The official **`riscv-tests` rv32ui
+**Every exception halts the core** — ECALL, EBREAK, a misaligned load or
+store, a misaligned taken branch or jump target (no trap machinery is in
+scope); FENCE is a NOP, which is complete on this core. The official **`riscv-tests` rv32ui
 suite passes: 40 of 42**, the other two excluded with reasons (see
 Decisions).
 
-**Timing margin: +0.430 ns at 100 MHz out-of-context (104.5 MHz)**. Thin, and the paths that cross the memory
+**Timing margin: +0.300 ns at 100 MHz out-of-context (103.1 MHz)**. Thin, and the paths that cross the memory
 ports are not yet timed at all. The critical path is branch resolution fed by
 the MEM/WB forward of the writeback mux. See the synthesis trend notes.
 
@@ -45,7 +46,7 @@ GCC 13.2 / binutils 2.42 rather than the local GCC 16.
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 164/164 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
+| `make sim` | 168/168 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | `make formal` | 1 property (x0 invariance, regfile) proven by k-induction, 4/4 covers reached — see [formal-properties.md](formal-properties.md) |
 | CI on push | green (lint + sim, 164/164, all 40 rv32ui ran) at `c9267af`; the formal job is new and unproven there |
@@ -92,6 +93,14 @@ MEM/WB) and WB (load alignment, writeback mux).
   and **`halt_o`** rises the cycle after the halting instruction leaves WB —
   architectural state is final when it is seen. Sticky until reset. RVFI
   marks that retirement `trap` and `halt`
+- **Misaligned accesses and targets trap — and so halt — in EX** too: a load
+  or store whose address is not a multiple of its size, or a *taken* branch
+  or jump whose target has bit 1 set (JALR clears bit 0 first). Detected from
+  bits [1:0] of the ALU and target adders; the instruction's register write,
+  store and load are dropped going into EX/MEM. A misaligned access joins
+  `freeze` the same cycle; a misaligned target does not need to — it is a
+  redirect, which already flushes — so the slow branch comparator stays off
+  `freeze`, and `halted_q` holds everything from the next cycle
 
 `rtl/core/riscv_decoder.sv` — register addresses, all five RV32I immediate
 formats (I/S/B/U/J), the EX control signals, `branch`/`jump`/`jalr`,
@@ -135,7 +144,7 @@ copy keeping the bit halts a cycle early and flushes the real EBREAK).
 `rtl/core/riscv_mem_align.sv` — byte lanes for both directions: stores
 replicate data across lanes and raise strobes; loads pick the lane and sign- or
 zero-extend. One module so the little-endian lane convention lives in one
-place. Implements the misalignment assumption (see Decisions).
+place. Only ever sees aligned accesses: misaligned ones trap in EX first.
 
 `rtl/core/riscv_alu.sv` — the ten RV32I arithmetic/logic operations. Selected by
 the ISA's own `funct3` plus the ADD/SUB and SRL/SRA "alt" bit rather than a
@@ -151,7 +160,7 @@ would have forced. x0 invariance and WB→ID write-first forwarding are both
 implemented here rather than in the surrounding pipeline, because both are
 formal properties in CLAUDE.md §5.5.
 
-`tb/cocotb/` — 164 tests across seven toplevels: `test_core` (61) and
+`tb/cocotb/` — 168 tests across seven toplevels: `test_core` (65) and
 `test_riscv_tests` (40) on the core, `test_alu`
 (16), `test_regfile` (8), `test_decoder` (31), `test_mem_align` (4, each an
 exhaustive sweep), `test_hazard` (2; one sweeps all 2,048 input combinations
@@ -173,9 +182,9 @@ register file has no reset, so a stale value could otherwise happen to equal
 the forwarded one and pass vacuously.
 
 `tb/cocotb/rv32i_model.py` — the golden model (CLAUDE.md §11): one instruction
-at a time, no pipeline, written from the ISA spec. It follows one design
-decision rather than the spec — the misalignment rule, for data and for jump
-targets — and raises on everything not yet implemented rather than guessing.
+at a time, no pipeline, written from the ISA spec. Where RV32I raises an
+exception it follows the core's one rule — trap means halt — and it raises on
+everything not implemented rather than guessing.
 Its B- and J-immediate decode was checked against **GNU `as`**, an encoder
 independent of anything written here: 211 instructions, every single-bit
 offset and both extremes, plus the test encoders `enc_b`/`enc_jal`/`enc_jalr`
@@ -184,9 +193,12 @@ programs over x0–x4 against it, comparing **retirement order** (not just final
 state, which a dropped or doubled instruction can survive) and final memory:
 120 instructions padded (validates the model), 400 dense (finds hazards).
 Random branches and jumps go **forward only**, 1–6 words, so every program
-terminates; offset 2 skips exactly the word in IF/ID. Each run asserts a floor
-on taken redirects (5 padded, 20 dense, against measured minimums of 8 and 36
-over 200 seeds, re-measured when FENCE joined the mix) so a generator that
+terminates; offset 2 skips exactly the word in IF/ID. Random targets and
+addresses are always aligned — a misaligned one would trap and end most
+programs early; directed tests cover that, and riscv-formal will exhaustively.
+Each run asserts a floor on taken redirects (5 padded, 20 dense, against
+measured minimums of 10 and 35 over 200 seeds, re-measured when misaligned
+targets left the mix) so a generator that
 stops branching fails rather than passing vacuously. Every program ends in six
 ECALL/EBREAKs — the farthest a forward branch reaches — so each seed also
 checks the halt: the exact retirement count, and nothing retiring after it. **Every retirement is also checked through RVFI**: the model leaves an
@@ -265,6 +277,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-07 | Forwarding selects decided in ID, registered | 1095 | 496 | 47 | +0.394 | 104.1 | +3.4 |
 | 2026-10-07 | RVFI port, under `RISCV_FORMAL` (not synthesized) | 1095 | 496 | 47 | +0.394 | 104.1 | 0.0 |
 | 2026-10-08 | FENCE (NOP), ECALL/EBREAK halt | 1107 | 501 | 47 | +0.430 | 104.5 | +0.4 |
+| 2026-10-08 | Misaligned access / taken target traps (halts) | 1115 | 501 | 47 | +0.300 | 103.1 | −1.4 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -372,7 +385,20 @@ its last LUT after `id_ex_halt` — but `freeze` comes off two flops, so it
 added no level. +0.036 ns is placement noise. Deliberately **not** on the
 IF/ID flush (see Decisions).
 
-**The out-of-context slack is optimistic, now +0.430 ns.** Three
+The misalignment-trap row took three runs, and the two discarded ones are the
+lesson. First, misalignment read off `alu_result[1:0]` and a taken
+misaligned target also fed `freeze`: +0.030 ns. Dropping the target term
+from `freeze` (redundant — a redirect already flushes) made it **−0.912 ns,
+21 levels**: `alu_result[0]` is the ALU's final mux output, which also
+carries SLT's 32-bit compare, and with `freeze` now a plain select Vivado
+folded `freeze ? pc : pc + 4` into the pc+4 carry chain — compare chain and
+increment chain in series. The fix was what the comment had claimed all
+along: a dedicated `ex_rs1[1:0] + imm[1:0]`, exact because a sum's low bits
+depend only on its operands' low bits. Final: +0.300 ns, 9 levels, the
+familiar writeback → forwarding → comparator → ID/EX bubble-clear path at
+76% route. FF unchanged (the trap reuses the halt flops); LUT +8.
+
+**The out-of-context slack is optimistic, now +0.300 ns.** Three
 paths that matter on the board cross the core's ports and are untimed here:
 `pc + 4` / stall mux → `imem_addr_o`, the stall comparator and now the whole
 branch-resolution path → `imem_addr_o`, and
@@ -620,13 +646,14 @@ the honest answer rather than pretending it fits on a hosted one.
   instruction. Redirect still outranks stall in the mux, at no cost.
   Confirmed by mutation: swapping the priority passes all 52 core tests.
   Belongs in Phase B as `!(stall && redirect)`.
-- **Misaligned jump and branch targets drop bits [1:0]** (2026-10-07). Same
-  reasoning as data misalignment: RV32I would trap, traps are out of scope.
-  Masked off the sum rather than left out of the add, since `rs1[1:0] +
-  imm[1:0]` can carry into bit 2. The directed test reads the landing pc with
-  `auipc`: checking which instruction ran is not enough, because IMEM ignores
-  the low bits too — a first version of the test missed a planted bug for
-  exactly that reason, and only the random tests caught it.
+- **Misaligned jump and branch targets drop bits [1:0]** (2026-10-07).
+  **Superseded 2026-10-08: they now trap** — see "Misalignment traps".
+  Same reasoning as data misalignment at the time. Masked off the sum rather
+  than left out of the add, since `rs1[1:0] + imm[1:0]` can carry into bit 2
+  — still true of the redirect mask. The directed test read the landing pc
+  with `auipc`: checking which instruction ran was not enough, because IMEM
+  ignores the low bits too — a first version of the test missed a planted bug
+  for exactly that reason, and only the random tests caught it.
 - **Formal harnesses wrap modules from outside; nothing in `rtl/`**
   (2026-10-08). Properties live in `tb/formal/` as a wrapper module that
   instantiates the RTL with every input free and asserts on its ports, using
@@ -736,7 +763,24 @@ the honest answer rather than pretending it fits on a hosted one.
   test releasing reset at the falling edge changes it in the same instant a
   falling-edge sampler reads it. Sampling 1 ns before the rising edge removes
   the race, and it is also how a real flop behaves (setup window).
+- **Misalignment traps — and so halts** (decided 2026-10-08, reversing the
+  two truncation decisions below). riscv-formal settled it: under
+  `RISCV_FORMAL_ALIGNED_MEM` every `insn_*.v` for a load, store, branch or
+  jump has `spec_trap` true on a misaligned address or target, and
+  `rvfi_insn_check` asserts `spec_trap == trap`; without that mode it expects
+  the access to *succeed* at byte granularity. Neither accepts "ignore the low
+  bits". The alternative, `assume`-ing misaligned cases away in the harness,
+  was rejected: it would hide real behaviour from the checker, the failure
+  mode §5.5 warns about. Halting follows the ECALL rule — an exception with no
+  handler stops the core — so there is one rule, not two. Detection is in EX
+  from adder bits [1:0], the earliest bits a carry chain settles; a branch
+  traps only if taken (its target is otherwise never used). On the board a
+  pointer bug now stops the core visibly instead of silently corrupting the
+  containing word. Proven by mutation: dropping the register-write gate, the
+  store gate, the same-cycle freeze, the halfword rule, the "only if taken"
+  condition, or the target trap's halt each fails the test written for it.
 - **Misaligned loads/stores are assumed not to happen** (decided 2026-10-07).
+  **Superseded 2026-10-08: they trap** — see above.
   RV32I demands support or a trap; traps are out of scope (§5.1) and hardware
   support means a MEM-stage FSM and a stall before any hazard unit exists.
   Defined behaviour rather than undefined: **address bits below the access size
@@ -823,9 +867,9 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-08 — Phase B started. `make formal` is live:
-x0 invariance on the register file proven by k-induction (k = 4), 4/4 covers
-reached, shown to fail on planted faults; CI runs it as its own job with OSS
-CAD Suite 2026-10-07. Property ledger in
-[formal-properties.md](formal-properties.md). Next: riscv-formal (Next up §2),
-or the IF/ID flush (§1).*
+*Last updated: 2026-10-08 — Phase B started. `make formal` is live (x0
+invariance on the register file, k-induction, in CI). Misaligned loads, stores
+and taken targets now trap — i.e. halt — as riscv-formal's
+`RISCV_FORMAL_ALIGNED_MEM` requires, reversing the Phase A truncation
+decision. 168/168 tests, 103.1 MHz. Next: the riscv-formal wrapper (Next up
+§2).*

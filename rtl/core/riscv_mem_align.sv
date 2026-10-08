@@ -13,14 +13,12 @@
 // little-endian, as RISC-V requires), and keeping both sides in one file means
 // there is only one place for that convention to be wrong.
 //
-// Misaligned accesses are ASSUMED NOT TO HAPPEN (decided 2026-10-07, see
-// docs/PROGRESS.md). Address bits below the access size are ignored: LW/SW
-// ignore addr[1:0], LH/LHU/SH ignore addr[0]. So a misaligned access touches
-// the naturally aligned word or halfword containing it -- deterministic, never
-// split across two words. Phase B has to tell riscv-formal about this
-// assumption; check what its RISCV_FORMAL_ALIGNED_MEM option expects of a
-// misaligned access (it may expect rvfi_trap) before relying on it -- otherwise
-// constrain the harness to aligned addresses.
+// Misaligned accesses never reach this module's outputs: EX traps them, and
+// a trapping instruction's store strobes and register write are dropped
+// before MEM (riscv_core, Halt). So the lane logic only has to be right for
+// aligned addresses, and it simply ignores the bits below the access size --
+// LW/SW ignore addr[1:0], LH/LHU/SH ignore addr[0] -- with no misaligned case
+// to handle.
 //
 // No XLEN parameter: four byte lanes and two address bits are RV32-specific,
 // and a parameter here would advertise a generality the logic does not have.
