@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — **done** (2026-10-08, CI run 37817380686). Phase B — formal verification — next
+**Phase:** B — formal verification, started 2026-10-08 (smoke test live). Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -47,7 +47,8 @@ GCC 13.2 / binutils 2.42 rather than the local GCC 16.
 | `make lint` | clean, Verilator 5.050 |
 | `make sim` | 164/164 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| CI on push | green (lint + sim, 164/164, all 40 rv32ui ran) at `c9267af` |
+| `make formal` | 1 property (x0 invariance, regfile) proven by k-induction, 4/4 covers reached — see [formal-properties.md](formal-properties.md) |
+| CI on push | green (lint + sim, 164/164, all 40 rv32ui ran) at `c9267af`; the formal job is new and unproven there |
 
 ### Implemented
 
@@ -225,8 +226,8 @@ estimate and post-route is measured.
 
 ### Not started
 
-riscv-formal and the rest of formal, UVM, TMR, hardware bring-up, and all
-of Stage 2.
+riscv-formal and the §5.5 properties beyond x0 invariance, UVM, TMR,
+hardware bring-up, and all of Stage 2.
 
 **Encodings outside RV32I decode inert** (`rd_we = 0`, no memory access, no
 redirect, no halt) rather than half-working — CSR accesses, MRET, WFI and
@@ -444,16 +445,21 @@ is a parse-and-elaborate check, not yet a proof of anything.
 | `make spike` | run `.elf` on spike | untested, no source yet |
 | `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
 | `make prog` | — | stub; blocked on USB passthrough (§6 of vivado-setup.md) |
-| `make formal` / `uvm` / `impl` / `asic` | — | stubs that name their phase and what they wait on |
+| `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks; appends OSS CAD Suite's `bin/` to PATH itself | working |
+| `make uvm` / `impl` / `asic` | — | stubs that name their phase and what they wait on |
 
 ---
 
 ## CI
 
-`.github/workflows/ci.yml`, single `verilate` job: builds Verilator 5.050 from
-source, caches it on key `verilator-Linux-v5.050`, installs cocotb from
-`tb/cocotb/requirements.txt`, then runs lint and sim. `make formal` joins this
-job in Phase B — yosys and SymbiYosys install in minutes on a hosted runner.
+`.github/workflows/ci.yml`, two jobs in parallel. **`verilate`** builds
+Verilator 5.050 from source, caches it on key `verilator-Linux-v5.050`,
+installs cocotb from `tb/cocotb/requirements.txt`, then runs lint and sim.
+**`formal`** downloads OSS CAD Suite at `OSS_CAD_SUITE_DATE` (2026-10-07, the
+local install's date — the two must move together), puts it on PATH and runs
+`make formal`. Not cached: ~700 MB GitHub-to-GitHub takes seconds, and caching
+it would eat a large share of the 10 GB quota. Separate jobs so a lint failure
+never hides a formal result, or the reverse.
 
 First run took 11m53s (the compile). Cached runs should be under a minute.
 **GitHub evicts a cache unused for 7 days**, so the first push after a break
@@ -621,6 +627,18 @@ the honest answer rather than pretending it fits on a hosted one.
   `auipc`: checking which instruction ran is not enough, because IMEM ignores
   the low bits too — a first version of the test missed a planted bug for
   exactly that reason, and only the random tests caught it.
+- **Formal harnesses wrap modules from outside; nothing in `rtl/`**
+  (2026-10-08). Properties live in `tb/formal/` as a wrapper module that
+  instantiates the RTL with every input free and asserts on its ports, using
+  immediate assertions in procedural blocks — the subset open-source Yosys
+  parses (no Verific). Nothing formal-only enters `rtl/`, so synthesis and the
+  trend table never see it. The cost is that a harness sees only ports;
+  internal invariants (the core's, later) need RVFI or exported signals.
+- **The first property is x0 invariance on the register file** (2026-10-08).
+  A §5.5 property small enough that a failure could only be the toolchain, so
+  the smoke test proves the chain, not the design. It still earns its place:
+  the planted-fault run showed the solver using the reset-less array's free
+  initial contents — a state simulation's zeroed memory never shows.
 - **ECALL and EBREAK halt the core** (decided 2026-10-08). RV32I says they
   trap; traps need `mtvec`/`mepc`/`mcause` and the CSR instructions, all out
   of scope (§5.1), so something else has to happen. Three options were
@@ -764,12 +782,14 @@ proper and gating decode with it would let a redirect clear one bit instead of
 
 ### 2. riscv-formal (Phase B)
 
-Tools are installed (see Toolchain) and Yosys already reads the core. First a
-smoke test — one small `.sby` proving one property, run by a live `make formal`
-— so the chain is known to work before riscv-formal is in the picture. Then wrap
-the core for riscv-formal and settle the lane-style memory and misalignment
-questions against `RISCV_FORMAL_ALIGNED_MEM`.
-Check reachability on every property — a vacuous pass proves nothing (§5.5, §9).
+The smoke test is done: `make formal` proves x0 invariance on the register
+file and runs in CI. Next, wrap the core for riscv-formal and settle the
+lane-style memory and misalignment questions against
+`RISCV_FORMAL_ALIGNED_MEM` (and how it expects ECALL/EBREAK's `rvfi_trap`).
+Then the §5.5 hand-written properties, each added to
+[formal-properties.md](formal-properties.md) with depth, covers and a planted
+fault it catches. Check reachability on every property — a vacuous pass
+proves nothing (§5.5, §9).
 
 ### 3. Board-level top
 
@@ -803,9 +823,9 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-08 — all 40 RV32I instructions: FENCE as a NOP,
-ECALL/EBREAK halt (`halt_o`, RVFI trap + halt). Official `riscv-tests` rv32ui
-passes 40/42 (two excluded with reasons), each also checked retirement by
-retirement against the golden model. 164/164 tests, 104.5 MHz, green in CI.
-**Phase A done.** Next: the formal smoke test (Next up §2, opening Phase B),
+*Last updated: 2026-10-08 — Phase B started. `make formal` is live:
+x0 invariance on the register file proven by k-induction (k = 4), 4/4 covers
+reached, shown to fail on planted faults; CI runs it as its own job with OSS
+CAD Suite 2026-10-07. Property ledger in
+[formal-properties.md](formal-properties.md). Next: riscv-formal (Next up §2),
 or the IF/ID flush (§1).*

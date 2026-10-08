@@ -8,6 +8,10 @@ env:
   # cocotb 2.x requires Verilator >= 5.036, newer than any apt package,
   # so it is built from source and cached on this key.
   VERILATOR_VERSION: v5.050
+  # Yosys, SymbiYosys and the solvers, as one bundle. A nightly, so its date
+  # is its version: keep it equal to the local install (docs/PROGRESS.md,
+  # Toolchain) so CI proves with exactly the tools used to write the proofs.
+  OSS_CAD_SUITE_DATE: 2026-10-07
 
 jobs:
   verilate:
@@ -68,6 +72,31 @@ jobs:
       - name: Run regression
         run: make sim
 
-      # make formal joins this job in Phase B. yosys and SymbiYosys install in
-      # a couple of minutes on a hosted runner, unlike Vivado -- see CLAUDE.md
-      # section 4 for why synthesis stays local with committed reports.
+  # Formal runs as its own job, in parallel with lint + sim, so a failure in
+  # one never hides the other's result. yosys and SymbiYosys install in about
+  # a minute on a hosted runner, unlike Vivado -- see CLAUDE.md section 4 for
+  # why synthesis stays local with committed reports.
+  formal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Downloaded every run rather than cached: a GitHub-to-GitHub transfer
+      # of ~700 MB takes seconds, and caching it would spend a large share of
+      # the repository's 10 GB cache quota to save them.
+      - name: Install OSS CAD Suite
+        run: |
+          tag="$OSS_CAD_SUITE_DATE"
+          file="oss-cad-suite-linux-x64-${tag//-/}.tgz"
+          curl -fsSL -o /tmp/oss-cad-suite.tgz \
+            "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/$tag/$file"
+          tar -xzf /tmp/oss-cad-suite.tgz -C "$HOME"
+          echo "$HOME/oss-cad-suite/bin" >> "$GITHUB_PATH"
+
+      - name: Report tool versions
+        run: |
+          yosys -V
+          sby --help | head -1
+
+      - name: Formal verification
+        run: make formal

@@ -1,0 +1,30 @@
+# x0 invariance on the register file -- see regfile_x0_formal.sv.
+#
+# Two tasks, both run by `make formal`:
+#   prove  k-induction. A base case (bounded model check: no failure in the
+#          first `depth` cycles from the initial state) and an inductive step
+#          (from ANY state, reachable or not, `depth` passing cycles imply a
+#          passing next one). Both holding is a proof for all time, not a
+#          clean run of `depth` cycles.
+#   cover  reachability: the solver must produce a trace for every cover().
+
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+cover: mode cover
+depth 4
+
+[engines]
+smtbmc yices
+
+[script]
+read_verilog -sv -formal riscv_regfile.sv
+read_verilog -sv -formal regfile_x0_formal.sv
+prep -top regfile_x0_formal
+
+[files]
+../../rtl/core/riscv_regfile.sv
+regfile_x0_formal.sv

@@ -3,12 +3,13 @@
 #
 #   make lint   verilator lint of rtl/
 #   make sim    cocotb regression on verilator (see tb/cocotb/Makefile)
+#   make formal SymbiYosys over every tb/formal/*.sby
 #   make sw     build sw/*.c to .elf and .hex
 #   make spike  run the .elf on the spike reference model
 #   make synth  out-of-context synth + impl of the core, reports to docs/reports
 #   make clean
 #
-# formal / uvm / asic / impl / prog exist as stubs that say which phase they
+# uvm / asic / impl / prog exist as stubs that say which phase they
 # belong to, so a clean checkout gets a reason rather than "No rule to make
 # target". They become real in the phase they name.
 
@@ -45,6 +46,31 @@ lint:
 sim:
 	$(MAKE) -C tb/cocotb
 
+# --- formal ----------------------------------------------------------------
+# Every tb/formal/*.sby, each with all its tasks (prove, cover). The tools come
+# from OSS CAD Suite, whose bin/ is APPENDED to PATH here, never prepended: it
+# ships its own Verilator and Python, which must not shadow the pinned ones
+# (docs/PROGRESS.md, Toolchain). Doing it here rather than relying on
+# ~/.bashrc also covers non-interactive shells, which never read it. CI puts
+# the suite on PATH itself, where OSS_CAD_BIN simply does not exist.
+#
+# Like `make sim`, every job runs even after a failure, then the target fails
+# if any did. Work directories land in tb/formal/build/.
+OSS_CAD_BIN ?= $(HOME)/.local/opt/oss-cad-suite/bin
+SBY_FILES   := $(shell find tb/formal -name '*.sby' 2>/dev/null | sort)
+
+.PHONY: formal
+formal:
+	@if [ -z "$(SBY_FILES)" ]; then echo "no .sby files under tb/formal/" >&2; exit 1; fi
+	@rc=0; \
+	for f in $(SBY_FILES); do \
+	  echo "=== $$f ==="; \
+	  ( cd $$(dirname $$f) && PATH="$$PATH:$(OSS_CAD_BIN)" \
+	      sby -f --prefix build/$$(basename $$f .sby) $$(basename $$f) ) || rc=1; \
+	done; \
+	if [ $$rc -ne 0 ]; then echo "FORMAL FAILED"; fi; \
+	exit $$rc
+
 # --- software --------------------------------------------------------------
 CFLAGS_RV := -march=rv32i -mabi=ilp32 -nostdlib -nostartfiles -O2 -Tsw/link.ld
 SW_SRCS   := $(shell find sw -name '*.c' 2>/dev/null | sort)
@@ -79,12 +105,7 @@ synth:
 
 # --- not yet built ---------------------------------------------------------
 # Each names its phase and what it is waiting on. Fail loudly, not silently.
-.PHONY: formal uvm asic impl prog
-
-formal:
-	@echo "make formal: Phase B. Needs SymbiYosys + yosys (not installed);" >&2
-	@echo "             properties live in tb/formal/ once written." >&2
-	@exit 1
+.PHONY: uvm asic impl prog
 
 uvm:
 	@echo "make uvm: Phase C. Needs the UVM environment in tb/uvm/, run in XSim." >&2
@@ -111,7 +132,7 @@ prog:
 .PHONY: clean
 clean:
 	$(MAKE) -C tb/cocotb clean
-	rm -rf obj_dir tb/cocotb/dump.vcd
+	rm -rf obj_dir tb/cocotb/dump.vcd tb/formal/build
 	rm -f sw/prog.elf sw/prog.hex
 	rm -rf syn/build .Xil
 	rm -f vivado*.log vivado*.jou

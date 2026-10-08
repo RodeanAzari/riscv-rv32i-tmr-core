@@ -28,6 +28,7 @@ results_*.xml
 # Formal
 syn/*_formal/
 sby_*/
+tb/formal/build/
 
 # Python
 __pycache__/
