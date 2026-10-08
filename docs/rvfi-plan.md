@@ -48,7 +48,8 @@ so they ride the pipeline registers as shadow fields alongside the real data.
 | `rvfi_rd_addr`, `rvfi_rd_wdata` | WB | Both read 0 when no write happens |
 | `rvfi_order` | WB | Free-running retirement counter |
 | `rvfi_valid` | WB | One pulse per retired instruction. A valid bit rides the pipeline: cleared in IF/ID by reset and redirect (held through a stall), cleared in ID/EX by every bubble, then carried unchanged |
-| `rvfi_trap`, `rvfi_halt`, `rvfi_intr` | WB | Tied low — no traps or interrupts in scope (§5.1) |
+| `rvfi_trap`, `rvfi_halt` | WB | Both set for ECALL/EBREAK, which halt the core (halt bit riding ID/EX → EX/MEM → MEM/WB); low for everything else — no traps in scope (§5.1) |
+| `rvfi_intr` | WB | Tied low — no interrupts in scope (§5.1) |
 
 ---
 

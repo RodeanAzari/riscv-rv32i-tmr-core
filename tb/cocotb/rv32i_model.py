@@ -5,16 +5,21 @@ the core -- that is the point (CLAUDE.md 11, golden model before RTL). It has no
 notion of stages, forwarding or stalls: whatever the pipeline does to get there,
 the architectural result of a program must match this.
 
-Memory and control flow match the core's documented misalignment assumption
-(docs/PROGRESS.md): address bits below the access size are ignored, and a jump
-or branch target drops bits [1:0]. RV32I would trap on both instead; this is
-the one place the model follows a design decision rather than the spec.
+It follows the core's design decisions in two places where RV32I would trap
+and the core has no trap machinery (docs/PROGRESS.md):
+
+- Misalignment: address bits below the access size are ignored, and a jump or
+  branch target drops bits [1:0].
+- ECALL and EBREAK halt: the instruction retires, marked trap and halt as RVFI
+  defines them, and nothing after it executes.
+
+FENCE is a NOP, which is the spec's own meaning for one hart with no caches.
 
 Each step also leaves an RVFI-shaped record of what the instruction did in
 self.trace, for per-retirement comparison against the core's RVFI port.
 
-Not yet modelled: FENCE, ECALL/EBREAK. They raise rather than guess, so a
-random generator that emits one fails loudly.
+Every other SYSTEM encoding (CSR accesses, MRET, WFI) raises rather than
+guessing, so a program that relies on one fails loudly.
 """
 
 MASK32 = 0xFFFF_FFFF
@@ -23,6 +28,8 @@ NOP = 0x0000_0013
 OP, OP_IMM, LUI, AUIPC = 0b0110011, 0b0010011, 0b0110111, 0b0010111
 LOAD, STORE = 0b0000011, 0b0100011
 BRANCH, JAL, JALR = 0b1100011, 0b1101111, 0b1100111
+MISC_MEM = 0b0001111
+ECALL, EBREAK = 0x0000_0073, 0x0010_0073
 
 
 def sext(value, bits):
@@ -76,6 +83,7 @@ class RV32I:
         # so a register never written holds whatever the simulator put there;
         # the model's 0 is not a prediction of it.
         self.defined = {0}
+        self.halted = False     # an ECALL or EBREAK has retired
         self.trace = None
 
     def _write(self, rd, value):
@@ -114,7 +122,7 @@ class RV32I:
             "rs2_addr": rs2_addr, "rs2_rdata": self.x[rs2_addr],
             "rs2_defined": rs2_addr in self.defined,
             "mem_addr": 0, "mem_rmask": 0, "mem_wmask": 0,
-            "mem_rdata": 0, "mem_wdata": 0,
+            "mem_rdata": 0, "mem_wdata": 0, "trap": 0, "halt": 0,
         }
         wb = self._execute(instr)
         rd, value = wb if wb is not None and wb[0] != 0 else (0, 0)
@@ -135,6 +143,16 @@ class RV32I:
         imm_j = sext((((instr >> 31) & 1) << 20) | (((instr >> 12) & 0xFF) << 12)
                      | (((instr >> 20) & 1) << 11) | (((instr >> 21) & 0x3FF) << 1), 21)
 
+        if instr in (ECALL, EBREAK):
+            # No handler to enter, so the core stops. pc_wdata is pc + 4, as
+            # the core reports it; nothing reads it, since nothing follows.
+            self.trace.update(trap=1, halt=1)
+            self.halted = True
+            self.pc += 4
+            return None
+        if opcode == MISC_MEM and funct3 == 0b000:      # FENCE
+            self.pc += 4
+            return None
         if opcode == BRANCH:
             if branch_taken(funct3, rs1, rs2):
                 self._jump(self.pc + imm_b)
@@ -180,8 +198,8 @@ class RV32I:
 
 
 def run_model(program, mem=None, max_steps=100_000, traces=None):
-    """Run program from address 0 until the pc leaves it -- past the end, as a
-    forward jump can. Returns (writebacks, model). max_steps stops a program
+    """Run program from address 0 until it halts or the pc leaves it -- past
+    the end, as a forward jump can. Returns (writebacks, model). max_steps stops a program
     that loops forever from hanging the test instead of failing it. Pass a
     list as traces to collect every retirement's RVFI record."""
     model = RV32I(mem)
@@ -194,6 +212,8 @@ def run_model(program, mem=None, max_steps=100_000, traces=None):
             traces.append(model.trace)
         if wb is not None:
             writebacks.append(wb)
+        if model.halted:
+            break
     else:
         raise RuntimeError(f"model: still running after {max_steps} instructions")
     return writebacks, model

@@ -1,11 +1,16 @@
 // RV32I instruction decode: register addresses, the immediate, and the control
 // the EX, MEM and WB stages consume.
 //
-// Instructions not yet implemented (FENCE, ECALL, EBREAK) decode to
-// rd_we_o = 0, no memory access and no redirect. They are inert rather than
-// wrong. That matters more than it sounds: a half-implemented instruction that
-// writes a plausible-looking value is exactly the kind of fault riscv-formal
-// will later report as a forwarding bug, sending the hunt to the wrong place.
+// FENCE decodes inert, which on this core is its full implementation: one
+// in-order hart with no caches already performs memory accesses in program
+// order. ECALL and EBREAK raise halt_o -- with no trap machinery in scope
+// (CLAUDE.md 5.1) there is no handler to enter, so the core stops instead.
+//
+// Every other opcode, and every other SYSTEM encoding (CSR accesses, MRET,
+// WFI), decodes to rd_we_o = 0, no memory access and no redirect. Inert rather
+// than wrong: a half-implemented instruction that writes a plausible-looking
+// value is exactly the kind of fault riscv-formal will later report as a
+// forwarding bug, sending the hunt to the wrong place.
 //
 // Register address fields sit at fixed positions in every RV32I format, so they
 // are extracted unconditionally. Whether a given instruction actually *uses*
@@ -44,7 +49,10 @@ module riscv_decoder #(
     output logic              mem_read_o,
     output logic              mem_write_o,
     output logic [2:0]        mem_funct3_o,
-    output logic              rd_we_o
+    output logic              rd_we_o,
+
+    // ECALL or EBREAK: stop the core once everything older has retired.
+    output logic              halt_o
 );
 
   // RV32I major opcodes (CLAUDE.md §5.1)
@@ -57,6 +65,11 @@ module riscv_decoder #(
   localparam logic [6:0] OPCODE_STORE  = 7'b0100011;
   localparam logic [6:0] OPCODE_OP     = 7'b0110011;
   localparam logic [6:0] OPCODE_OP_IMM = 7'b0010011;
+
+  // ECALL and EBREAK are whole-word encodings: SYSTEM with every other field
+  // zero except imm[0], which tells them apart.
+  localparam logic [31:0] INSTR_ECALL  = 32'h0000_0073;
+  localparam logic [31:0] INSTR_EBREAK = 32'h0010_0073;
 
   localparam logic [2:0] F3_ADD_SUB = 3'b000;
   localparam logic [2:0] F3_SLL     = 3'b001;
@@ -76,6 +89,10 @@ module riscv_decoder #(
   // and cannot also carry the width. Extracted unconditionally like the register fields; mem_read_o and
   // mem_write_o decide whether anything uses it.
   assign mem_funct3_o = funct3;
+
+  // Compared in full rather than by opcode: SYSTEM also holds the CSR
+  // instructions and MRET, which must stay inert, not halt.
+  assign halt_o = (instr_i == INSTR_ECALL) || (instr_i == INSTR_EBREAK);
 
   // Immediate forms. Every one is sign-extended from instr[31] except U, which
   // is not an offset at all -- it supplies the upper 20 bits directly.

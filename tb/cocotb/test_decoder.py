@@ -288,20 +288,48 @@ async def test_auipc_is_pc_plus_immediate(dut):
     assert int(dut.alu_b_sel_imm_o.value) == 1
 
 
+async def assert_inert(dut, instr):
+    """No register write, no memory access, no redirect."""
+    await decode(dut, instr)
+    assert int(dut.rd_we_o.value) == 0, f"{instr:#010x} writes a register"
+    assert int(dut.mem_read_o.value) == 0, f"{instr:#010x} reads memory"
+    assert int(dut.mem_write_o.value) == 0, f"{instr:#010x} writes memory"
+    assert int(dut.branch_o.value) == 0, f"{instr:#010x} branches"
+    assert int(dut.jump_o.value) == 0, f"{instr:#010x} jumps"
+
+
 @cocotb.test()
-async def test_unimplemented_classes_are_inert(dut):
-    """FENCE, ECALL and EBREAK write no register, touch no memory and do not
-    redirect. Inert beats plausibly wrong -- a half-implemented instruction
-    that writes something is what riscv-formal would later blame on forwarding."""
-    for instr in (enc_i(0x0FF, opcode=OPCODE_FENCE),          # fence iorw, iorw
-                  enc_i(0, opcode=OPCODE_SYSTEM),              # ecall
+async def test_ecall_and_ebreak_halt_and_do_nothing_else(dut):
+    for instr in (enc_i(0, opcode=OPCODE_SYSTEM),              # ecall
                   enc_i(1, opcode=OPCODE_SYSTEM)):             # ebreak
-        await decode(dut, instr)
-        assert int(dut.rd_we_o.value) == 0, f"{instr:#010x} writes a register"
-        assert int(dut.mem_read_o.value) == 0, f"{instr:#010x} reads memory"
-        assert int(dut.mem_write_o.value) == 0, f"{instr:#010x} writes memory"
-        assert int(dut.branch_o.value) == 0, f"{instr:#010x} branches"
-        assert int(dut.jump_o.value) == 0, f"{instr:#010x} jumps"
+        await assert_inert(dut, instr)
+        assert int(dut.halt_o.value) == 1, f"{instr:#010x} does not halt"
+
+
+@cocotb.test()
+async def test_fence_is_inert_and_does_not_halt(dut):
+    """FENCE as a NOP is complete on one in-order hart with no caches."""
+    instr = enc_i(0x0FF, opcode=OPCODE_FENCE)                  # fence iorw, iorw
+    await assert_inert(dut, instr)
+    assert int(dut.halt_o.value) == 0
+
+
+@cocotb.test()
+async def test_other_system_encodings_neither_act_nor_halt(dut):
+    """SYSTEM also holds CSR accesses, MRET and WFI, which this core does not
+    implement, and encodings one field away from ECALL/EBREAK. Matching the
+    opcode alone would make every one of them halt. Inert beats plausibly
+    wrong -- a half-implemented instruction that writes something is what
+    riscv-formal would later blame on forwarding."""
+    for instr in (enc_i(0x300, rs1=2, funct3=0b001, rd=1, opcode=OPCODE_SYSTEM),  # csrrw
+                  enc_i(0x302, opcode=OPCODE_SYSTEM),          # mret
+                  enc_i(0x105, opcode=OPCODE_SYSTEM),          # wfi
+                  enc_i(2, opcode=OPCODE_SYSTEM),              # imm one past ebreak
+                  enc_i(0, rd=1, opcode=OPCODE_SYSTEM),        # ecall with rd set
+                  enc_i(0, rs1=1, opcode=OPCODE_SYSTEM),       # ecall with rs1 set
+                  enc_i(0, funct3=0b100, opcode=OPCODE_SYSTEM)):
+        await assert_inert(dut, instr)
+        assert int(dut.halt_o.value) == 0, f"{instr:#010x} halts"
 
 
 # --- control flow ------------------------------------------------------------

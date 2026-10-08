@@ -1,7 +1,8 @@
 // RV32I core. Phase A: all five stages -- IF, ID, EX, MEM, WB.
 //
-// Not yet here: FENCE, ECALL and EBREAK. They decode inert -- see the decoder
-// -- rather than half-working.
+// FENCE is a NOP, which is a complete FENCE on one in-order hart without
+// caches. ECALL and EBREAK halt the core: with no trap machinery in scope
+// (CLAUDE.md 5.1) there is no handler to enter. See the EX section.
 //
 // Branches and jumps resolve in EX (CLAUDE.md 5.2) with static not-taken
 // prediction: fetch carries on at pc + 4, and a taken branch or any jump
@@ -50,6 +51,10 @@ module riscv_core #(
     output logic              wb_rd_we_o,
     output logic [ADDR_W-1:0] wb_rd_addr_o,
     output logic [XLEN-1:0]   wb_rd_wdata_o,
+
+    // High once an ECALL or EBREAK has retired, and with it everything older:
+    // architectural state is final. Sticky until reset.
+    output logic              halt_o,
 
 `ifdef RISCV_FORMAL
     // RISC-V Formal Interface (CLAUDE.md 5.4, docs/rvfi-plan.md): one record
@@ -132,11 +137,12 @@ module riscv_core #(
   logic            stall;      // load-use; driven by riscv_hazard in ID
   logic            redirect;   // taken branch or jump; driven in EX
   logic [XLEN-1:0] redirect_target;
+  logic            freeze;     // ECALL/EBREAK in EX, or after; driven in EX
 
   always_comb begin
-    if      (redirect) pc_next = redirect_target;
-    else if (stall)    pc_next = pc;
-    else               pc_next = pc + 32'd4;
+    if      (redirect)        pc_next = redirect_target;
+    else if (stall || freeze) pc_next = pc;
+    else                      pc_next = pc + 32'd4;
   end
 
   assign imem_addr_o = rst_i ? RESET_VECTOR : pc_next;
@@ -149,7 +155,9 @@ module riscv_core #(
   // IF/ID. Reset injects a NOP so ID never sees X on the first cycle. A stall
   // holds it: the instruction waiting on a load stays in ID for another cycle.
   // A redirect flushes it: the word at the BRAM output is the one after the
-  // branch, on the wrong path.
+  // branch, on the wrong path. A freeze does not need to: ID/EX takes a
+  // bubble every cycle from then on, so the word here can never issue, and
+  // redirect's flush is already the critical path's endpoint.
   always_ff @(posedge clk_i) begin
     if (rst_i || redirect) begin
       if_id_pc_o    <= RESET_VECTOR;
@@ -169,6 +177,7 @@ module riscv_core #(
   logic              dec_mem_read, dec_mem_write;
   logic [2:0]        dec_mem_funct3;
   logic              dec_rd_we;
+  logic              dec_halt;
 
   riscv_decoder #(
       .XLEN   (XLEN),
@@ -190,7 +199,8 @@ module riscv_core #(
       .mem_read_o       (dec_mem_read),
       .mem_write_o      (dec_mem_write),
       .mem_funct3_o     (dec_mem_funct3),
-      .rd_we_o          (dec_rd_we)
+      .rd_we_o          (dec_rd_we),
+      .halt_o           (dec_halt)
   );
 
   logic [XLEN-1:0] rf_rs1_rdata, rf_rs2_rdata;
@@ -217,10 +227,10 @@ module riscv_core #(
   //
   // A stall inserts a bubble while IF/ID holds the waiting instruction; a
   // redirect inserts one in place of the wrong-path instruction in ID. A
-  // bubble only has to be INERT, so only the five bits that can act are
+  // bubble only has to be INERT, so only the six bits that can act are
   // cleared: rd_we (register write, forwarding), mem_read (load-use stall, WB
-  // select), mem_write, branch and jump (redirect). Every other field is
-  // consumed only under one of those five, so in a bubble it may hold the
+  // select), mem_write, branch and jump (redirect), and halt. Every other
+  // field is consumed only under one of those six, so in a bubble it may hold the
   // wrong-path instruction's values -- they compute a result nothing writes.
   //
   // Clearing all ~170 flops instead puts redirect, the end of the critical
@@ -244,6 +254,7 @@ module riscv_core #(
   logic       id_ex_mem_read, id_ex_mem_write;
   logic [2:0] id_ex_mem_funct3;
   logic       id_ex_rd_we;
+  logic       id_ex_halt;
 
   // Hazard detection. The forwarding selects are decided here in ID and
   // registered into ID/EX (id_ex_fwd_*), so EX's muxes switch off flops --
@@ -313,20 +324,25 @@ module riscv_core #(
     end
   end
 
-  // The five bits a bubble clears.
+  // The six bits a bubble clears. halt is one of them for the same reason as
+  // branch: a stall bubble holds a copy of the instruction in ID, so an
+  // EBREAK stalled behind a load (its rs2 field is 1) would otherwise halt a
+  // cycle early, from the bubble, and the real EBREAK would never retire.
   always_ff @(posedge clk_i) begin
-    if (rst_i || stall || redirect) begin
+    if (rst_i || stall || redirect || freeze) begin
       id_ex_rd_we       <= 1'b0;
       id_ex_mem_read    <= 1'b0;
       id_ex_mem_write   <= 1'b0;
       id_ex_branch      <= 1'b0;
       id_ex_jump        <= 1'b0;
+      id_ex_halt        <= 1'b0;
     end else begin
       id_ex_rd_we       <= dec_rd_we;
       id_ex_mem_read    <= dec_mem_read;
       id_ex_mem_write   <= dec_mem_write;
       id_ex_branch      <= dec_branch;
       id_ex_jump        <= dec_jump;
+      id_ex_halt        <= dec_halt;
     end
   end
 
@@ -412,13 +428,35 @@ module riscv_core #(
   assign ex_link   = id_ex_pc_o + 32'd4;
   assign ex_result = id_ex_jump ? ex_link : alu_result;
 
+  // Halt. ECALL and EBREAK resolve here, where branches do, and for the same
+  // reason: by EX an instruction is known to be on the right path -- an ECALL
+  // in ID may sit behind a taken branch. From the cycle one reaches EX the
+  // front end freezes: the pc holds and ID/EX takes bubbles, so the two
+  // younger words -- in IF/ID and at the BRAM output -- never issue. Nothing is
+  // fetched or issued again until reset. Stages past EX always advance, so
+  // everything older than the halt still retires, and the halt itself
+  // retires two cycles later.
+  //
+  // freeze cannot coincide with redirect (EX holds one instruction, and after
+  // the halt ID/EX holds only bubbles) or with stall (neither the halting
+  // instruction nor the bubbles behind it read memory), so its place in the
+  // pc mux is arbitrary. Both its terms come off flops.
+  logic halted_q;
+
+  always_ff @(posedge clk_i) begin
+    if      (rst_i)      halted_q <= 1'b0;
+    else if (id_ex_halt) halted_q <= 1'b1;
+  end
+
+  assign freeze = id_ex_halt || halted_q;
+
   // EX/MEM. rd_we and mem_write reset low so nothing appears to retire, and
   // nothing is stored, on cycle one. alu_result_o is the EX result: the ALU's,
   // or a jump's link address. rs2_rdata is a store's data, and it must
   // be the FORWARDED value: `addi x1, ...` directly followed by `sw x1, ...`
   // would otherwise store x1's stale contents.
   logic [XLEN-1:0] ex_mem_rs2_rdata;
-  logic            ex_mem_mem_read, ex_mem_mem_write;
+  logic            ex_mem_mem_read, ex_mem_mem_write, ex_mem_halt;
   logic [2:0]      ex_mem_mem_funct3;
 
   always_ff @(posedge clk_i) begin
@@ -432,6 +470,7 @@ module riscv_core #(
       ex_mem_mem_write    <= 1'b0;
       ex_mem_mem_funct3   <= 3'b000;
       ex_mem_rd_we_o      <= 1'b0;
+      ex_mem_halt         <= 1'b0;
     end else begin
       ex_mem_pc_o         <= id_ex_pc_o;
       ex_mem_instr_o      <= id_ex_instr_o;
@@ -442,6 +481,7 @@ module riscv_core #(
       ex_mem_mem_write    <= id_ex_mem_write;
       ex_mem_mem_funct3   <= id_ex_mem_funct3;
       ex_mem_rd_we_o      <= id_ex_rd_we;
+      ex_mem_halt         <= id_ex_halt;
     end
   end
 
@@ -483,7 +523,7 @@ module riscv_core #(
   // as the non-load writeback value and for its low bits, which tell the load
   // side which lane to pick.
   logic [ADDR_W-1:0] mem_wb_rd_addr;
-  logic              mem_wb_rd_we, mem_wb_mem_read;
+  logic              mem_wb_rd_we, mem_wb_mem_read, mem_wb_halt;
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
@@ -494,6 +534,7 @@ module riscv_core #(
       mem_wb_mem_read    <= 1'b0;
       mem_wb_mem_funct3  <= 3'b000;
       mem_wb_rd_we       <= 1'b0;
+      mem_wb_halt        <= 1'b0;
     end else begin
       mem_wb_pc_o        <= ex_mem_pc_o;
       mem_wb_instr_o     <= ex_mem_instr_o;
@@ -502,6 +543,7 @@ module riscv_core #(
       mem_wb_mem_read    <= ex_mem_mem_read;
       mem_wb_mem_funct3  <= ex_mem_mem_funct3;
       mem_wb_rd_we       <= ex_mem_rd_we_o;
+      mem_wb_halt        <= ex_mem_halt;
     end
   end
 
@@ -510,6 +552,15 @@ module riscv_core #(
   assign wb_rd_we_o    = mem_wb_rd_we;
   assign wb_rd_addr_o  = mem_wb_rd_addr;
   assign wb_rd_wdata_o = wb_rd_wdata;
+
+  // halt_o rises the cycle after the halting instruction leaves WB, so when
+  // it is seen nothing older is still in flight. The halt bit rides the
+  // pipeline to get here, rather than halted_q being delayed by hand, so the
+  // retirement and the halt are visibly the same instruction -- RVFI marks it.
+  always_ff @(posedge clk_i) begin
+    if      (rst_i)       halt_o <= 1'b0;
+    else if (mem_wb_halt) halt_o <= 1'b1;
+  end
 
 `ifdef RISCV_FORMAL
   // ------------------------------------------------------------- RVFI -----
@@ -521,7 +572,7 @@ module riscv_core #(
   // flushed wrong-path words must not raise rvfi_valid, and a bubble in ID/EX
   // can even carry the squashed instruction's pc and instr. IF/ID's word is
   // valid unless reset or a redirect squashed it, and holds through a stall;
-  // ID/EX's is cleared by every bubble, exactly like its five control bits.
+  // ID/EX's is cleared by every bubble, exactly like its six control bits.
   // Past ID nothing holds or is squashed, so the bit simply rides along.
   logic if_id_valid, id_ex_valid, ex_mem_valid, mem_wb_valid;
 
@@ -536,7 +587,7 @@ module riscv_core #(
       ex_mem_valid <= 1'b0;
       mem_wb_valid <= 1'b0;
     end else begin
-      id_ex_valid  <= if_id_valid && !stall && !redirect;
+      id_ex_valid  <= if_id_valid && !stall && !redirect && !freeze;
       ex_mem_valid <= id_ex_valid;
       mem_wb_valid <= ex_mem_valid;
     end
@@ -596,8 +647,12 @@ module riscv_core #(
   assign rvfi_valid_o     = mem_wb_valid;
   assign rvfi_order_o     = order;
   assign rvfi_insn_o      = mem_wb_instr_o;
-  assign rvfi_trap_o      = 1'b0;   // no traps in scope (5.1)
-  assign rvfi_halt_o      = 1'b0;
+  // ECALL/EBREAK set both. halt: the last retirement before the core stops.
+  // trap: the instruction's architectural effect is an exception, which this
+  // core does not take -- riscv-formal's NERV, built without CSRs, reports
+  // them the same way. Nothing else traps (5.1).
+  assign rvfi_trap_o      = mem_wb_halt;
+  assign rvfi_halt_o      = mem_wb_halt;
   assign rvfi_intr_o      = 1'b0;
   assign rvfi_rs1_addr_o  = mem_wb_rs1_addr;
   assign rvfi_rs2_addr_o  = mem_wb_rs2_addr;

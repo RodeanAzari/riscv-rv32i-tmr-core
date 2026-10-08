@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — working core (RVFI port live in simulation; FENCE/ECALL/EBREAK and riscv-tests next)
+**Phase:** A — working core (all 40 instructions; the official `riscv-tests` suite next)
 
 ---
 
@@ -18,33 +18,30 @@ WB, and loads and stores go through an external, BRAM-timed data memory port.
 The temporary `wb_rd_*_i` testbench port is gone; tests set registers by
 executing instructions.
 
-Working today: **37 of the 40 RV32I instructions** — every ALU instruction,
-`lui`, `auipc`, all eight loads and stores, all six branches, `jal` and
-`jalr` — with full data-hazard handling (EX/MEM→EX and MEM/WB→EX forwarding,
+Working today: **all 40 RV32I instructions** — every ALU instruction,
+`lui`, `auipc`, all eight loads and stores, all six branches, `jal`,
+`jalr`, `fence`, `ecall` and `ebreak` — with full data-hazard handling (EX/MEM→EX and MEM/WB→EX forwarding,
 WB→ID through the register file, a one-cycle load-use stall) and branches
 resolved in EX with static not-taken prediction: a taken branch or jump
-flushes IF/ID and ID/EX and costs two cycles, not taken costs none. FENCE,
-ECALL and EBREAK decode **inert** (`rd_we = 0`, no memory access, no
-redirect).
+flushes IF/ID and ID/EX and costs two cycles, not taken costs none.
+**ECALL and EBREAK halt the core** (no trap machinery is in scope); FENCE is a
+NOP, which is complete on this core.
 
-**Timing margin: +0.394 ns at 100 MHz out-of-context (104.1 MHz)**, after
-registering the forwarding selects. Thin, and the paths that cross the memory
+**Timing margin: +0.430 ns at 100 MHz out-of-context (104.5 MHz)**. Thin, and the paths that cross the memory
 ports are not yet timed at all. The critical path is branch resolution fed by
 the MEM/WB forward of the writeback mux. See the synthesis trend notes.
 
 Both memories are now BRAM-timed in the testbench as well as in the design.
 The IF timing bug found during MEM + WB is fixed — see Decisions.
 
-Everything is committed but **not yet pushed** — the MEM + WB, IF-fix,
-forwarding and branch commits are local only (`git push` to sync, and CI runs on push). `make lint`, `make sim` and
-`make synth` all pass from a clean checkout.
+`make lint`, `make sim` and `make synth` all pass locally.
 
 ### Working and verified
 
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 116/116 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch) |
+| `make sim` | 124/124 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch) |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | CI on push | green (lint + sim) |
 
@@ -84,10 +81,17 @@ MEM/WB) and WB (load alignment, writeback mux).
   dedicated adder, `(jalr ? rs1 : pc) + imm` on the **forwarded** rs1, with
   bits [1:0] masked off. A jump's link address `pc + 4` replaces the ALU
   result going into EX/MEM, so it forwards like any other result
+- **ECALL and EBREAK halt, resolved in EX** like a branch, so a wrong-path
+  one is flushed rather than obeyed. From the cycle one reaches EX, `freeze`
+  holds the pc and bubbles ID/EX every cycle; everything older still retires,
+  and **`halt_o`** rises the cycle after the halting instruction leaves WB —
+  architectural state is final when it is seen. Sticky until reset. RVFI
+  marks that retirement `trap` and `halt`
 
 `rtl/core/riscv_decoder.sv` — register addresses, all five RV32I immediate
-formats (I/S/B/U/J), the EX control signals, `branch`/`jump`/`jalr`, and
-`mem_read`/`mem_write`/`mem_funct3`. `mem_funct3` is `instr[14:12]`
+formats (I/S/B/U/J), the EX control signals, `branch`/`jump`/`jalr`,
+`mem_read`/`mem_write`/`mem_funct3`, and `halt` — the two exact ECALL/EBREAK
+words, so CSR accesses, MRET and WFI stay inert. `mem_funct3` is `instr[14:12]`
 unconditionally, so it also carries a branch's condition. `mem_read` remains
 the only writeback select: a jump's link address enters in EX, not WB.
 
@@ -111,15 +115,17 @@ pc and IF/ID (the pc mux re-presents `pc`, so the BRAM re-reads the word it
 holds) and inserts a bubble into ID/EX. Store data in EX/MEM is the
 **forwarded** rs2.
 
-**A bubble clears five bits, not the whole of ID/EX:** `rd_we`, `mem_read`,
-`mem_write`, `branch`, `jump` — the only fields that can act. The rest hold the
+**A bubble clears six bits, not the whole of ID/EX:** `rd_we`, `mem_read`,
+`mem_write`, `branch`, `jump`, `halt` — the only fields that can act. The rest hold the
 squashed instruction's values, which compute a result nothing writes. So
 `id_ex_pc_o`/`id_ex_instr_o` show the squashed instruction during a bubble,
 not a NOP; RVFI's valid bit has to distinguish bubbles regardless. Each of the
-five is pinned by a test that fails if it is left set: notably `mem_read`
+six is pinned by a test that fails if it is left set: notably `mem_read`
 (a stall bubble copying `lw x1, 0(x1)` would stall on itself forever) and
 `branch` (a stall bubble would evaluate the branch on the load's *address*
-forwarded from EX/MEM; a redirect bubble would redirect a second time).
+forwarded from EX/MEM; a redirect bubble would redirect a second time), and
+`halt` (EBREAK's rs2 field is 1, so after `lw x1` it stalls, and a bubble
+copy keeping the bit halts a cycle early and flushes the real EBREAK).
 
 `rtl/core/riscv_mem_align.sv` — byte lanes for both directions: stores
 replicate data across lanes and raise strobes; loads pick the lane and sign- or
@@ -140,8 +146,8 @@ would have forced. x0 invariance and WB→ID write-first forwarding are both
 implemented here rather than in the surrounding pipeline, because both are
 formal properties in CLAUDE.md §5.5.
 
-`tb/cocotb/` — 116 tests across seven toplevels: `test_core` (55), `test_alu`
-(16), `test_regfile` (8), `test_decoder` (29), `test_mem_align` (4, each an
+`tb/cocotb/` — 124 tests across seven toplevels: `test_core` (61), `test_alu`
+(16), `test_regfile` (8), `test_decoder` (31), `test_mem_align` (4, each an
 exhaustive sweep), `test_hazard` (2; one sweeps all 2,048 input combinations
 over x0–x3), `test_branch` (2: corner pairs, and random pairs that are equal,
 one apart or opposite in sign, against a reference using Python's own signed
@@ -173,9 +179,11 @@ state, which a dropped or doubled instruction can survive) and final memory:
 120 instructions padded (validates the model), 400 dense (finds hazards).
 Random branches and jumps go **forward only**, 1–6 words, so every program
 terminates; offset 2 skips exactly the word in IF/ID. Each run asserts a floor
-on taken redirects (5 padded, 20 dense, against measured minimums of 8 and 35
-over 200 seeds) so a generator that stops branching fails rather than passing
-vacuously. **Every retirement is also checked through RVFI**: the model leaves an
+on taken redirects (5 padded, 20 dense, against measured minimums of 8 and 36
+over 200 seeds, re-measured when FENCE joined the mix) so a generator that
+stops branching fails rather than passing vacuously. Every program ends in six
+ECALL/EBREAKs — the farthest a forward branch reaches — so each seed also
+checks the halt: the exact retirement count, and nothing retiring after it. **Every retirement is also checked through RVFI**: the model leaves an
 RVFI-shaped record per step, and `check_rvfi` compares the core's records
 field by field — insn, both pcs, rs addresses and values, rd, memory masks,
 address and the selected data lanes, and `order` — so stores, branches and
@@ -195,11 +203,12 @@ estimate and post-route is measured.
 
 ### Not started
 
-FENCE / ECALL / EBREAK, the official `riscv-tests` suite, riscv-formal and
-the rest of formal, UVM, TMR, hardware bring-up, and all of Stage 2.
+The official `riscv-tests` suite, riscv-formal and the rest of formal, UVM,
+TMR, hardware bring-up, and all of Stage 2.
 
-**Instructions not yet implemented decode inert** (`rd_we = 0`) rather than
-half-working. A branch or load that wrote a plausible-looking value would later
+**Encodings outside RV32I decode inert** (`rd_we = 0`, no memory access, no
+redirect, no halt) rather than half-working — CSR accesses, MRET, WFI and
+illegal words alike, since there is no trap to raise. A branch or load that wrote a plausible-looking value would later
 surface as a riscv-formal mismatch that reads like a forwarding bug, sending the
 hunt to the wrong part of the design.
 
@@ -232,6 +241,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-07 | Bubble clears 5 control bits, not all of ID/EX | 963 | 492 | 47 | +0.073 | 100.7 | +0.1 |
 | 2026-10-07 | Forwarding selects decided in ID, registered | 1095 | 496 | 47 | +0.394 | 104.1 | +3.4 |
 | 2026-10-07 | RVFI port, under `RISCV_FORMAL` (not synthesized) | 1095 | 496 | 47 | +0.394 | 104.1 | 0.0 |
+| 2026-10-08 | FENCE (NOP), ECALL/EBREAK halt | 1107 | 501 | 47 | +0.430 | 104.5 | +0.4 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -329,7 +339,17 @@ point: everything RVFI adds sits under `` `ifdef RISCV_FORMAL ``, synthesis does
 not define it, and Vivado is deterministic for the same netlist. Neither report
 mentions `rvfi`.
 
-**The out-of-context slack is optimistic, now +0.394 ns.** Three
+The halt row: **FF +5 is exactly the RTL** — `id_ex_halt`, `halted_q`,
+`ex_mem_halt`, `mem_wb_halt`, `halt_o`. LUT +12 is the halt decode (two
+32-bit compares) and the `freeze` terms. The worst path is the same family:
+`mem_wb_alu_result[1]` (the load lane select) → load alignment → writeback
+mux → forwarding mux → comparator → `redirect` → the ID/EX bubble clear,
+10 levels, 74% route. That clear net now carries `freeze` too — Vivado named
+its last LUT after `id_ex_halt` — but `freeze` comes off two flops, so it
+added no level. +0.036 ns is placement noise. Deliberately **not** on the
+IF/ID flush (see Decisions).
+
+**The out-of-context slack is optimistic, now +0.430 ns.** Three
 paths that matter on the board cross the core's ports and are untimed here:
 `pc + 4` / stall mux → `imem_addr_o`, the stall comparator and now the whole
 branch-resolution path → `imem_addr_o`, and
@@ -418,8 +438,8 @@ rebuilds Verilator (~8 min) and re-saves it — seen 2026-10-07 after a 20-day
 gap: `Cache not found for input keys: verilator-Linux-v5.050`, then lint and
 sim in about a minute. A slow first run after a pause is this, not a broken
 cache key.
-The regression is now three elaborations (core, regfile, decoder) rather than
-one; each gets its own build directory and results file.
+The regression is seven elaborations; each gets its own build directory and
+results file.
 Bumping `VERILATOR_VERSION` forces a rebuild.
 
 **Not in CI:** synthesis. Vivado is large and slow; a self-hosted runner may be
@@ -564,6 +584,27 @@ the honest answer rather than pretending it fits on a hosted one.
   `auipc`: checking which instruction ran is not enough, because IMEM ignores
   the low bits too — a first version of the test missed a planted bug for
   exactly that reason, and only the random tests caught it.
+- **ECALL and EBREAK halt the core** (decided 2026-10-08). RV32I says they
+  trap; traps need `mtvec`/`mepc`/`mcause` and the CSR instructions, all out
+  of scope (§5.1), so something else has to happen. Three options were
+  weighed: halt, NOP, or redirecting riscv-tests' PASS/FAIL to a memory
+  store. Halt is the only one giving the instructions a defined meaning that
+  holds on the board too — a NOP silently runs on into whatever follows, and
+  the store dodges the question. Precedent: PicoRV32's `trap` pin, and
+  riscv-formal's NERV, which without CSRs treats them as illegal and stops.
+  RVFI sets both `rvfi_halt` ("the last instruction the core retires before
+  halting") and `rvfi_trap` (its architectural effect is an exception). It
+  will also let riscv-tests' PASS/FAIL macros run verbatim.
+- **Freeze does not flush IF/ID** (2026-10-08). The first version did; it is
+  redundant — ID/EX takes a bubble every cycle once frozen, so IF/ID's word
+  can never issue — and IF/ID's flush is on the critical path. The pc *is*
+  frozen, though nothing architectural needs it: a halted core showing where
+  it stopped is worth one OR term at the stall's mux input.
+- **FENCE is a NOP, and that is the implementation** (2026-10-08). FENCE
+  orders memory accesses as seen by other harts and devices; with one
+  in-order hart, no caches and no store buffer, accesses already happen in
+  program order. Revisit when the Stage 2 DMA engine starts sharing memory
+  with the core — that is the first second observer.
 - **The ASIC flow is LibreLane, not OpenLane** (renamed 2026-10-07, before
   anything was installed). CLAUDE.md named "OpenLane" from before the
   ecosystem moved. Checked on GitHub that day: the original
@@ -668,12 +709,12 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-### 1. FENCE, ECALL, EBREAK; `riscv-tests`
+### 1. `riscv-tests`
 
-FENCE can decode as a NOP on an in-order core with no caches. ECALL/EBREAK
-need a decision — no traps are in scope, but `riscv-tests` signals pass/fail
-with ECALL — then the official suite (a Phase A box). After that, Phase A's
-only open box is CI, which already runs lint and sim.
+The official suite (a Phase A box). Its environment needs CSRs and `mret`, so
+this core needs its own `riscv_test.h`; PASS/FAIL end in ECALL, which now
+halts. After that, Phase A's only open box is CI, which already runs lint and
+sim.
 
 ### 2. Timing: IF/ID flush via the valid bit
 
@@ -723,9 +764,6 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-07 — RVFI port live in simulation (under
-`RISCV_FORMAL`, not synthesized), checked against the golden model on every
-retirement. OSS CAD Suite 2026-10-07 installed (Yosys 0.69, SBY 0.69, four
-solvers), appended to PATH; Yosys elaborates the core cleanly in both
-configurations. 104.1 MHz unchanged. Next session: FENCE/ECALL/EBREAK and
-`riscv-tests` (Next up §1), or the formal smoke test (§3).*
+*Last updated: 2026-10-08 — all 40 RV32I instructions: FENCE as a NOP,
+ECALL/EBREAK halt (`halt_o`, RVFI trap + halt). 124/124 tests, 104.5 MHz.
+Next: the official `riscv-tests` suite (Next up §1).*

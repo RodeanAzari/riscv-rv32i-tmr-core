@@ -45,6 +45,10 @@ OPCODE_JALR   = 0b1100111
 OPCODE_LOAD   = 0b0000011
 OPCODE_STORE  = 0b0100011
 
+ECALL  = 0x0000_0073
+EBREAK = 0x0010_0073
+FENCE  = 0x0FF0_000F     # fence iorw, iorw
+
 
 def enc_i(imm, rs1=0, funct3=0, rd=0, opcode=OPCODE_OP_IMM):
     return ((imm & 0xFFF) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
@@ -440,13 +444,17 @@ async def test_slt_signed_through_the_core(dut):
 
 
 @cocotb.test()
-async def test_unimplemented_instruction_is_inert(dut):
-    """ECALL decodes to no register write until it is implemented."""
+async def test_csr_instruction_is_inert(dut):
+    """csrrw x1, mstatus, x2: SYSTEM, but not ECALL/EBREAK. No CSRs exist, so
+    it must neither write rd nor halt."""
     await reset(dut)
     await release(dut)
 
-    await drain(dut, 0x0000_0073)                            # ecall
-    assert int(dut.ex_mem_rd_we_o.value) == 0, "unimplemented ecall writes rd"
+    await drain(dut, (0x300 << 20) | (2 << 15) | (0b001 << 12) | (1 << 7) | 0x73)
+    assert int(dut.ex_mem_rd_we_o.value) == 0, "csrrw writes rd"
+    for _ in range(3):
+        await feed(dut, NOP)
+    assert int(dut.halt_o.value) == 0, "csrrw halted the core"
 
 
 @cocotb.test()
@@ -496,6 +504,9 @@ async def run(dut, program, mem=None, timed=False, cycles=None, rvfi=None):
     backward branch executes more instructions than it holds, and passes
     cycles. Past the end the core fetches NOPs, which write only x0.
 
+    Stops early once halt_o rises: an ECALL or EBREAK has retired, and
+    everything older with it, so there is nothing left to collect.
+
     Pass a list as rvfi to collect every RVFI retirement record.
     """
     mem = await reset(dut, program, mem)
@@ -512,6 +523,8 @@ async def run(dut, program, mem=None, timed=False, cycles=None, rvfi=None):
             writebacks.append((cycle, *wb) if timed else wb)
         if rvfi is not None and int(dut.rvfi_valid_o.value):
             rvfi.append(rvfi_record(dut))
+        if int(dut.halt_o.value):
+            break
     return writebacks, mem
 
 
@@ -527,13 +540,16 @@ def check_rvfi(got, want):
     duplicated or bubble-retired instruction anywhere misaligns the stream.
     Register values are compared only where the model knows them (the
     register file has no reset), and memory data only in the lanes the masks
-    select. Past the program's end the core retires the NOPs it fetches.
+    select. Past the program's end the core retires the NOPs it fetches --
+    unless the program halted, in which case nothing retires after the halt.
     """
     assert len(got) >= len(want), f"core retired {len(got)}, model {len(want)}"
     for i, (g, w) in enumerate(zip(got, want)):
         where = f"retirement #{i} pc={w['pc_rdata']:#x} insn={w['insn']:#010x}"
         assert g["order"] == i, f"{where}: order {g['order']}"
-        assert (g["trap"], g["halt"], g["intr"]) == (0, 0, 0), where
+        assert (g["trap"], g["halt"], g["intr"]) == (w["trap"], w["halt"], 0), (
+            f"{where}: trap/halt/intr core {(g['trap'], g['halt'], g['intr'])}, "
+            f"model {(w['trap'], w['halt'], 0)}")
         for f in ("insn", "pc_rdata", "pc_wdata", "rs1_addr", "rs2_addr",
                   "rd_addr", "rd_wdata", "mem_rmask", "mem_wmask"):
             assert g[f] == w[f], f"{where}: {f} core {g[f]:#x}, model {w[f]:#x}"
@@ -547,6 +563,8 @@ def check_rvfi(got, want):
         for f, m in (("mem_rdata", "mem_rmask"), ("mem_wdata", "mem_wmask")):
             assert bytes_in(w[m], g[f]) == bytes_in(w[m], w[f]), (
                 f"{where}: {f} core {g[f]:#010x}, model {w[f]:#010x}")
+    if want and want[-1]["halt"]:
+        assert len(got) == len(want), f"core retired {len(got) - len(want)} past the halt"
     for g in got[len(want):]:
         assert g["insn"] == NOP, f"core retired {g['insn']:#010x} past the program"
     return {"retirements": len(want),
@@ -1084,6 +1102,110 @@ async def test_backward_branch_loop(dut):
     assert len(x2) == 4 and all((b - a) & MASK32 == 10 for a, b in zip(x2, x2[1:])), x2
 
 
+# --- FENCE, ECALL, EBREAK ---------------------------------------------------
+# ECALL and EBREAK halt the core (no trap machinery, CLAUDE.md 5.1): everything
+# older retires, nothing younger does, and halt_o stays high until reset.
+
+async def assert_stays_halted(dut, cycles=10):
+    """After halt_o: no register write, no store, no retirement, and the
+    fetch address frozen -- for as long as we care to watch."""
+    assert int(dut.halt_o.value) == 1, "core did not halt"
+    addr = int(dut.imem_addr_o.value)
+    for _ in range(cycles):
+        await RisingEdge(dut.clk_i)
+        await FallingEdge(dut.clk_i)
+        assert int(dut.halt_o.value) == 1, "halt_o dropped without a reset"
+        assert int(dut.wb_rd_we_o.value) == 0, "register write after the halt"
+        assert int(dut.dmem_we_o.value) == 0, "store after the halt"
+        assert int(dut.rvfi_valid_o.value) == 0, "retirement after the halt"
+        assert int(dut.imem_addr_o.value) == addr, "fetch moved after the halt"
+
+
+@cocotb.test()
+async def test_ecall_halts_after_older_instructions_retire(dut):
+    """The two instructions ahead of the ecall write back; the store and the
+    addi behind it -- already fetched when it reached EX -- do nothing."""
+    program = [enc_i(1, rd=1), enc_i(2, rd=2), ECALL,
+               enc_s(0, rs1=0, rs2=1, funct3=SW), enc_i(3, rd=3)]
+    rvfi = []
+    writebacks, mem = await run(dut, program, rvfi=rvfi)
+    assert final_regs(writebacks) == {1: 1, 2: 2}, f"retired {writebacks}"
+    assert mem == {}, f"store behind the ecall wrote {mem}"
+    assert [r["insn"] for r in rvfi] == program[:3]
+    assert (rvfi[-1]["trap"], rvfi[-1]["halt"]) == (1, 1), "ecall not marked in RVFI"
+    assert all((r["trap"], r["halt"]) == (0, 0) for r in rvfi[:-1])
+    await assert_stays_halted(dut)
+
+
+@cocotb.test()
+async def test_ebreak_halts(dut):
+    program = [enc_i(1, rd=1), EBREAK, enc_i(3, rd=3)]
+    rvfi = []
+    writebacks, _ = await run(dut, program, rvfi=rvfi)
+    assert final_regs(writebacks) == {1: 1}, f"retired {writebacks}"
+    assert [r["insn"] for r in rvfi] == program[:2]
+    assert rvfi[-1]["halt"] == 1
+    await assert_stays_halted(dut)
+
+
+@cocotb.test()
+async def test_halt_rises_the_cycle_after_the_halting_retirement(dut):
+    """halt_o promises that architectural state is final. Too early and the
+    instructions ahead would still be in flight; it should not lag either."""
+    program = [enc_i(1, rd=1), ECALL]
+    await reset(dut, program)
+    await release(dut)
+    retired = None
+    for cycle in range(20):
+        await RisingEdge(dut.clk_i)
+        await FallingEdge(dut.clk_i)
+        if int(dut.rvfi_valid_o.value) and int(dut.rvfi_halt_o.value):
+            retired = cycle
+            assert int(dut.halt_o.value) == 0, "halt_o rose before the ecall retired"
+        if int(dut.halt_o.value):
+            assert retired == cycle - 1, f"ecall retired at {retired}, halt_o at {cycle}"
+            return
+    assert False, "core never halted"
+
+
+@cocotb.test()
+async def test_wrong_path_ecall_does_not_halt(dut):
+    """An ecall in the shadow of a taken branch is flushed, not obeyed: the
+    core runs on to the target and halts at the next ecall."""
+    program = [enc_b(BEQ, 0, 0, 8), ECALL,
+               enc_i(5, rd=5), ECALL]                  # target at 8
+    rvfi = []
+    writebacks, _ = await run(dut, program, rvfi=rvfi)
+    assert final_regs(writebacks) == {5: 5}, f"retired {writebacks}"
+    assert [r["pc_rdata"] for r in rvfi] == [0, 8, 12]
+    await assert_stays_halted(dut)
+
+
+@cocotb.test()
+async def test_ebreak_stalled_behind_a_load_halts_once(dut):
+    """ebreak's rs2 field is 1, so after lw x1 the stall comparator fires (a
+    false match: ebreak reads nothing) and ID/EX takes a bubble holding a copy
+    of the ebreak. If the bubble kept its halt bit, the copy would halt the
+    core a cycle early and the real ebreak would be flushed, never retiring."""
+    program = [enc_load(LW, rd=1, imm=32), EBREAK, enc_i(3, rd=3)]
+    rvfi = []
+    writebacks, _ = await run(dut, program, mem={32: 0x1234}, rvfi=rvfi)
+    assert final_regs(writebacks) == {1: 0x1234}, f"retired {writebacks}"
+    assert [r["insn"] for r in rvfi] == program[:2], "the ebreak did not retire"
+    assert rvfi[-1]["halt"] == 1
+    await assert_stays_halted(dut)
+
+
+@cocotb.test()
+async def test_fence_is_a_nop(dut):
+    """A fence between a producer and its consumer changes nothing: no write,
+    no stall, no lost forward."""
+    program = [enc_i(7, rd=1), FENCE, enc_i(1, rs1=1, rd=2)]
+    writebacks, _ = await run(dut, program, timed=True)
+    assert [(r, v) for _, r, v in writebacks if r] == [(1, 7), (2, 8)]
+    assert retire_cycle(writebacks, 2) - retire_cycle(writebacks, 1) == 2
+
+
 # --- random programs against the golden model --------------------------------
 # Directed tests above pin the cases we thought of; these find the ones we did
 # not. Few registers, so nearly every instruction depends on a recent one, and
@@ -1106,8 +1228,10 @@ def random_instruction(rng, pc):
     """
     rd, rs1, rs2 = (rng.choice(RANDOM_REGS) for _ in range(3))
     kind = rng.choices(["op", "op_imm", "lui", "auipc", "load", "store",
-                        "branch", "jal", "jalr"],
-                       weights=[4, 4, 1, 1, 3, 2, 3, 1, 1])[0]
+                        "branch", "jal", "jalr", "fence"],
+                       weights=[4, 4, 1, 1, 3, 2, 3, 1, 1, 1])[0]
+    if kind == "fence":
+        return FENCE
     if kind in ("branch", "jal", "jalr"):
         offset = 4 * rng.randint(1, 6) + (2 if rng.random() < 0.1 else 0)
         if kind == "branch":
@@ -1145,8 +1269,16 @@ def random_instruction(rng, pc):
     return enc_s(rng.randrange(0, 64, size), rs1=0, rs2=rs2, funct3=funct3)
 
 
+# The farthest a random branch or jump reaches is 6 words, plus a misaligned
+# half-word that the core drops, so a program that ends in this many halting
+# instructions halts whichever path its last control transfer takes.
+HALT_TAIL = 6
+
+
 def random_program(rng, length, gap):
-    """length random instructions, each followed by gap NOPs.
+    """length random instructions, each followed by gap NOPs, then a tail of
+    ECALL/EBREAK -- so every program also checks the halt: the exact
+    retirement count, and that nothing retires after it.
 
     Starts by loading x1-x4 with random values. The register file has no reset
     (RV32I leaves x1-x31 undefined), so without this the core reads whatever
@@ -1159,7 +1291,7 @@ def random_program(rng, length, gap):
         program += li(rd, rng.getrandbits(32))
     for _ in range(length):
         program += [random_instruction(rng, 4 * len(program))] + [NOP] * gap
-    return program
+    return program + [rng.choice([ECALL, EBREAK]) for _ in range(HALT_TAIL)]
 
 
 async def check_against_model(dut, program, mem, min_taken=0):
@@ -1168,6 +1300,7 @@ async def check_against_model(dut, program, mem, min_taken=0):
     dut._log.info(f"model: {len(want_wb)} writebacks, {model.taken} redirects")
     # A random test whose branches are never taken tests nothing about flushing.
     assert model.taken >= min_taken, f"only {model.taken} redirects in the program"
+    assert model.halted, "program ran off its end without reaching the halt tail"
     got_rvfi = []
     got_wb, got_mem = await run(dut, program, dict(mem), rvfi=got_rvfi)
     dut._log.info(f"RVFI: {check_rvfi(got_rvfi, want_rvfi)}")
