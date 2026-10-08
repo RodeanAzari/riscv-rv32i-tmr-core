@@ -422,7 +422,17 @@ module riscv_core #(
 
   assign target_base     = id_ex_jalr ? ex_rs1 : id_ex_pc_o;
   assign target_sum      = target_base + id_ex_imm_o;
-  assign redirect_target = target_sum & ~XLEN'(2'b11);
+  // Concatenation, not `target_sum & ~XLEN'(2'b11)`: Yosys 0.69 binds that
+  // `~` to the cast's width rather than to the cast, giving a mask of 3
+  // instead of ~3. Verilator and Vivado read it as intended, so simulation
+  // and synthesis never showed it; riscv-formal, which runs on Yosys, did --
+  // as would the LibreLane flow, whose synthesis is Yosys too.
+  assign redirect_target = {target_sum[XLEN-1:2], 2'b00};
+
+  // Bit 0 of the sum is never needed: branch and JAL offsets are even, and
+  // JALR clears it by the spec. Named unused_* so lint knows it is deliberate.
+  logic unused_target_bit0;
+  assign unused_target_bit0 = target_sum[0];
   assign redirect        = id_ex_jump || (id_ex_branch && branch_cond);
 
   // A jump writes its link address, pc + 4, in place of the ALU result -- so
