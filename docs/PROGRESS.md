@@ -6,13 +6,13 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — working core (all 40 instructions; official `riscv-tests` passing locally — every Phase A box met once CI confirms)
+**Phase:** A — **done** (2026-10-08, CI run 37817380686). Phase B — formal verification — next
 
 ---
 
 ## Where things stand
 
-**Position: Phase A, all five pipeline stages built.** The core executes
+**Position: Phase A complete; every box in CLAUDE.md §8 checked.** The core executes
 straight-line programs end to end: results write back to the register file in
 WB, and loads and stores go through an external, BRAM-timed data memory port.
 The temporary `wb_rd_*_i` testbench port is gone; tests set registers by
@@ -36,10 +36,9 @@ the MEM/WB forward of the writeback mux. See the synthesis trend notes.
 Both memories are now BRAM-timed in the testbench as well as in the design.
 The IF timing bug found during MEM + WB is fixed — see Decisions.
 
-`make lint`, `make sim` and `make synth` all pass locally. The halt and
-`riscv-tests` work is **not yet through CI**: CI now also checks out the
-`sw/riscv-tests` submodule and installs Ubuntu's riscv64 assembler, which has
-not run on a hosted runner yet.
+`make lint`, `make sim` and `make synth` all pass locally, and lint and sim
+pass in CI — including the official suite, assembled there by Ubuntu's
+GCC 13.2 / binutils 2.42 rather than the local GCC 16.
 
 ### Working and verified
 
@@ -48,7 +47,7 @@ not run on a hosted runner yet.
 | `make lint` | clean, Verilator 5.050 |
 | `make sim` | 164/164 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| CI on push | green (lint + sim) as of `04a53eb`; the riscv-tests setup is unproven there |
+| CI on push | green (lint + sim, 164/164, all 40 rv32ui ran) at `c9267af` |
 
 ### Implemented
 
@@ -471,6 +470,15 @@ The regression is seven elaborations; each gets its own build directory and
 results file.
 Bumping `VERILATOR_VERSION` forces a rebuild.
 
+**Watch: `ubuntu-latest` becomes Ubuntu 26 from 2026-10-19** (annotation on
+run 37817380686). Two things move with it: the apt riscv64 toolchain (13.2
+today), and the OS under the cached Verilator — the cache key names only
+`runner.os` (`Linux`), so a binary built on 24.04 would be restored onto
+26.04. If the first run after the switch fails, suspect this before the RTL;
+pinning `runs-on: ubuntu-24.04` or adding the image version to the key are
+the two fixes. (The same run also warns that Node 20 actions are deprecated;
+they run on Node 24 regardless.)
+
 **Not in CI:** synthesis. Vivado is large and slow; a self-hosted runner may be
 the honest answer rather than pretending it fits on a hosted one.
 
@@ -747,21 +755,14 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-### 1. Push, and close Phase A on green CI
-
-Every Phase A box is met locally. The first CI run with the submodule and
-Ubuntu's riscv64 assembler is the remaining check; when it is green, mark
-Phase A done in CLAUDE.md's status table (whose "Key result" column still
-shows the PC + IF row).
-
-### 2. Timing: IF/ID flush via the valid bit
+### 1. Timing: IF/ID flush via the valid bit
 
 The current critical path ends in the IF/ID flush (fo 95). The valid bit now
 exists, but only under `RISCV_FORMAL`; moving `if_id_valid` into the core
 proper and gating decode with it would let a redirect clear one bit instead of
 64. Its own measured slice.
 
-### 3. riscv-formal (Phase B)
+### 2. riscv-formal (Phase B)
 
 Tools are installed (see Toolchain) and Yosys already reads the core. First a
 smoke test — one small `.sby` proving one property, run by a live `make formal`
@@ -770,7 +771,7 @@ the core for riscv-formal and settle the lane-style memory and misalignment
 questions against `RISCV_FORMAL_ALIGNED_MEM`.
 Check reachability on every property — a vacuous pass proves nothing (§5.5, §9).
 
-### 4. Board-level top
+### 3. Board-level top
 
 Deferred until the core executes instructions: `constr/arty_a7.xdc` pin
 constraints, a top with BRAM instruction memory and clocking, then `make prog`
@@ -805,6 +806,6 @@ worse than no file. Specifically:
 *Last updated: 2026-10-08 — all 40 RV32I instructions: FENCE as a NOP,
 ECALL/EBREAK halt (`halt_o`, RVFI trap + halt). Official `riscv-tests` rv32ui
 passes 40/42 (two excluded with reasons), each also checked retirement by
-retirement against the golden model. 164/164 tests, 104.5 MHz. Next: push and
-confirm CI (Next up §1), then the IF/ID flush (§2) or the formal smoke test
-(§3).*
+retirement against the golden model. 164/164 tests, 104.5 MHz, green in CI.
+**Phase A done.** Next: the formal smoke test (Next up §2, opening Phase B),
+or the IF/ID flush (§1).*

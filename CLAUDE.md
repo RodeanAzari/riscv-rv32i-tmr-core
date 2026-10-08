@@ -28,7 +28,7 @@ This is a portfolio project. **Measured results matter as much as working RTL.**
 
 | Phase | Status | Key result |
 |---|---|---|
-| A — Working core | IN PROGRESS | PC + IF; 375.7 MHz OOC, 1 LUT / 92 FF |
+| A — Working core | DONE (2026-10-08) | 40/40 RV32I; riscv-tests rv32ui 40/42 (2 excluded, reasons in PROGRESS.md); 104.5 MHz OOC, 1107 LUT / 501 FF |
 | B — Formal verification | NOT STARTED | — |
 | C — UVM environment | NOT STARTED | — |
 | D — Hardware bring-up | NOT STARTED | — |
@@ -440,11 +440,11 @@ Hard boundaries. If a task seems to require one of these, stop and flag it rathe
 A phase is done when **every** box is checked. No partial credit.
 
 ### Phase A — Working core
-- [ ] All 40 RV32I instructions implemented
-- [ ] All forwarding paths working; load-use stall correct
-- [ ] RVFI port exposed and populated
-- [ ] Official `riscv-tests` RV32I suite passes
-- [ ] `make lint` clean, `make sim` passes in CI
+- [x] All 40 RV32I instructions implemented
+- [x] All forwarding paths working; load-use stall correct
+- [x] RVFI port exposed and populated
+- [x] Official `riscv-tests` RV32I suite passes
+- [x] `make lint` clean, `make sim` passes in CI
 
 ### Phase B — Formal verification
 - [ ] `riscv-formal` ISA compliance passing
