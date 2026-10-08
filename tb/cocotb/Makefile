@@ -48,14 +48,16 @@ endif
 # same reason as --trace-structs above.
 COMPILE_ARGS += -DRISCV_FORMAL
 
-# One entry per elaboration, <toplevel module>:<python test module>.
+# One entry per elaboration, <toplevel module>:<python test modules>.
 #
 # Submodules get their own toplevel rather than being poked through the core's
 # hierarchy: a unit test that reaches into dut.u_regfile.mem breaks the moment
 # the hierarchy is refactored, and it cannot drive a port the core does not
 # expose. Each entry elaborates separately, so each needs its own build
-# directory and results file or they overwrite each other.
-TESTS ?= riscv_core:test_core \
+# directory and results file or they overwrite each other. Several modules
+# against one toplevel share an entry, comma-separated: test_riscv_tests runs
+# the official suite on the same core build as test_core.
+TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_alu:test_alu \
          riscv_regfile:test_regfile \
          riscv_decoder:test_decoder \

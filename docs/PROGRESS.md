@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** A — working core (all 40 instructions; the official `riscv-tests` suite next)
+**Phase:** A — working core (all 40 instructions; official `riscv-tests` passing locally — every Phase A box met once CI confirms)
 
 ---
 
@@ -25,7 +25,9 @@ WB→ID through the register file, a one-cycle load-use stall) and branches
 resolved in EX with static not-taken prediction: a taken branch or jump
 flushes IF/ID and ID/EX and costs two cycles, not taken costs none.
 **ECALL and EBREAK halt the core** (no trap machinery is in scope); FENCE is a
-NOP, which is complete on this core.
+NOP, which is complete on this core. The official **`riscv-tests` rv32ui
+suite passes: 40 of 42**, the other two excluded with reasons (see
+Decisions).
 
 **Timing margin: +0.430 ns at 100 MHz out-of-context (104.5 MHz)**. Thin, and the paths that cross the memory
 ports are not yet timed at all. The critical path is branch resolution fed by
@@ -34,16 +36,19 @@ the MEM/WB forward of the writeback mux. See the synthesis trend notes.
 Both memories are now BRAM-timed in the testbench as well as in the design.
 The IF timing bug found during MEM + WB is fixed — see Decisions.
 
-`make lint`, `make sim` and `make synth` all pass locally.
+`make lint`, `make sim` and `make synth` all pass locally. The halt and
+`riscv-tests` work is **not yet through CI**: CI now also checks out the
+`sw/riscv-tests` submodule and installs Ubuntu's riscv64 assembler, which has
+not run on a hosted runner yet.
 
 ### Working and verified
 
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 124/124 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch) |
+| `make sim` | 164/164 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| CI on push | green (lint + sim) |
+| CI on push | green (lint + sim) as of `04a53eb`; the riscv-tests setup is unproven there |
 
 ### Implemented
 
@@ -146,7 +151,8 @@ would have forced. x0 invariance and WB→ID write-first forwarding are both
 implemented here rather than in the surrounding pipeline, because both are
 formal properties in CLAUDE.md §5.5.
 
-`tb/cocotb/` — 124 tests across seven toplevels: `test_core` (61), `test_alu`
+`tb/cocotb/` — 164 tests across seven toplevels: `test_core` (61) and
+`test_riscv_tests` (40) on the core, `test_alu`
 (16), `test_regfile` (8), `test_decoder` (31), `test_mem_align` (4, each an
 exhaustive sweep), `test_hazard` (2; one sweeps all 2,048 input combinations
 over x0–x3), `test_branch` (2: corner pairs, and random pairs that are equal,
@@ -192,6 +198,23 @@ misaligns the stream. Register values are compared only where the model knows
 them (no regfile reset): 1,228 of 1,470 reads across the two seed-1 programs.
 `SEED=n` reruns a seed; seeds 1–20 pass.
 
+`tb/cocotb/test_riscv_tests.py` — the official rv32ui suite, one cocotb test
+per upstream test (`@cocotb.parametrize`). Each `.S` is assembled at test time
+from the pinned submodule `sw/riscv-tests` with **our** environment,
+`sw/riscv-tests-env/` (`riscv_test.h`, `link.ld`): upstream's `env/p` writes
+a dozen CSRs and enters the test through `mret`, none of which exists here.
+The test bodies and `test_macros.h` are untouched, and PASS/FAIL are
+upstream's macros verbatim. The test list is read from upstream's own
+`Makefrag`, minus a two-entry exclusion list that must still name real tests.
+`-march=rv32i` and nothing more, so the assembler rejects any instruction
+outside the base set rather than letting it run here as a silent NOP. The
+same flat image goes behind both memory ports. **Two verdicts per test:** the
+suite's own (`gp == 1` at the halt), and every retirement against the golden
+model through RVFI — the model must pass each test on its own first, or the
+failure is reported as the model's. Proven able to fail: an SRA-as-SRL ALU
+fails `sra`, `srai` and `lui` at case 3; the older-write-wins forwarding bug
+fails 24 of 40; a decoder that never halts fails all 40.
+
 Submodules get their own toplevel rather than being
 poked through the core's hierarchy, so a unit test survives refactoring and can
 drive ports the core does not expose.
@@ -203,8 +226,8 @@ estimate and post-route is measured.
 
 ### Not started
 
-The official `riscv-tests` suite, riscv-formal and the rest of formal, UVM,
-TMR, hardware bring-up, and all of Stage 2.
+riscv-formal and the rest of formal, UVM, TMR, hardware bring-up, and all
+of Stage 2.
 
 **Encodings outside RV32I decode inert** (`rd_we = 0`, no memory access, no
 redirect, no halt) rather than half-working — CSR accesses, MRET, WFI and
@@ -374,6 +397,7 @@ level run will say whether 100 MHz survives.
 | ↳ SymbiYosys (`sby`) | 0.69 | from the suite, with `yosys-smtbmc` |
 | ↳ solvers | Yices 2.7.0, Boolector 3.2.4, Bitwuzla 0.9.1, Z3 4.15.5 | from the suite |
 | **LibreLane + Sky130** | — | **not installed** — needed closing Phase E (CLAUDE.md §6.4 run #1) |
+| **riscv-tests** | `bcffa2b` (2026-09-25) | git submodule `sw/riscv-tests`; its own nested `env` submodule is deliberately not initialised — we use our env |
 
 `~/.local/bin` is first on PATH, so the source-built Verilator shadows the
 Debian 5.032 package automatically. OSS CAD Suite's `bin/` is **last**, so it
@@ -438,6 +462,11 @@ rebuilds Verilator (~8 min) and re-saves it — seen 2026-10-07 after a 20-day
 gap: `Cache not found for input keys: verilator-Linux-v5.050`, then lint and
 sim in about a minute. A slow first run after a pause is this, not a broken
 cache key.
+CI checks out with `submodules: true` for `sw/riscv-tests`, and installs
+Ubuntu's `gcc-riscv64-unknown-elf` to assemble it — there is no riscv32
+package, and none is needed: `-march=rv32i -mabi=ilp32` choose the target and
+nothing links a library. `test_riscv_tests.py` takes `RISCV_PREFIX`, else
+`~/riscv-toolchain`'s riscv32 gcc, else whichever is on PATH.
 The regression is seven elaborations; each gets its own build directory and
 results file.
 Bumping `VERILATOR_VERSION` forces a rebuild.
@@ -594,12 +623,21 @@ the honest answer rather than pretending it fits on a hosted one.
   riscv-formal's NERV, which without CSRs treats them as illegal and stops.
   RVFI sets both `rvfi_halt` ("the last instruction the core retires before
   halting") and `rvfi_trap` (its architectural effect is an exception). It
-  will also let riscv-tests' PASS/FAIL macros run verbatim.
+  also lets upstream's PASS/FAIL macros run verbatim.
 - **Freeze does not flush IF/ID** (2026-10-08). The first version did; it is
   redundant — ID/EX takes a bubble every cycle once frozen, so IF/ID's word
   can never issue — and IF/ID's flush is on the critical path. The pc *is*
   frozen, though nothing architectural needs it: a halted core showing where
   it stopped is worth one OR term at the stall's mux input.
+- **riscv-tests: our environment, upstream's tests** (2026-10-08). Upstream's
+  `env/p` needs CSRs and `mret`; every core without them (PicoRV32 the best
+  known) supplies its own `riscv_test.h`. Ours zeroes x1–x31 as upstream's
+  does, starts at the reset vector, and keeps PASS/FAIL verbatim. **Two of
+  42 excluded:** `fence_i` (Zifencei, not among the 40 instructions, and its
+  self-modifying code cannot work across separate instruction and data
+  memories) and `ma_data` (misaligned access, which this core ignores rather
+  than traps — see the misalignment decision). A submodule, not a copy, so
+  the exact upstream commit is in history and an update is one reviewed bump.
 - **FENCE is a NOP, and that is the implementation** (2026-10-08). FENCE
   orders memory accesses as seen by other harts and devices; with one
   in-order hart, no caches and no store buffer, accesses already happen in
@@ -709,12 +747,12 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-### 1. `riscv-tests`
+### 1. Push, and close Phase A on green CI
 
-The official suite (a Phase A box). Its environment needs CSRs and `mret`, so
-this core needs its own `riscv_test.h`; PASS/FAIL end in ECALL, which now
-halts. After that, Phase A's only open box is CI, which already runs lint and
-sim.
+Every Phase A box is met locally. The first CI run with the submodule and
+Ubuntu's riscv64 assembler is the remaining check; when it is green, mark
+Phase A done in CLAUDE.md's status table (whose "Key result" column still
+shows the PC + IF row).
 
 ### 2. Timing: IF/ID flush via the valid bit
 
@@ -765,5 +803,8 @@ worse than no file. Specifically:
 ---
 
 *Last updated: 2026-10-08 — all 40 RV32I instructions: FENCE as a NOP,
-ECALL/EBREAK halt (`halt_o`, RVFI trap + halt). 124/124 tests, 104.5 MHz.
-Next: the official `riscv-tests` suite (Next up §1).*
+ECALL/EBREAK halt (`halt_o`, RVFI trap + halt). Official `riscv-tests` rv32ui
+passes 40/42 (two excluded with reasons), each also checked retirement by
+retirement against the golden model. 164/164 tests, 104.5 MHz. Next: push and
+confirm CI (Next up §1), then the IF/ID flush (§2) or the formal smoke test
+(§3).*

@@ -13,7 +13,10 @@ jobs:
   verilate:
     runs-on: ubuntu-latest
     steps:
+      # The official test suite is a submodule pinned to one commit.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Cache Verilator
         id: cache-verilator
@@ -46,6 +49,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      # Assembles riscv-tests. Ubuntu packages a riscv64 toolchain, not a
+      # riscv32 one; it builds RV32I just the same, because -march=rv32i
+      # -mabi=ilp32 pick the target and these tests link no libraries.
+      # test_riscv_tests.py finds it on PATH.
+      - name: Install RISC-V assembler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-riscv64-unknown-elf
 
       - name: Install cocotb
         run: pip install -r tb/cocotb/requirements.txt
