@@ -29,7 +29,7 @@ This is a portfolio project. **Measured results matter as much as working RTL.**
 | Phase | Status | Key result |
 |---|---|---|
 | A — Working core | DONE (2026-10-08) | 40/40 RV32I; riscv-tests rv32ui 40/42 (2 excluded, reasons in PROGRESS.md); 104.5 MHz OOC, 1107 LUT / 501 FF |
-| B — Formal verification | IN PROGRESS | `make formal` live; 1 property proven (x0 invariance, k-induction) |
+| B — Formal verification | IN PROGRESS | riscv-formal passing (37 insn + reg/pc/unique/causal, BMC); x0 invariance by k-induction; 1 Yosys-only bug found |
 | C — UVM environment | NOT STARTED | — |
 | D — Hardware bring-up | NOT STARTED | — |
 | E — TMR + fault injection | NOT STARTED | — |
@@ -447,7 +447,7 @@ A phase is done when **every** box is checked. No partial credit.
 - [x] `make lint` clean, `make sim` passes in CI
 
 ### Phase B — Formal verification
-- [ ] `riscv-formal` ISA compliance passing
+- [x] `riscv-formal` ISA compliance passing
 - [ ] All §5.5 hand-written properties written and proven
 - [ ] Induction runs, not just BMC
 - [ ] Reachability checked for every property (no vacuous passes)

@@ -3,7 +3,7 @@
 #
 #   make lint   verilator lint of rtl/
 #   make sim    cocotb regression on verilator (see tb/cocotb/Makefile)
-#   make formal SymbiYosys over every tb/formal/*.sby
+#   make formal SymbiYosys over every tb/formal/*.sby, then riscv-formal
 #   make sw     build sw/*.c to .elf and .hex
 #   make spike  run the .elf on the spike reference model
 #   make synth  out-of-context synth + impl of the core, reports to docs/reports
@@ -54,10 +54,17 @@ sim:
 # ~/.bashrc also covers non-interactive shells, which never read it. CI puts
 # the suite on PATH itself, where OSS_CAD_BIN simply does not exist.
 #
+# Then riscv-formal (CLAUDE.md 5.5, Phase B) via scripts/riscv-formal.sh: ISA
+# compliance of every instruction through the RVFI port, plus the register,
+# pc-chain, ordering and causality checks, and a cover pass proving none of
+# them vacuous. FORMAL_JOBS parallel solver runs (default: every core).
+#
 # Like `make sim`, every job runs even after a failure, then the target fails
 # if any did. Work directories land in tb/formal/build/.
 OSS_CAD_BIN ?= $(HOME)/.local/opt/oss-cad-suite/bin
-SBY_FILES   := $(shell find tb/formal -name '*.sby' 2>/dev/null | sort)
+# -maxdepth 1: the riscv-formal submodule ships .sby files of its own.
+SBY_FILES   := $(shell find tb/formal -maxdepth 1 -name '*.sby' 2>/dev/null | sort)
+FORMAL_JOBS ?= $(shell nproc)
 
 .PHONY: formal
 formal:
@@ -68,6 +75,7 @@ formal:
 	  ( cd $$(dirname $$f) && PATH="$$PATH:$(OSS_CAD_BIN)" \
 	      sby -f --prefix build/$$(basename $$f .sby) $$(basename $$f) ) || rc=1; \
 	done; \
+	PATH="$$PATH:$(OSS_CAD_BIN)" scripts/riscv-formal.sh . $(FORMAL_JOBS) || rc=1; \
 	if [ $$rc -ne 0 ]; then echo "FORMAL FAILED"; fi; \
 	exit $$rc
 

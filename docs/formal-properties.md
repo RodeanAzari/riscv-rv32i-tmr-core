@@ -29,6 +29,11 @@ Tools: OSS CAD Suite **2026-10-07** — Yosys 0.69+208, SymbiYosys 0.69, Yices
 | # | Property | Module | Job | Method, depth | Result | Covers reached |
 |---|---|---|---|---|---|---|
 | 1 | x0 invariance: a read of x0 returns 0, on both ports, every cycle | `riscv_regfile` | `tb/formal/regfile_x0.sby` | k-induction, k = 4 | **proven** | 4 / 4 |
+| 2 | riscv-formal ISA compliance, all 37 checkable RV32I instructions (`insn_*`) | `riscv_core` | `tb/formal/rvfi/checks.cfg` | BMC, check cycle 15 | **pass, 37/37** | 4 / 4 each |
+| 3 | riscv-formal `reg`: every register read returns the last value written | `riscv_core` | same | BMC, cycles 15–25 | **pass** | — (shown to fail) |
+| 4 | riscv-formal `pc_fwd` / `pc_bwd`: consecutive retirements chain their pcs | `riscv_core` | same | BMC, cycles 10–25 | **pass** | — (`pc_fwd` shown to fail) |
+| 5 | riscv-formal `unique`: no `rvfi_order` index used twice | `riscv_core` | same | BMC, cycles 1–25 | **pass** | — (shown to fail) |
+| 6 | riscv-formal `causal`: no instruction reads a result its producer has not yet written | `riscv_core` | same | BMC, cycles 10–25 | **pass** | — (not yet shown to fail) |
 
 ### 1. x0 invariance (register file)
 
@@ -49,7 +54,81 @@ Shown to fail (2026-10-08):
 | x0 writes ungated, read test kept | **passes, correctly**: the read mux zeroes x0 first, so a dirty x0 is invisible at the ports. The write gate is defence in depth, not observable here |
 | harness cover that cannot happen | cover task fails: the vacuity guard works |
 
+### 2–6. riscv-formal (core, through RVFI)
+
+`tb/formal/rvfi/wrapper.sv` drives the core for riscv-formal's checkers with
+**both memories free**: a new arbitrary instruction word and load value every
+cycle. There is no program and no memory model — every instruction sequence
+is explored, and the checks relate what RVFI reports to the ISA spec.
+`RISCV_FORMAL_ALIGNED_MEM`: lane-style memory fields, misaligned accesses
+trap. Run by `scripts/riscv-formal.sh` from `make formal`; riscv-formal is a
+submodule at `c992aa6` (2026-07-16).
+
+What each kind of check can and cannot see — learned the hard way, by
+mutation:
+
+- **`insn_*`** checks that the retiring instruction's results follow the spec
+  *from the operand values RVFI reports*. A pipeline that forwards the wrong
+  value reports that wrong value faithfully, and the arithmetic on it is still
+  right — so wrong forwarding priority and a missing load-use stall both
+  **pass every `insn` check**.
+- **`reg`** is what catches them: the value reported read from a register
+  must equal the value last reported written to it. It failed on the
+  older-write-wins forwarding bug, a missing load-use stall, and a stall
+  bubble that kept `rd_we` — none of which any `insn` check saw.
+- The depths follow VexRiscv's 5-stage configuration in riscv-formal. The
+  first retirement is possible at cycle 5, so a check at 15 has ~10 cycles of
+  arbitrary history in flight — every forwarding and stall combination.
+
+**Reachability:** the same configuration is generated again with `mode
+cover`, so every `cover()` in riscv-formal's checkers must be reached. Each
+`insn` check carries four, the last being "this instruction retires at the
+check cycle, untrapped"; all 37 reach 4/4. `reg`, `pc_*`, `unique` and
+`causal` contain no covers, so their evidence is the planted faults below.
+
+Shown to fail (2026-10-08), each against all 42 checks:
+
+| Planted fault | Failing checks |
+|---|---|
+| older write wins forwarding (rs1) | `reg` |
+| no load-use stall | `reg` |
+| stall bubble keeps `rd_we` | `reg` |
+| writes to x0 forwarded | all 37 `insn`, `reg` |
+| misaligned taken target does not trap | all 8 branch/jump `insn` |
+| `rvfi_pc_wdata` always pc + 4 | 8 branch/jump `insn`, `pc_fwd` |
+| redirect does not flush IF/ID | `pc_fwd`, `reg` |
+| `rvfi_order` never advances | `unique` |
+| `rvfi_order` counts bubbles (gaps) | **none** — riscv-formal's RVFI spec forbids gaps but no check enforces it; the cocotb RVFI monitor does (`order == i`) |
+
+**Not enabled, deliberately:** `ill` (requires the all-zero word to trap;
+this core decodes non-RV32I words inert — a decision of its own),
+`liveness` and `hang` (need a fairness assumption and thought about the
+halt), the `bus_*` checks (need `RISCV_FORMAL_BUS` signals). **Not yet shown
+to fail:** `pc_bwd`, `causal`.
+
+Runtime: ~1 min for both passes on 16 cores; `reg` dominates (~46 s).
+
 ## Bugs formal found that simulation missed
 
-None yet. Each entry goes here with the property, the counterexample, and
-why simulation did not see it (CLAUDE.md §5.5).
+### 1. Yosys drops a `~` on a size cast: jump targets unmasked (2026-10-08)
+
+**Found by:** riscv-formal, first run — 8 of 37 `insn` checks failed: every
+branch, JAL and JALR.
+
+**Counterexample:** `jalr x1, 1(x0)` must jump to `(0 + 1) & ~1 = 0`. The core
+reported `pc_wdata = 1`, and the next instruction retired at pc 1.
+
+**Cause:** the redirect target was `target_sum & ~XLEN'(2'b11)`. Yosys 0.69
+binds that `~` to the cast's *width* (`XLEN`) rather than to the cast, so the
+mask came out as `0x3`, not `0xFFFFFFFC` — confirmed on a 4-line module with
+`sat -show`. `~(XLEN'(2'b11))` evaluates correctly, as does every spelling in
+Verilator and Vivado.
+
+**Why simulation missed it:** simulation runs on Verilator and synthesis on
+Vivado, and both read the RTL as intended. Only Yosys mis-built it — and
+Yosys is the front end of riscv-formal **and of the LibreLane ASIC flow**
+(§6.4). Without this check, ASIC run #1 would have produced a core whose
+jumps land on unaligned pcs.
+
+**Fix:** `{target_sum[XLEN-1:2], 2'b00}` — no cast, no precedence question.
+The RTL had exactly one size cast.

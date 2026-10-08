@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** B — formal verification, started 2026-10-08 (smoke test live). Phase A **done** 2026-10-08, CI run 37817380686
+**Phase:** B — formal verification, started 2026-10-08 (riscv-formal passing: 37 instructions + reg/pc/unique/causal). Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -48,7 +48,7 @@ GCC 13.2 / binutils 2.42 rather than the local GCC 16.
 | `make lint` | clean, Verilator 5.050 |
 | `make sim` | 168/168 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| `make formal` | 1 property (x0 invariance, regfile) proven by k-induction, 4/4 covers reached — see [formal-properties.md](formal-properties.md) |
+| `make formal` | x0 invariance proven by k-induction; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~1 min — see [formal-properties.md](formal-properties.md) |
 | CI on push | green (lint + sim, 164/164, all 40 rv32ui ran) at `c9267af`; the formal job is new and unproven there |
 
 ### Implemented
@@ -278,6 +278,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-07 | RVFI port, under `RISCV_FORMAL` (not synthesized) | 1095 | 496 | 47 | +0.394 | 104.1 | 0.0 |
 | 2026-10-08 | FENCE (NOP), ECALL/EBREAK halt | 1107 | 501 | 47 | +0.430 | 104.5 | +0.4 |
 | 2026-10-08 | Misaligned access / taken target traps (halts) | 1115 | 501 | 47 | +0.300 | 103.1 | −1.4 |
+| 2026-10-08 | Redirect mask as a concatenation (Yosys cast bug) | 1115 | 501 | 47 | +0.300 | 103.1 | 0.0 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -398,6 +399,10 @@ depend only on its operands' low bits. Final: +0.300 ns, 9 levels, the
 familiar writeback → forwarding → comparator → ID/EX bubble-clear path at
 76% route. FF unchanged (the trap reuses the halt flops); LUT +8.
 
+The redirect-mask row is identical to the one above, which is the point:
+Vivado always read `~XLEN'(2'b11)` as intended, so replacing it changed
+nothing it builds. Only Yosys differed.
+
 **The out-of-context slack is optimistic, now +0.300 ns.** Three
 paths that matter on the board cross the core's ports and are untimed here:
 `pc + 4` / stall mux → `imem_addr_o`, the stall comparator and now the whole
@@ -423,6 +428,7 @@ level run will say whether 100 MHz survives.
 | ↳ SymbiYosys (`sby`) | 0.69 | from the suite, with `yosys-smtbmc` |
 | ↳ solvers | Yices 2.7.0, Boolector 3.2.4, Bitwuzla 0.9.1, Z3 4.15.5 | from the suite |
 | **LibreLane + Sky130** | — | **not installed** — needed closing Phase E (CLAUDE.md §6.4 run #1) |
+| **riscv-formal** | `c992aa6` (2026-07-16) | git submodule `tb/formal/riscv-formal`; never written to — `scripts/riscv-formal.sh` builds a symlink tree in `tb/formal/build/rvf/` instead |
 | **riscv-tests** | `bcffa2b` (2026-09-25) | git submodule `sw/riscv-tests`; its own nested `env` submodule is deliberately not initialised — we use our env |
 
 `~/.local/bin` is first on PATH, so the source-built Verilator shadows the
@@ -436,6 +442,10 @@ without `-DRISCV_FORMAL`): `read_verilog -sv` on every file under `rtl/`,
 elaborated, none black-boxed, 0 problems, no warnings. That closes the §4
 "keep `rtl/core/` within Yosys's subset" question for the RTL as it stands; it
 is a parse-and-elaborate check, not yet a proof of anything.
+**And it was not enough:** a clean elaboration still hid a Yosys
+mis-parse of `~XLEN'(2'b11)` that riscv-formal found on its first run (see
+Decisions and [formal-properties.md](formal-properties.md)). Elaborating
+proves Yosys accepts the RTL, not that it means the same thing by it.
 
 ### Environment gotchas
 
@@ -471,7 +481,7 @@ is a parse-and-elaborate check, not yet a proof of anything.
 | `make spike` | run `.elf` on spike | untested, no source yet |
 | `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
 | `make prog` | — | stub; blocked on USB passthrough (§6 of vivado-setup.md) |
-| `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks; appends OSS CAD Suite's `bin/` to PATH itself | working |
+| `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks, then `scripts/riscv-formal.sh` (checks + covers, verdicts read from status files); appends OSS CAD Suite's `bin/` to PATH itself; `FORMAL_JOBS=n` | working |
 | `make uvm` / `impl` / `asic` | — | stubs that name their phase and what they wait on |
 
 ---
@@ -483,7 +493,8 @@ Verilator 5.050 from source, caches it on key `verilator-Linux-v5.050`,
 installs cocotb from `tb/cocotb/requirements.txt`, then runs lint and sim.
 **`formal`** downloads OSS CAD Suite at `OSS_CAD_SUITE_DATE` (2026-10-07, the
 local install's date — the two must move together), puts it on PATH and runs
-`make formal`. Not cached: ~700 MB GitHub-to-GitHub takes seconds, and caching
+`make formal` — the smoke test, then riscv-formal (checked out as a
+submodule). Not cached: ~700 MB GitHub-to-GitHub takes seconds, and caching
 it would eat a large share of the 10 GB quota. Separate jobs so a lint failure
 never hides a formal result, or the reverse.
 
@@ -654,6 +665,32 @@ the honest answer rather than pretending it fits on a hosted one.
   with `auipc`: checking which instruction ran was not enough, because IMEM
   ignores the low bits too — a first version of the test missed a planted bug
   for exactly that reason, and only the random tests caught it.
+- **riscv-formal: `insn` checks are not enough on their own** (2026-10-08).
+  They verify each instruction's result *from the operand values RVFI
+  reports*, and a pipeline that forwards the wrong value reports it
+  faithfully. Wrong forwarding priority, a missing load-use stall and a
+  stall bubble keeping `rd_we` all passed every `insn` check, and all failed
+  `reg`. So `reg`, `pc_fwd`, `pc_bwd`, `unique` and `causal` run alongside,
+  at VexRiscv's 5-stage depths (check at 15; consistency windows to 25).
+- **riscv-formal runs from a symlink tree, with verdicts from status files**
+  (2026-10-08). `genchecks.py` locates riscv-formal as `../..` from the
+  current directory, so `scripts/riscv-formal.sh` builds that layout under
+  `tb/formal/build/` instead of writing into the submodule. The generated
+  `.sby` files say `expect pass,fail`, so `sby` — and the generated makefile —
+  exit 0 on a FAILED check; the script reads every check's `status` and
+  requires as many PASSes as checks generated. Found when the first planted
+  faults "passed" `make`.
+- **Reachability for riscv-formal: the same config again in `mode cover`**
+  (2026-10-08). `genchecks.py` accepts `mode cover` though its docs list only
+  bmc and prove. Deriving `covers.cfg` from `checks.cfg` with one `sed` keeps
+  a single configuration; every `cover()` in riscv-formal's checkers must be
+  reached, 4 per instruction.
+- **No size casts on expressions Yosys sees** (2026-10-08). Yosys 0.69 reads
+  `~XLEN'(2'b11)` as a cast to width `~XLEN`, yielding mask `0x3`; Verilator
+  and Vivado read `~(XLEN'(2'b11))`. Unmasked jump targets resulted, in
+  every Yosys-built netlist only — riscv-formal and the future LibreLane run.
+  Replaced by a concatenation; it was the RTL's only cast. If one is ever
+  needed, parenthesise it and let `make formal` judge.
 - **Formal harnesses wrap modules from outside; nothing in `rtl/`**
   (2026-10-08). Properties live in `tb/formal/` as a wrapper module that
   instantiates the RTL with every input free and asserts on its ports, using
@@ -824,16 +861,23 @@ exists, but only under `RISCV_FORMAL`; moving `if_id_valid` into the core
 proper and gating decode with it would let a redirect clear one bit instead of
 64. Its own measured slice.
 
-### 2. riscv-formal (Phase B)
+### 2. Formal, continued (Phase B)
 
-The smoke test is done: `make formal` proves x0 invariance on the register
-file and runs in CI. Next, wrap the core for riscv-formal and settle the
-lane-style memory and misalignment questions against
-`RISCV_FORMAL_ALIGNED_MEM` (and how it expects ECALL/EBREAK's `rvfi_trap`).
-Then the §5.5 hand-written properties, each added to
-[formal-properties.md](formal-properties.md) with depth, covers and a planted
-fault it catches. Check reachability on every property — a vacuous pass
-proves nothing (§5.5, §9).
+riscv-formal passes: 37 instruction checks plus `reg`, `pc_fwd`, `pc_bwd`,
+`unique`, `causal`, each non-vacuous (covers or planted faults). Open, in
+rough order:
+
+- The §5.5 hand-written properties, each added to
+  [formal-properties.md](formal-properties.md) with depth, covers and a
+  planted fault it catches: forwarding correctness, no structural hazard on
+  the regfile ports, branch-flush correctness, no X into committed state,
+  stall correctness (including `!(stall && redirect)`).
+- **Induction** (a Phase B box): riscv-formal's checks are bounded. Proving
+  the hand-written properties by k-induction will need strengthening
+  invariants on the pipeline registers.
+- Show `pc_bwd` and `causal` failing on a planted fault.
+- Decide `liveness`/`hang` (fairness, and what liveness means once halted)
+  and `ill` (needs a legality decoder, or a reasoned exclusion).
 
 ### 3. Board-level top
 
@@ -867,9 +911,10 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-08 — Phase B started. `make formal` is live (x0
-invariance on the register file, k-induction, in CI). Misaligned loads, stores
-and taken targets now trap — i.e. halt — as riscv-formal's
-`RISCV_FORMAL_ALIGNED_MEM` requires, reversing the Phase A truncation
-decision. 168/168 tests, 103.1 MHz. Next: the riscv-formal wrapper (Next up
-§2).*
+*Last updated: 2026-10-08 — riscv-formal integrated: 37/37 instruction checks
+and reg/pc_fwd/pc_bwd/unique/causal pass, with a cover pass proving each
+instruction check reachable, in `make formal` (~1 min). Its first run found a
+Yosys-only bug (`~XLEN'(2'b11)` mis-parsed; jump targets unmasked) —
+the first entry in "bugs formal found that simulation missed". Misaligned
+accesses and targets trap. 168/168 tests, 103.1 MHz. Next: the §5.5
+hand-written properties and induction (Next up §2).*

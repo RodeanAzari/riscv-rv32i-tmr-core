@@ -1,3 +1,6 @@
 [submodule "sw/riscv-tests"]
 	path = sw/riscv-tests
 	url = https://github.com/riscv-software-src/riscv-tests.git
+[submodule "tb/formal/riscv-formal"]
+	path = tb/formal/riscv-formal
+	url = https://github.com/YosysHQ/riscv-formal.git

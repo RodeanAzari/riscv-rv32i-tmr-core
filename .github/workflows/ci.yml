@@ -79,7 +79,10 @@ jobs:
   formal:
     runs-on: ubuntu-latest
     steps:
+      # riscv-formal is a submodule pinned to one commit.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       # Downloaded every run rather than cached: a GitHub-to-GitHub transfer
       # of ~700 MB takes seconds, and caching it would spend a large share of
