@@ -889,6 +889,19 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
+> **Resume here (paused 2026-10-08, by choice, mid Phase B).** Last commit
+> `10f8f70`: forwarding correctness proven, reset gating fixed. Everything is
+> committed, pushed, and green locally. The next step is **branch-flush
+> correctness** (§2 below): no wrong-path instruction ever reaches WB.
+> Planned shape, not yet written: in the `ifdef FORMAL` block of
+> `rtl/core/riscv_core.sv`, track the pc each retirement should have, from the
+> previous retirement's `pc_wdata`, and assert every retiring instruction's
+> pc matches it — riscv-formal's `pc_fwd` stated as an inductive property.
+> It will likely need invariants linking the pcs held in IF/ID, ID/EX, EX/MEM
+> and MEM/WB. Same discipline as before: covers guarded by `f_past_valid` and
+> outside reset, a planted fault for every property, the induction depth
+> swept, and docs/formal-properties.md updated in the same commit.
+
 ### 1. Timing: IF/ID flush via the valid bit
 
 The current critical path ends in the IF/ID flush (fo 95). The valid bit now
