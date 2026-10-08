@@ -353,7 +353,7 @@ level run will say whether 100 MHz survives.
 | ↳ Yosys | 0.69+208 (`7b1913f4c`) | from the suite. Also the ASIC flow's synthesis step (§6.4) |
 | ↳ SymbiYosys (`sby`) | 0.69 | from the suite, with `yosys-smtbmc` |
 | ↳ solvers | Yices 2.7.0, Boolector 3.2.4, Bitwuzla 0.9.1, Z3 4.15.5 | from the suite |
-| **OpenLane + Sky130** | — | **not installed** — needed closing Phase E (CLAUDE.md §6.4 run #1) |
+| **LibreLane + Sky130** | — | **not installed** — needed closing Phase E (CLAUDE.md §6.4 run #1) |
 
 `~/.local/bin` is first on PATH, so the source-built Verilator shadows the
 Debian 5.032 package automatically. OSS CAD Suite's `bin/` is **last**, so it
@@ -564,6 +564,17 @@ the honest answer rather than pretending it fits on a hosted one.
   `auipc`: checking which instruction ran is not enough, because IMEM ignores
   the low bits too — a first version of the test missed a planted bug for
   exactly that reason, and only the random tests caught it.
+- **The ASIC flow is LibreLane, not OpenLane** (renamed 2026-10-07, before
+  anything was installed). CLAUDE.md named "OpenLane" from before the
+  ecosystem moved. Checked on GitHub that day: the original
+  `The-OpenROAD-Project/OpenLane` is the legacy flow (last push 2026-03);
+  Efabless's OpenLane 2 now sits at `chipfoundry/openlane2`, quiet since
+  2025-12; `librelane/librelane` describes itself as the successor, is based
+  on OpenLane 2, is run by the FOSSi Foundation, and released 3.0.16 on
+  2026-10-06. Same tools and Sky130 underneath, so §6.4's steps and metrics
+  are unchanged. Renamed now so no one installs the wrong flow from a stale
+  spec. Open: whether LibreLane has built-in scan insertion (§6.5) — check in
+  Phase H.
 - **Formal tools come from OSS CAD Suite, date-pinned** (2026-10-07). One
   bundle of Yosys, SymbiYosys and four solvers, built and tested together, in
   the home directory with no root. `apt` was checked first: Ubuntu 26.04 has

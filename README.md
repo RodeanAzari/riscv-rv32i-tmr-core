@@ -66,7 +66,7 @@ share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
 | AXI outstanding depth / measured throughput | — |
 | SVA properties proven on AXI interfaces | — |
 
-**ASIC flow (OpenLane + Sky130).** Two runs: the bare core closing Phase E, the full
+**ASIC flow (LibreLane + Sky130).** Two runs: the bare core closing Phase E, the full
 SoC in Phase H. The delta between them is the result.
 
 | Metric | Run 1 (bare core) | Run 2 (full SoC) |
@@ -96,7 +96,7 @@ is needed for `make synth` — see [docs/vivado-setup.md](docs/vivado-setup.md).
 | `make uvm` | UVM regression in XSim | Phase C |
 | `make impl` | Board-level P&R, emits bitstream | Phase D |
 | `make prog` | Program the board | Phase D |
-| `make asic` | OpenLane RTL-to-GDSII | Phase E, then H |
+| `make asic` | LibreLane RTL-to-GDSII | Phase E, then H |
 
 Targets whose phase has not arrived print which phase they belong to and what they are
 waiting on, rather than failing with `No rule to make target`.

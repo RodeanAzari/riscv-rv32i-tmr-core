@@ -71,7 +71,7 @@ Use Digilent's master XDC as the constraints starting point. Uncomment only the 
 | riscv-formal | ISA compliance proofs |
 | RISC-V GNU toolchain | `riscv32-unknown-elf-gcc`, compiling test programs |
 | GTKWave / Surfer | Waveform viewing |
-| OpenLane + Sky130 | RTL-to-GDSII flow. **In scope for this project** — run once closing Phase E, again in Phase H. See §6.4. |
+| LibreLane + Sky130 | RTL-to-GDSII flow. **In scope for this project** — run once closing Phase E, again in Phase H. See §6.4. |
 
 ### Required Makefile targets
 
@@ -89,7 +89,7 @@ make formal        # SymbiYosys, all properties                        [Phase B]
 make uvm           # UVM regression in XSim                            [Phase C]
 make impl          # board-level place & route, emits bitstream        [Phase D]
 make prog          # program the board                                 [Phase D]
-make asic          # OpenLane RTL-to-GDSII, area/timing/power (§6.4)   [Phase E, H]
+make asic          # LibreLane RTL-to-GDSII, area/timing/power (§6.4)   [Phase E, H]
 make clean
 ```
 
@@ -362,9 +362,15 @@ Descriptor-based with scatter-gather. Descriptor in memory: source address, dest
 
 > **Design note:** this DMA is reused later for a PCIe host bridge. **Separate the descriptor/scatter-gather logic from the transport layer** so only the transport changes. Do not entangle AXI specifics into the descriptor engine.
 
-### 6.4 ASIC flow (OpenLane + Sky130)
+### 6.4 ASIC flow (LibreLane + Sky130)
 
 Not a separate project — it runs on this repo's RTL and its results belong in this README.
+
+**LibreLane, not OpenLane.** LibreLane is the FOSSi Foundation's continuation of
+Efabless's OpenLane 2; after Efabless wound down, OpenLane 2 went quiet and the original
+OpenLane became the legacy flow. Same underlying tools (Yosys, OpenROAD, Magic, Netgen,
+KLayout), same Sky130 PDK, same steps below. Older docs and tutorials say "OpenLane" —
+read them as background, not as install or config instructions.
 
 **This section spans both stages.** It sits in §6 to keep the ASIC story in one place,
 but run #1 is a **Phase E deliverable and therefore part of Stage 1** — it is a checkbox
@@ -399,7 +405,9 @@ Also write a short FPGA-vs-ASIC comparison for the same RTL — the two targets 
 Small addition during Phase H — budget 2–3 days.
 
 **Achievable with free tools:**
-- Scan chain insertion via Yosys/OpenLane — convert flops to scan flops, stitch chains
+- Scan chain insertion via Yosys/LibreLane — convert flops to scan flops, stitch chains.
+  **Unverified:** whether LibreLane has a built-in scan-insertion step. Check before
+  budgeting Phase H around it.
 - Scan shift verification in simulation
 - Report chain count, chain length, test coverage, area and timing overhead vs. non-scan
 
@@ -468,7 +476,7 @@ A phase is done when **every** box is checked. No partial credit.
 - [ ] Voter formally verified
 - [ ] Fault detection rate, recovery rate measured over a documented campaign size
 - [ ] Area overhead and Fmax penalty vs. baseline recorded
-- [ ] **OpenLane run #1** on the non-TMR core: area, post-layout Fmax, power, DRC/LVS clean, layout screenshot (§6.4)
+- [ ] **LibreLane run #1** on the non-TMR core: area, post-layout Fmax, power, DRC/LVS clean, layout screenshot (§6.4)
 
 **→ Stage 1 complete. Update README with all results before starting Phase F.**
 
@@ -493,7 +501,7 @@ A phase is done when **every** box is checked. No partial credit.
 - [ ] Benchmarked against software matmul on the same core, several matrix sizes
 - [ ] Measured PE utilization reported
 - [ ] Scan chain insertion; chain count, coverage, area overhead reported (§6.5)
-- [ ] **OpenLane run #2** on the full SoC (§6.4)
+- [ ] **LibreLane run #2** on the full SoC (§6.4)
 - [ ] Written comparison of run #1 vs. run #2 — how area, congestion, and timing changed
 
 ---
@@ -548,7 +556,7 @@ These three rules govern every number in this repo. They are not style preferenc
 - DSP slices used vs. LUT-fabric MACs
 - AXI: outstanding depth, measured throughput
 - SVA properties proven on AXI interfaces
-- OpenLane **both runs**: die area, post-layout Fmax, power — and the delta between bare core and full SoC
+- LibreLane **both runs**: die area, post-layout Fmax, power — and the delta between bare core and full SoC
 - Scan chain count, coverage %, area overhead
 
 **Also in the README:** architecture diagram (image, not ASCII), hardware photo or ILA capture, and build/run instructions.

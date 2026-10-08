@@ -91,9 +91,9 @@ uvm:
 	@exit 1
 
 asic:
-	@echo "make asic: OpenLane RTL-to-GDSII (CLAUDE.md §6.4). Run #1 closes" >&2
+	@echo "make asic: LibreLane RTL-to-GDSII (CLAUDE.md §6.4). Run #1 closes" >&2
 	@echo "           Phase E on the non-TMR core, run #2 the full SoC in Phase H." >&2
-	@echo "           Needs OpenLane + Sky130 (not installed)." >&2
+	@echo "           Needs LibreLane + Sky130 (not installed)." >&2
 	@exit 1
 
 impl:
