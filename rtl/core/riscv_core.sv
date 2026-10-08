@@ -207,6 +207,23 @@ module riscv_core #(
   );
 
   logic [XLEN-1:0] rf_rs1_rdata, rf_rs2_rdata;
+
+`ifdef FORMAL
+  // f_reg: the one register the forwarding properties track (see the
+  // properties at the end of this file). In a proof it is anyconst -- the
+  // solver's choice, fixed for the whole trace -- so a proof for it is a
+  // proof for every register. Simulation has no solver to choose, so it
+  // tracks x1, the register the random programs and riscv-tests write most.
+  // Declared here because the register file's observation port reads it.
+`ifdef VERILATOR
+  logic [ADDR_W-1:0] f_reg;
+  assign f_reg = ADDR_W'(1);
+`else
+  (* anyconst *) logic [ADDR_W-1:0] f_reg;
+`endif
+  logic [XLEN-1:0] f_reg_stored;   // what the register file holds for f_reg
+`endif
+
   // Driven by WB, below. Declared here because the register file is
   // instantiated in ID: it is read in ID and written in WB.
   logic [XLEN-1:0] wb_rd_wdata;
@@ -216,6 +233,10 @@ module riscv_core #(
       .ADDR_W (ADDR_W)
   ) u_regfile (
       .clk_i       (clk_i),
+`ifdef FORMAL
+      .f_raddr_i   (f_reg),
+      .f_rdata_o   (f_reg_stored),
+`endif
       .rs1_addr_i  (dec_rs1_addr),
       .rs1_rdata_o (rf_rs1_rdata),
       .rs2_addr_i  (dec_rs2_addr),
@@ -564,11 +585,18 @@ module riscv_core #(
 
   assign dmem_addr_o  = {ex_mem_alu_result_o[XLEN-1:2], 2'b00};
   assign dmem_wdata_o = st_wdata;
-  assign dmem_we_o    = ex_mem_mem_write;
+  // Gated by reset. EX/MEM is cleared AT the end of the reset cycle, so
+  // during it the register still holds its power-up contents -- on an ASIC,
+  // anything -- and an ungated port would store garbage into memory that is
+  // not undefined at reset: it holds the program's data. FPGA flops and
+  // simulators both start at 0, so only formal showed this (X1, below).
+  logic mem_store;
+  assign mem_store    = ex_mem_mem_write && !rst_i;
+  assign dmem_we_o    = mem_store;
   // Gated so a non-store never shows strobes. The memory ignores them while
   // dmem_we_o is low, but rvfi_mem_wmask must read zero for anything that is
   // not a store, and this is where it will be tapped.
-  assign dmem_wstrb_o = ex_mem_mem_write ? st_wstrb : 4'b0000;
+  assign dmem_wstrb_o = mem_store ? st_wstrb : 4'b0000;
 
   // MEM/WB. Load data is NOT registered here: the BRAM's own output register
   // is this stage's register for it. Registering dmem_rdata_i again would add
@@ -602,7 +630,10 @@ module riscv_core #(
 
   // ---------------------------------------------------------------- WB -----
   assign wb_rd_wdata   = mem_wb_mem_read ? load_data : mem_wb_alu_result;
-  assign wb_rd_we_o    = mem_wb_rd_we;
+  // Gated by reset for the same reason as the store above. Here it matters
+  // less -- RV32I leaves x1-x31 undefined at reset -- but nothing should
+  // commit while reset is held, and the rule is simpler with no exception.
+  assign wb_rd_we_o    = mem_wb_rd_we && !rst_i;
   assign wb_rd_addr_o  = mem_wb_rd_addr;
   assign wb_rd_wdata_o = wb_rd_wdata;
 
@@ -744,9 +775,10 @@ module riscv_core #(
   // only this block may have (rtl/ proper never does; CLAUDE.md 3). Lint
   // flags both spellings: an initial block next to always_ff (MULTIDRIVEN),
   // and a declaration initialiser (PROCASSINIT). The latter is waived here,
-  // for this one variable, on purpose.
+  // for the two variables that need it, on purpose.
   /* verilator lint_off PROCASSINIT */
   logic            f_past_valid = 1'b0;
+  logic            f_shadow_known = 1'b0;   // see forwarding, below
   /* verilator lint_on PROCASSINIT */
   logic            f_past_rst, f_past_stall;
   logic [XLEN-1:0] f_past_pc, f_past_if_id_pc, f_past_if_id_instr;
@@ -799,6 +831,96 @@ module riscv_core #(
     end
   end
 
+  // ---- No X into committed state (5.5): reset commits nothing ----
+  // X1: while reset is asserted, no register write and no store. NOT gated
+  // on f_past_valid: the state it guards against is exactly the arbitrary
+  // power-up state before the first edge, when MEM/WB and EX/MEM hold
+  // whatever the flops woke up with. An FPGA's flops power up to 0, and so
+  // does a simulator's state, so neither ever shows it; an ASIC's do not.
+  always_comb begin
+    if (rst_i) begin
+      assert (!wb_rd_we_o);
+      assert (!dmem_we_o);
+    end
+  end
+
+  // ---- Forwarding correctness (5.5) ----
+  // EX must compute with the ARCHITECTURAL value of each source register: its
+  // value once every older instruction has committed. The older instructions
+  // still in flight are in EX/MEM and MEM/WB, so for the tracked register:
+  //
+  //   arch = 0                      if f_reg is x0
+  //        = EX/MEM's result        if EX/MEM writes f_reg (the youngest older
+  //                                 writer, so it wins)
+  //        = MEM/WB's writeback     else if MEM/WB writes f_reg
+  //        = the committed value    otherwise
+  //
+  // The committed value is f_shadow, a copy updated from WB's writes -- the
+  // commits -- and known once f_reg has been written. Until then the register
+  // holds whatever it powered up with (no regfile reset), and nothing is
+  // claimed. A load in EX/MEM has no value yet (it arrives in WB): that case
+  // must never meet a reader, which L1 asserts.
+  //
+  // Which instructions count: those RVFI's valid bit says are real, so
+  // bubbles -- which carry stale register fields -- are skipped. This reuses
+  // design logic (id_ex_valid) as part of the property; riscv-formal's pc
+  // and reg checks cover that bit independently. The FORMAL block therefore
+  // needs RISCV_FORMAL; core.sby defines both.
+  logic [XLEN-1:0] f_shadow;
+
+  always_ff @(posedge clk_i) begin
+    if (wb_rd_we_o && (wb_rd_addr_o == f_reg) && (f_reg != '0)) begin
+      f_shadow_known <= 1'b1;
+      f_shadow       <= wb_rd_wdata;
+    end
+  end
+
+  logic            f_arch_known;
+  logic [XLEN-1:0] f_arch;
+
+  always_comb begin
+    f_arch_known = 1'b1;
+    f_arch       = '0;
+    if (f_reg == '0)                                          f_arch = '0;
+    else if (ex_mem_rd_we_o && (ex_mem_rd_addr_o == f_reg)) begin
+      if (ex_mem_mem_read)                                    f_arch_known = 1'b0;
+      else                                                    f_arch = ex_mem_alu_result_o;
+    end
+    else if (wb_rd_we_o && (wb_rd_addr_o == f_reg))           f_arch = wb_rd_wdata;
+    else if (f_shadow_known)                                  f_arch = f_shadow;
+    else                                                      f_arch_known = 1'b0;
+  end
+
+  // A load in EX/MEM writing a register the instruction in EX names.
+  logic f_load_in_mem_feeds_ex;
+  assign f_load_in_mem_feeds_ex = ex_mem_mem_read && ex_mem_rd_we_o && (ex_mem_rd_addr_o != '0)
+                                  && ((ex_mem_rd_addr_o == id_ex_rs1_addr_o)
+                                      || (ex_mem_rd_addr_o == id_ex_rs2_addr_o));
+
+  always_comb begin
+    if (f_past_valid) begin
+      // R1, the strengthening invariant: once known, the shadow and the
+      // register file's storage agree. Induction needs it -- without it a
+      // start state could have them differ, and no number of steps rules
+      // that out, since a register can go unwritten for any length of time.
+      if (f_shadow_known) assert (f_reg_stored == f_shadow);
+
+      // Not during reset: the instruction in EX then never commits -- reset
+      // clears it -- and X1 has already blocked MEM/WB's write, so "the value
+      // once older instructions commit" stops being defined. The first run
+      // without this guard failed exactly there, at a mid-run reset.
+      if (id_ex_valid && !rst_i) begin
+        // F1 / F2: the operands EX computes with are the architectural values.
+        if (f_arch_known && (id_ex_rs1_addr_o == f_reg)) assert (ex_rs1 == f_arch);
+        if (f_arch_known && (id_ex_rs2_addr_o == f_reg)) assert (ex_rs2 == f_arch);
+
+        // L1: the load-use stall did its job -- no instruction in EX ever
+        // needs a load result that is still in flight.
+        assert (!f_load_in_mem_feeds_ex);
+      end
+    end
+  end
+
   // Reachability: each antecedent above must actually occur, or the
   // assertions under it pass vacuously (CLAUDE.md 5.5, 9). Guarded like the
   // assertions, and outside reset: before the first edge the registers hold
@@ -814,6 +936,25 @@ module riscv_core #(
       // Not in f_after_stall's cycle: EX then holds the bubble (S3), and the
       // waiting instruction reaches EX one cycle later.
       cover (f_after_stall_q && redirect);
+    end
+    // X1's case after power-up: a reset arriving while a store or a register
+    // write is in flight (rst_i is high here, so outside the guard above).
+    if (f_past_valid && rst_i) begin
+      cover (ex_mem_mem_write);
+      cover (mem_wb_rd_we);
+    end
+    if (f_past_valid && !rst_i) begin
+      // Each source of F1/F2's value, for a register that is not x0.
+      if (id_ex_valid && (f_reg != '0)) begin
+        cover ((id_ex_rs1_addr_o == f_reg) && id_ex_fwd_rs1_ex_mem);
+        cover ((id_ex_rs1_addr_o == f_reg) && id_ex_fwd_rs1_mem_wb);
+        cover ((id_ex_rs1_addr_o == f_reg) && f_shadow_known
+               && !id_ex_fwd_rs1_ex_mem && !id_ex_fwd_rs1_mem_wb);
+        cover ((id_ex_rs2_addr_o == f_reg) && id_ex_fwd_rs2_ex_mem);
+        cover ((id_ex_rs2_addr_o == f_reg) && id_ex_fwd_rs2_mem_wb);
+        cover ((id_ex_rs2_addr_o == f_reg) && f_shadow_known
+               && !id_ex_fwd_rs2_ex_mem && !id_ex_fwd_rs2_mem_wb);
+      end
     end
   end
 `endif

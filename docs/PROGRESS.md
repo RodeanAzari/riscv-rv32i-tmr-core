@@ -30,7 +30,7 @@ scope); FENCE is a NOP, which is complete on this core. The official **`riscv-te
 suite passes: 40 of 42**, the other two excluded with reasons (see
 Decisions).
 
-**Timing margin: +0.300 ns at 100 MHz out-of-context (103.1 MHz)**. Thin, and the paths that cross the memory
+**Timing margin: +0.317 ns at 100 MHz out-of-context (103.3 MHz)**. Thin, and the paths that cross the memory
 ports are not yet timed at all. The critical path is branch resolution fed by
 the MEM/WB forward of the writeback mux. See the synthesis trend notes.
 
@@ -48,7 +48,7 @@ GCC 13.2 / binutils 2.42 rather than the local GCC 16.
 | `make lint` | clean, Verilator 5.050 |
 | `make sim` | 168/168 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| `make formal` | x0 invariance and stall correctness (S1–S4) proven by k-induction; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~1 min — see [formal-properties.md](formal-properties.md) |
+| `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1) and reset-commits-nothing (X1) proven by k-induction; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~1 min — see [formal-properties.md](formal-properties.md) |
 | CI on push | green (lint + sim, 164/164, all 40 rv32ui ran) at `c9267af`; the formal job is new and unproven there |
 
 ### Implemented
@@ -280,6 +280,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-08 | Misaligned access / taken target traps (halts) | 1115 | 501 | 47 | +0.300 | 103.1 | −1.4 |
 | 2026-10-08 | Redirect mask as a concatenation (Yosys cast bug) | 1115 | 501 | 47 | +0.300 | 103.1 | 0.0 |
 | 2026-10-08 | Stall properties S1–S4, under `FORMAL` (not synthesized) | 1115 | 501 | 47 | +0.300 | 103.1 | 0.0 |
+| 2026-10-08 | Reset gates store and writeback; forwarding props (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | +0.2 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -404,7 +405,12 @@ The redirect-mask row is identical to the one above, which is the point:
 Vivado always read `~XLEN'(2'b11)` as intended, so replacing it changed
 nothing it builds. Only Yosys differed.
 
-**The out-of-context slack is optimistic, now +0.300 ns.** Three
+The reset-gating row: LUT +2 is the two `&& !rst_i` gates (store enable,
+writeback enable); the worst path is unchanged in shape, and +0.2 MHz is
+placement noise. The forwarding properties and the regfile's observation
+port are under `FORMAL` and absent from the netlist.
+
+**The out-of-context slack is optimistic, now +0.317 ns.** Three
 paths that matter on the board cross the core's ports and are untimed here:
 `pc + 4` / stall mux → `imem_addr_o`, the stall comparator and now the whole
 branch-resolution path → `imem_addr_o`, and
@@ -692,6 +698,18 @@ the honest answer rather than pretending it fits on a hosted one.
   every Yosys-built netlist only — riscv-formal and the future LibreLane run.
   Replaced by a concatenation; it was the RTL's only cast. If one is ever
   needed, parenthesise it and let `make formal` judge.
+- **Reset gates the two commit points** (2026-10-08). `dmem_we_o`/`dmem_wstrb_o`
+  and `wb_rd_we_o` are ANDed with `!rst_i`. Pipeline registers clear only at
+  the end of the reset cycle, so during it EX/MEM and MEM/WB hold power-up
+  contents, and an ungated port could store garbage into data memory. Found
+  by formal (an implausibly early cover, then X1); invisible in simulation
+  and on the FPGA, both of which power flops up at 0, but real on an ASIC.
+- **Forwarding is proven for one solver-chosen register** (2026-10-08):
+  `anyconst f_reg` plus a shadow of its committed value, tied to the
+  register file's storage by invariant R1 through a formal-only observation
+  port on `riscv_regfile`. Simulation tracks x1. The property block now needs
+  `RISCV_FORMAL` too (it reuses the RVFI valid bits to skip bubbles), so
+  `core.sby` defines both.
 - **Properties live in the RTL, `ifdef FORMAL`; environments live in
   `tb/formal/`** (decided 2026-10-08, superseding the entry below). The §5.5
   properties are about `stall`, `redirect` and pipeline registers, and
@@ -886,12 +904,12 @@ rough order:
 
 - The remaining §5.5 hand-written properties, each added to
   [formal-properties.md](formal-properties.md) with depth, covers and a
-  planted fault it catches: forwarding correctness, no structural hazard on
-  the regfile ports, branch-flush correctness, no X into committed state.
-  **Stall correctness is done** (S1–S4, k-induction).
-- **Induction** for those: stall correctness needed none beyond k = 2, but
-  forwarding and flush correctness relate values across several stages and
-  will likely need strengthening invariants on the pipeline registers.
+  planted fault it catches: **branch-flush correctness** (no wrong-path
+  instruction reaches WB), **no structural hazard** on the regfile ports, and
+  the rest of **no X into committed state** — X1 covers reset; the general
+  case is that every flop that can reach committed state is reset (a
+  two-copy "miter" proof is one way). Done: stall correctness (S1–S4),
+  forwarding (F1/F2/L1, with invariant R1), reset commits nothing (X1).
 - Show `pc_bwd` and `causal` failing on a planted fault.
 - Decide `liveness`/`hang` (fairness, and what liveness means once halted)
   and `ill` (needs a legality decoder, or a reasoned exclusion).
@@ -928,8 +946,9 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-08 — First §5.5 properties: stall correctness (S1–S4)
-proven by k-induction, written inside the RTL under `ifdef FORMAL` and
-checked in every cocotb test as well. riscv-formal 42/42 + covers, all in
-`make formal` (~75 s). 168/168 tests, 103.1 MHz. Next: forwarding,
-branch-flush and X-propagation properties (Next up §2).*
+*Last updated: 2026-10-08 — §5.5 properties proven by k-induction: stall
+correctness, forwarding correctness (one solver-chosen register + invariant
+R1), and reset-commits-nothing. Formal found a second bug simulation could
+not: reset could store power-up garbage into data memory on an ASIC; fixed
+by gating both commit points with reset. 168/168, 103.3 MHz. Next:
+branch-flush correctness, structural hazards, general X propagation.*

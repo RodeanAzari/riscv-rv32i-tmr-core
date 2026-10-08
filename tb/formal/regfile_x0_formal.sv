@@ -32,6 +32,8 @@ module regfile_x0_formal #(
       .ADDR_W (ADDR_W)
   ) u_dut (
       .clk_i       (clk_i),
+      .f_raddr_i   ('0),
+      .f_rdata_o   (),
       .rs1_addr_i  (rs1_addr_i),
       .rs1_rdata_o (rs1_rdata),
       .rs2_addr_i  (rs2_addr_i),

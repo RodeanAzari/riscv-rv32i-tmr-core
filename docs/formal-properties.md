@@ -34,7 +34,9 @@ Tools: OSS CAD Suite **2026-10-07** — Yosys 0.69+208, SymbiYosys 0.69, Yices
 | 4 | riscv-formal `pc_fwd` / `pc_bwd`: consecutive retirements chain their pcs | `riscv_core` | same | BMC, cycles 10–25 | **pass** | — (`pc_fwd` shown to fail) |
 | 5 | riscv-formal `unique`: no `rvfi_order` index used twice | `riscv_core` | same | BMC, cycles 1–25 | **pass** | — (shown to fail) |
 | 6 | riscv-formal `causal`: no instruction reads a result its producer has not yet written | `riscv_core` | same | BMC, cycles 10–25 | **pass** | — (not yet shown to fail) |
-| 7 | S1–S4 stall correctness (§5.5): stall and redirect never coincide; a stall holds pc and IF/ID, bubbles ID/EX, and lasts exactly one cycle | `riscv_core` | `tb/formal/core.sby` | k-induction, holds from k = 2, run at 6 | **proven** | 4 / 4 |
+| 7 | S1–S4 stall correctness (§5.5): stall and redirect never coincide; a stall holds pc and IF/ID, bubbles ID/EX, and lasts exactly one cycle | `riscv_core` | `tb/formal/core.sby` | k-induction, holds from k = 2, run at 10 | **proven** | 4 / 4 |
+| 8 | F1/F2 forwarding correctness (§5.5): EX's operands equal the architectural register values; L1: no instruction in EX ever needs an in-flight load result | `riscv_core` | same | k-induction, holds from k = 2, run at 10; needs invariant R1 | **proven** | 6 / 6 |
+| 9 | X1 reset commits nothing (§5.5 "no X into committed state", the reset case): no register write and no store while `rst_i` is high | `riscv_core` | same | k-induction (with the above) | **proven** | 2 / 2 |
 
 ### 1. x0 invariance (register file)
 
@@ -153,6 +155,69 @@ Two things learned writing these, both recorded so they are not relearned:
   it — the `f_past_*` flops can start disagreeing with what they record. It
   was removed.
 
+### 8. Forwarding correctness (core, internal)
+
+For the instruction in EX, the architectural value of register *r* is its
+value once every older instruction has committed. The older instructions in
+flight are in EX/MEM and MEM/WB, so:
+
+```
+arch(r) = 0                      if r is x0
+        = EX/MEM's result        if EX/MEM writes r   (youngest older writer)
+        = MEM/WB's write-back    else if MEM/WB writes r
+        = r's committed value    otherwise
+```
+
+F1/F2 assert `ex_rs1`/`ex_rs2` — the forwarding muxes' outputs — equal
+`arch`, for every real instruction (RVFI's `id_ex_valid` skips bubbles),
+outside reset. L1 asserts a load in EX/MEM never writes a register the
+instruction in EX names: the stall's whole job, stated end to end.
+
+Two techniques make it provable:
+
+- **One arbitrary register.** `f_reg` is `anyconst` — chosen by the solver,
+  fixed for the trace — with a shadow `f_shadow` of its committed value
+  (updated from WB's writes). A proof for an arbitrary register is a proof
+  for all 32, at a fraction of the cost. In simulation there is no solver,
+  so Verilator builds track x1, the register the random programs and
+  riscv-tests write most.
+- **R1, a strengthening invariant:** once known, the shadow equals what the
+  register file stores. Without it induction fails — a start state could have
+  them disagree, and since a register can go unwritten for any number of
+  cycles, no window length rules that out. The core's property block cannot
+  reach the array by hierarchy, so `riscv_regfile` has a formal-only
+  observation port (`f_raddr_i`/`f_rdata_o`, `ifdef FORMAL`).
+
+Covers, all after reset: EX reads `f_reg` (≠ x0) forwarded from EX/MEM (step
+4), from MEM/WB (step 5), and from the register file with the shadow known
+(step 6), on each operand.
+
+Shown to fail (2026-10-08):
+
+| Planted fault | Result |
+|---|---|
+| older write wins (forwarding priority) | F1, step 5; in simulation, `test_younger_write_wins` stops at 50 ns on the same line |
+| no load-use stall | L1, step 4 |
+| writes to x0 forwarded | F2, step 4 |
+| rs2's mux driven by rs1's select | F2, step 4 |
+| **R1 removed** | **induction fails** — R1 is necessary, unlike the helper tried for S1 |
+
+One property bug on the way: F1/F2 first applied during reset too. At a
+mid-run reset the instruction in EX never commits, and X1 (below) had just
+blocked MEM/WB's write, so "the value once older instructions commit" was
+undefined there. The base case found it at depth 7; the guard is `!rst_i`.
+
+### 9. Reset commits nothing (core, internal)
+
+X1 asserts that while `rst_i` is high there is no register write and no
+store. Unlike every other property here it is **not** gated on
+`f_past_valid`: the state it guards against is exactly the arbitrary
+power-up state before the first clock edge. Covers: a mid-run reset arriving
+with a store, and with a register write, in flight — so the gating matters
+after power-up too.
+
+Shown to fail: removing the store's reset gate fails X1 at step 0.
+
 ## Bugs formal found that simulation missed
 
 ### 1. Yosys drops a `~` on a size cast: jump targets unmasked (2026-10-08)
@@ -177,3 +242,26 @@ jumps land on unaligned pcs.
 
 **Fix:** `{target_sum[XLEN-1:2], 2'b00}` — no cast, no precedence question.
 The RTL had exactly one size cast.
+
+### 2. Reset could store power-up garbage into data memory (2026-10-08)
+
+**Found by:** a forwarding cover reached implausibly early — "a register
+read with the shadow known" at step 3, before any instruction could have
+committed. The trace showed why, and X1 was written to pin it.
+
+**Counterexample:** step 0, `rst_i` high, the pipeline registers holding
+power-up values: MEM/WB asserted a register write, and EX/MEM can likewise
+assert a store. Reset clears both registers only *at the end* of the reset
+cycle, and neither write port was gated by reset, so the register file
+and — the serious half — **data memory** took a write of garbage during
+reset. RV32I leaves x1–x31 undefined at reset; memory it does not: it holds
+the program's data.
+
+**Why simulation missed it:** Verilator initialises all state to zero, so
+MEM/WB and EX/MEM power up holding no write. On the FPGA it cannot happen
+either — Xilinx flops power up to their INIT value, 0. On an ASIC flops power
+up random: the LibreLane chip (§6.4) could have corrupted memory on every
+reset.
+
+**Fix:** `dmem_we_o`/`dmem_wstrb_o` and `wb_rd_we_o` are ANDed with
+`!rst_i`. X1 now proves it.

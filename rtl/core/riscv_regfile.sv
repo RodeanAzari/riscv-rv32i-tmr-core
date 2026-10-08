@@ -27,6 +27,16 @@ module riscv_regfile #(
 ) (
     input  logic              clk_i,
 
+`ifdef FORMAL
+    // Formal-only observation port: the raw stored value of one register --
+    // no bypass, no x0 rule. A property block cannot reach mem[] by a
+    // hierarchical name (Yosys makes such a name a new, free wire), so the
+    // core's forwarding proof reads its invariant through here. Not in
+    // synthesis: nothing defines FORMAL for Vivado.
+    input  logic [ADDR_W-1:0] f_raddr_i,
+    output logic [XLEN-1:0]   f_rdata_o,
+`endif
+
     // Read ports (combinational)
     input  logic [ADDR_W-1:0] rs1_addr_i,
     output logic [XLEN-1:0]   rs1_rdata_o,
@@ -60,6 +70,10 @@ module riscv_regfile #(
     else if (we && (rs1_addr_i == rd_addr_i)) rs1_rdata_o = rd_wdata_i;
     else                                      rs1_rdata_o = mem[rs1_addr_i];
   end
+
+`ifdef FORMAL
+  assign f_rdata_o = mem[f_raddr_i];
+`endif
 
   always_comb begin
     if (rs2_addr_i == '0)                    rs2_rdata_o = '0;
