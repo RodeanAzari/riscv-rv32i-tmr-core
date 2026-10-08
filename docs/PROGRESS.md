@@ -129,8 +129,9 @@ place. Implements the misalignment assumption (see Decisions).
 `rtl/core/riscv_alu.sv` — the ten RV32I arithmetic/logic operations. Selected by
 the ISA's own `funct3` plus the ADD/SUB and SRL/SRA "alt" bit rather than a
 private enum, so there is no second copy of an encoding to drift, and no
-SystemVerilog package — which CLAUDE.md §4 flags as a Yosys risk that cannot be
-verified until SymbiYosys is installed in Phase B.
+SystemVerilog package — which CLAUDE.md §4 flags as a Yosys risk, and which
+could not be checked when this was written. Yosys has since been installed and
+elaborates the whole core cleanly (see Toolchain).
 
 `rtl/core/riscv_regfile.sv` — 32 x 32, two read ports, one write port.
 **No reset on the array, deliberately**, and the synthesis report confirms why:
@@ -348,11 +349,23 @@ level run will say whether 100 MHz survives.
 | spike | — | `~/riscv-toolchain/bin/spike` |
 | gh CLI | 2.100.0 | `~/.local/bin/gh`, authed as RodeanAzari |
 | **Vivado** | 2025.2 | `~/Xilinx/2025.2/Vivado` — ML Standard, no license file. Run `vivado-env` first |
-| **yosys / SymbiYosys** | — | **not installed** — needed for Phase B, and for the ASIC flow's synthesis step |
+| **OSS CAD Suite** | nightly **2026-10-07** | `~/.local/opt/oss-cad-suite` (2.5 GB), `bin/` **appended** to PATH in `~/.bashrc`. The bundle's date is its version — pin CI to the same one |
+| ↳ Yosys | 0.69+208 (`7b1913f4c`) | from the suite. Also the ASIC flow's synthesis step (§6.4) |
+| ↳ SymbiYosys (`sby`) | 0.69 | from the suite, with `yosys-smtbmc` |
+| ↳ solvers | Yices 2.7.0, Boolector 3.2.4, Bitwuzla 0.9.1, Z3 4.15.5 | from the suite |
 | **OpenLane + Sky130** | — | **not installed** — needed closing Phase E (CLAUDE.md §6.4 run #1) |
 
 `~/.local/bin` is first on PATH, so the source-built Verilator shadows the
-Debian 5.032 package automatically.
+Debian 5.032 package automatically. OSS CAD Suite's `bin/` is **last**, so it
+supplies only what nothing else does — `which verilator python3` must still
+print `~/.local/bin/verilator` and `/usr/bin/python3`.
+
+**Yosys reads the core** (checked 2026-10-07, both configurations, with and
+without `-DRISCV_FORMAL`): `read_verilog -sv` on every file under `rtl/`,
+`hierarchy -check -top riscv_core; proc; check -assert` — all seven modules
+elaborated, none black-boxed, 0 problems, no warnings. That closes the §4
+"keep `rtl/core/` within Yosys's subset" question for the RTL as it stands; it
+is a parse-and-elaborate check, not yet a proof of anything.
 
 ### Environment gotchas
 
@@ -369,6 +382,12 @@ Debian 5.032 package automatically.
   anyway since the other Xilinx binaries are unchecked.
 - Debian's Verilator is 5.032, below cocotb 2.x's 5.036 floor. This is why
   Verilator was built from source both locally and in CI.
+- **OSS CAD Suite ships its own Verilator and Python.** Its README suggests
+  sourcing `environment` or putting `bin/` first on PATH; either would silently
+  replace the pinned Verilator 5.050 and the Python cocotb runs under, and
+  `make sim` would change simulators without saying so. Hence appended, not
+  prepended, and never `source`d — the same lesson as Vivado's
+  `settings64.sh`.
 
 ---
 
@@ -545,6 +564,13 @@ the honest answer rather than pretending it fits on a hosted one.
   `auipc`: checking which instruction ran is not enough, because IMEM ignores
   the low bits too — a first version of the test missed a planted bug for
   exactly that reason, and only the random tests caught it.
+- **Formal tools come from OSS CAD Suite, date-pinned** (2026-10-07). One
+  bundle of Yosys, SymbiYosys and four solvers, built and tested together, in
+  the home directory with no root. `apt` was checked first: Ubuntu 26.04 has
+  `yosys` 0.52 and `boolector`, but no SymbiYosys package and no Yices, so it
+  would have meant mixing an apt Yosys with a source-built `sby` at versions
+  nobody tested together. The bundle is a nightly, so its date is the version;
+  when formal joins CI, CI installs the same date.
 - **The RVFI port is compiled only under `RISCV_FORMAL`** (2026-10-07). Its
   shadow registers are trace, not CPU; an always-on port would have put them
   in the OOC numbers, since every port of the top is kept. Same convention as
@@ -647,8 +673,11 @@ proper and gating decode with it would let a redirect clear one bit instead of
 
 ### 3. riscv-formal (Phase B)
 
-Install yosys and SymbiYosys; wrap the core for riscv-formal; settle the
-lane-style memory and misalignment questions against `RISCV_FORMAL_ALIGNED_MEM`.
+Tools are installed (see Toolchain) and Yosys already reads the core. First a
+smoke test — one small `.sby` proving one property, run by a live `make formal`
+— so the chain is known to work before riscv-formal is in the picture. Then wrap
+the core for riscv-formal and settle the lane-style memory and misalignment
+questions against `RISCV_FORMAL_ALIGNED_MEM`.
 Check reachability on every property — a vacuous pass proves nothing (§5.5, §9).
 
 ### 4. Board-level top
@@ -684,6 +713,8 @@ worse than no file. Specifically:
 ---
 
 *Last updated: 2026-10-07 — RVFI port live in simulation (under
-`RISCV_FORMAL`, not synthesized): pipeline valid bit, shadow fields to WB, and a
-cocotb monitor checking every retirement against the golden model. 104.1 MHz
-unchanged. Next session: FENCE/ECALL/EBREAK and `riscv-tests` (Next up §1).*
+`RISCV_FORMAL`, not synthesized), checked against the golden model on every
+retirement. OSS CAD Suite 2026-10-07 installed (Yosys 0.69, SBY 0.69, four
+solvers), appended to PATH; Yosys elaborates the core cleanly in both
+configurations. 104.1 MHz unchanged. Next session: FENCE/ECALL/EBREAK and
+`riscv-tests` (Next up §1), or the formal smoke test (§3).*
