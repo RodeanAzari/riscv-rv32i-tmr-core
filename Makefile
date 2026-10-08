@@ -33,13 +33,14 @@ endif
 # No --timing: that flag is for delay and event constructs, which CLAUDE.md §3
 # forbids in rtl/. If lint ever needs it, something non-synthesizable got in.
 #
-# Twice: once as synthesis sees the RTL, once with RISCV_FORMAL as simulation
-# and formal see it. Code inside an `ifdef that is never defined is never
-# linted at all, so a single run would leave the RVFI logic unchecked.
+# Twice: once as synthesis sees the RTL, once with everything simulation and
+# formal add -- RISCV_FORMAL (the RVFI port) and FORMAL (the property blocks).
+# Code inside an `ifdef that is never defined is never linted at all, so a
+# single run would leave both unchecked.
 .PHONY: lint
 lint:
 	verilator --lint-only -Wall --top-module $(TOP) $(RTL)
-	verilator --lint-only -Wall --top-module $(TOP) -DRISCV_FORMAL $(RTL)
+	verilator --lint-only -Wall --top-module $(TOP) -DRISCV_FORMAL -DFORMAL $(RTL)
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim

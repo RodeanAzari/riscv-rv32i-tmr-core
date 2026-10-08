@@ -46,7 +46,12 @@ endif
 # the core tests check every retirement through it. COMPILE_ARGS, not
 # EXTRA_ARGS: a define belongs on the Verilator command line only, for the
 # same reason as --trace-structs above.
-COMPILE_ARGS += -DRISCV_FORMAL
+#
+# FORMAL compiles in the property blocks the formal proofs use, and --assert
+# makes Verilator evaluate them: every test then checks every property on
+# every cycle it runs. A failing assertion stops the simulation with the
+# file and line of the property, which the test reports as a failure.
+COMPILE_ARGS += -DRISCV_FORMAL -DFORMAL --assert
 
 # One entry per elaboration, <toplevel module>:<python test modules>.
 #

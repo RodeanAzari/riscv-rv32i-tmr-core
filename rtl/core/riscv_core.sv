@@ -722,4 +722,100 @@ module riscv_core #(
   assign rvfi_mem_wdata_o = mem_wb_mem_wdata;
 `endif
 
+`ifdef FORMAL
+  // ------------------------------------------------------- properties -----
+  // CLAUDE.md 5.5, proven by tb/formal/core.sby (k-induction) and checked in
+  // every cocotb test (Verilator --assert). Not synthesized: nothing defines
+  // FORMAL for Vivado. The environment -- reset at the start, free inputs --
+  // is the harness's business (tb/formal/core_formal.sv); this block only
+  // states what must hold. docs/formal-properties.md lists each one.
+  //
+  // "Previous cycle" values are explicit flops rather than $past(): the two
+  // tools that read these -- Yosys and Verilator -- sample assertions in
+  // clocked blocks at different moments. Every assertion is combinational.
+  // (No comment line here may begin with the word "verilator": the tool
+  // takes such comments as directives to itself.)
+  //
+  // f_past_valid: at least one clock edge has passed, so every register has
+  // been written by reset or by the pipeline. Before that the formal tools
+  // start from arbitrary state, and nothing here is claimed about it.
+  // f_past_valid MUST start false -- formal starts from arbitrary state, and
+  // every assertion is gated on it -- so it needs an initial value, which
+  // only this block may have (rtl/ proper never does; CLAUDE.md 3). Lint
+  // flags both spellings: an initial block next to always_ff (MULTIDRIVEN),
+  // and a declaration initialiser (PROCASSINIT). The latter is waived here,
+  // for this one variable, on purpose.
+  /* verilator lint_off PROCASSINIT */
+  logic            f_past_valid = 1'b0;
+  /* verilator lint_on PROCASSINIT */
+  logic            f_past_rst, f_past_stall;
+  logic [XLEN-1:0] f_past_pc, f_past_if_id_pc, f_past_if_id_instr;
+
+  always_ff @(posedge clk_i) begin
+    f_past_valid       <= 1'b1;
+    f_past_rst         <= rst_i;
+    f_past_stall       <= stall;
+    f_past_pc          <= pc;
+    f_past_if_id_pc    <= if_id_pc_o;
+    f_past_if_id_instr <= if_id_instr_o;
+  end
+
+  // The cycle after a load-use stall, with no reset in between -- and the
+  // cycle after that, when the instruction that waited reaches EX.
+  logic f_after_stall, f_after_stall_q;
+  assign f_after_stall = f_past_valid && !f_past_rst && f_past_stall;
+
+  always_ff @(posedge clk_i) f_after_stall_q <= f_after_stall && !rst_i;
+
+  always_comb begin
+    if (f_past_valid) begin
+      // S1: stall and redirect never fire together. The stall needs a load in
+      // EX, the redirect a branch or jump in EX, and EX holds one instruction
+      // (the claim the pc mux's priority comment rests on).
+      //
+      // Induction proves this from k = 2 with no helper invariant: an
+      // induction start state can hold an ID/EX no decoder produces (load AND
+      // jump), but ID/EX is rewritten every cycle, so two steps of history
+      // rule it out. k = 1 fails for every property here, because the f_past_*
+      // flops can start out disagreeing with what they remember.
+      assert (!(stall && redirect));
+    end
+
+    if (f_after_stall) begin
+      // S2: a stalled front end holds. The instruction waiting on the load is
+      // neither lost nor replaced, and the pc does not skip ahead.
+      assert (pc            == f_past_pc);
+      assert (if_id_pc_o    == f_past_if_id_pc);
+      assert (if_id_instr_o == f_past_if_id_instr);
+
+      // S3: the stall put a bubble into ID/EX -- every bit that can act is
+      // clear -- so the waiting instruction is not issued twice.
+      assert (!id_ex_rd_we && !id_ex_mem_read && !id_ex_mem_write);
+      assert (!id_ex_branch && !id_ex_jump && !id_ex_halt);
+
+      // S4: a stall lasts exactly one cycle. The bubble cannot be a load, so
+      // nothing in EX can stall ID again.
+      assert (!stall);
+    end
+  end
+
+  // Reachability: each antecedent above must actually occur, or the
+  // assertions under it pass vacuously (CLAUDE.md 5.5, 9). Guarded like the
+  // assertions, and outside reset: before the first edge the registers hold
+  // whatever the solver picks, so a cover "reached" there proves nothing.
+  // (The first run, unguarded, reported three of these at step 0.)
+  always_comb begin
+    if (f_past_valid && !rst_i) begin
+      cover (stall);
+      cover (f_after_stall);
+      // The stall and a misaligned-load trap in the same cycle.
+      cover (stall && freeze);
+      // The instruction that waited out a stall is a taken branch or jump.
+      // Not in f_after_stall's cycle: EX then holds the bubble (S3), and the
+      // waiting instruction reaches EX one cycle later.
+      cover (f_after_stall_q && redirect);
+    end
+  end
+`endif
+
 endmodule

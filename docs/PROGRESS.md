@@ -48,7 +48,7 @@ GCC 13.2 / binutils 2.42 rather than the local GCC 16.
 | `make lint` | clean, Verilator 5.050 |
 | `make sim` | 168/168 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| `make formal` | x0 invariance proven by k-induction; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~1 min — see [formal-properties.md](formal-properties.md) |
+| `make formal` | x0 invariance and stall correctness (S1–S4) proven by k-induction; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~1 min — see [formal-properties.md](formal-properties.md) |
 | CI on push | green (lint + sim, 164/164, all 40 rv32ui ran) at `c9267af`; the formal job is new and unproven there |
 
 ### Implemented
@@ -279,6 +279,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-08 | FENCE (NOP), ECALL/EBREAK halt | 1107 | 501 | 47 | +0.430 | 104.5 | +0.4 |
 | 2026-10-08 | Misaligned access / taken target traps (halts) | 1115 | 501 | 47 | +0.300 | 103.1 | −1.4 |
 | 2026-10-08 | Redirect mask as a concatenation (Yosys cast bug) | 1115 | 501 | 47 | +0.300 | 103.1 | 0.0 |
+| 2026-10-08 | Stall properties S1–S4, under `FORMAL` (not synthesized) | 1115 | 501 | 47 | +0.300 | 103.1 | 0.0 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -691,8 +692,24 @@ the honest answer rather than pretending it fits on a hosted one.
   every Yosys-built netlist only — riscv-formal and the future LibreLane run.
   Replaced by a concatenation; it was the RTL's only cast. If one is ever
   needed, parenthesise it and let `make formal` judge.
+- **Properties live in the RTL, `ifdef FORMAL`; environments live in
+  `tb/formal/`** (decided 2026-10-08, superseding the entry below). The §5.5
+  properties are about `stall`, `redirect` and pipeline registers, and
+  open-source Yosys cannot reach them from a harness: a hierarchical
+  reference like `u.inner` is not an error but a *new, undriven, free wire*
+  ("used but has no driver"), and the assertion on it vanishes. So each
+  module states its own properties in one `ifdef FORMAL` block. Assumptions
+  — where vacuous proofs come from — stay in the harness, few and visible.
+  `FORMAL` is defined by Yosys's `-formal` (verified: it emits `$check`
+  cells), never by Vivado, and not by riscv-formal's `read -sv`, so neither
+  synthesis nor riscv-formal sees the blocks. Lint's second run and every
+  cocotb build define it, with Verilator `--assert`: each test checks every
+  property on every cycle. "Previous cycle" values are explicit `f_past_*`
+  flops, not `$past()`, because Yosys and Verilator sample clocked
+  assertions differently. `f_past_valid` needs an initial value — the one
+  place in `rtl/` that has one — under a scoped `PROCASSINIT` lint waiver.
 - **Formal harnesses wrap modules from outside; nothing in `rtl/`**
-  (2026-10-08). Properties live in `tb/formal/` as a wrapper module that
+  (2026-10-08). **Superseded the same day** — see above. Properties live in `tb/formal/` as a wrapper module that
   instantiates the RTL with every input free and asserts on its ports, using
   immediate assertions in procedural blocks — the subset open-source Yosys
   parses (no Verific). Nothing formal-only enters `rtl/`, so synthesis and the
@@ -867,14 +884,14 @@ riscv-formal passes: 37 instruction checks plus `reg`, `pc_fwd`, `pc_bwd`,
 `unique`, `causal`, each non-vacuous (covers or planted faults). Open, in
 rough order:
 
-- The §5.5 hand-written properties, each added to
+- The remaining §5.5 hand-written properties, each added to
   [formal-properties.md](formal-properties.md) with depth, covers and a
   planted fault it catches: forwarding correctness, no structural hazard on
-  the regfile ports, branch-flush correctness, no X into committed state,
-  stall correctness (including `!(stall && redirect)`).
-- **Induction** (a Phase B box): riscv-formal's checks are bounded. Proving
-  the hand-written properties by k-induction will need strengthening
-  invariants on the pipeline registers.
+  the regfile ports, branch-flush correctness, no X into committed state.
+  **Stall correctness is done** (S1–S4, k-induction).
+- **Induction** for those: stall correctness needed none beyond k = 2, but
+  forwarding and flush correctness relate values across several stages and
+  will likely need strengthening invariants on the pipeline registers.
 - Show `pc_bwd` and `causal` failing on a planted fault.
 - Decide `liveness`/`hang` (fairness, and what liveness means once halted)
   and `ill` (needs a legality decoder, or a reasoned exclusion).
@@ -911,10 +928,8 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-08 — riscv-formal integrated: 37/37 instruction checks
-and reg/pc_fwd/pc_bwd/unique/causal pass, with a cover pass proving each
-instruction check reachable, in `make formal` (~1 min). Its first run found a
-Yosys-only bug (`~XLEN'(2'b11)` mis-parsed; jump targets unmasked) —
-the first entry in "bugs formal found that simulation missed". Misaligned
-accesses and targets trap. 168/168 tests, 103.1 MHz. Next: the §5.5
-hand-written properties and induction (Next up §2).*
+*Last updated: 2026-10-08 — First §5.5 properties: stall correctness (S1–S4)
+proven by k-induction, written inside the RTL under `ifdef FORMAL` and
+checked in every cocotb test as well. riscv-formal 42/42 + covers, all in
+`make formal` (~75 s). 168/168 tests, 103.1 MHz. Next: forwarding,
+branch-flush and X-propagation properties (Next up §2).*

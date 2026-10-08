@@ -1,0 +1,31 @@
+# riscv_core's own properties -- the `ifdef FORMAL block in
+# rtl/core/riscv_core.sv -- under the environment in core_formal.sv.
+# See regfile_x0.sby for what the two tasks mean.
+
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+cover: mode cover
+depth 6
+
+[engines]
+smtbmc yices
+
+[script]
+read_verilog -sv -formal riscv_alu.sv riscv_branch.sv riscv_decoder.sv
+read_verilog -sv -formal riscv_hazard.sv riscv_mem_align.sv riscv_regfile.sv
+read_verilog -sv -formal riscv_core.sv core_formal.sv
+prep -top core_formal
+
+[files]
+../../rtl/core/riscv_alu.sv
+../../rtl/core/riscv_branch.sv
+../../rtl/core/riscv_decoder.sv
+../../rtl/core/riscv_hazard.sv
+../../rtl/core/riscv_mem_align.sv
+../../rtl/core/riscv_regfile.sv
+../../rtl/core/riscv_core.sv
+core_formal.sv

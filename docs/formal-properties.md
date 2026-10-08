@@ -34,6 +34,7 @@ Tools: OSS CAD Suite **2026-10-07** — Yosys 0.69+208, SymbiYosys 0.69, Yices
 | 4 | riscv-formal `pc_fwd` / `pc_bwd`: consecutive retirements chain their pcs | `riscv_core` | same | BMC, cycles 10–25 | **pass** | — (`pc_fwd` shown to fail) |
 | 5 | riscv-formal `unique`: no `rvfi_order` index used twice | `riscv_core` | same | BMC, cycles 1–25 | **pass** | — (shown to fail) |
 | 6 | riscv-formal `causal`: no instruction reads a result its producer has not yet written | `riscv_core` | same | BMC, cycles 10–25 | **pass** | — (not yet shown to fail) |
+| 7 | S1–S4 stall correctness (§5.5): stall and redirect never coincide; a stall holds pc and IF/ID, bubbles ID/EX, and lasts exactly one cycle | `riscv_core` | `tb/formal/core.sby` | k-induction, holds from k = 2, run at 6 | **proven** | 4 / 4 |
 
 ### 1. x0 invariance (register file)
 
@@ -107,6 +108,50 @@ halt), the `bus_*` checks (need `RISCV_FORMAL_BUS` signals). **Not yet shown
 to fail:** `pc_bwd`, `causal`.
 
 Runtime: ~1 min for both passes on 16 cores; `reg` dominates (~46 s).
+
+### 7. Stall correctness (core, internal)
+
+The first properties written **inside the RTL**: the `ifdef FORMAL` block at
+the end of `rtl/core/riscv_core.sv`, beside the logic they describe. The
+harness `tb/formal/core_formal.sv` supplies only the environment: free
+instruction and load data, and one assumption — the first cycle is a reset.
+The same block is compiled into every cocotb test with Verilator `--assert`,
+so every simulated cycle checks it too.
+
+| | Property |
+|---|---|
+| S1 | `!(stall && redirect)` — the Phase A "cannot coincide" claim |
+| S2 | after a stall: `pc`, `if_id_pc_o`, `if_id_instr_o` unchanged |
+| S3 | after a stall: ID/EX's six control bits all clear (a bubble) |
+| S4 | after a stall: no stall (it lasts exactly one cycle) |
+
+Covers, all after reset: a stall (step 3), a stall coinciding with a
+misaligned-load trap (step 3), the cycle after a stall (step 4), and the
+instruction that waited out a stall redirecting (step 5).
+
+Shown to fail (2026-10-08):
+
+| Planted fault | Result |
+|---|---|
+| stall no longer bubbles ID/EX | S3 fails, base case, step 4; in simulation, the same assertion stops the first load-use test at 40 ns |
+| IF/ID not held on a stall | S2 fails (pc and instruction), step 4 |
+| pc not held on a stall | S2 fails (pc), step 4 |
+
+Two things learned writing these, both recorded so they are not relearned:
+
+- **A cover is only evidence if the state it reaches is.** Unguarded, three
+  of the four covers were "reached at step 0" — the arbitrary pre-reset state,
+  where the solver simply chose ID/EX contents no reset produces. Covers now
+  carry the assertions' guard (`f_past_valid`) and exclude reset cycles; the
+  real steps are 3–5. And one cover was simply wrong: the waiting instruction
+  reaches EX two cycles after the stall, not one — the unreached cover is
+  what said so.
+- **Induction needed no helper invariant.** A planned one (no ID/EX is both a
+  load and a branch/jump) proved redundant: the proof holds from k = 2 with or
+  without it, because ID/EX is rewritten every cycle and two steps of history
+  exclude any state the decoder cannot produce. k = 1 fails with or without
+  it — the `f_past_*` flops can start disagreeing with what they record. It
+  was removed.
 
 ## Bugs formal found that simulation missed
 
