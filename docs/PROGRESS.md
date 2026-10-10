@@ -48,7 +48,7 @@ GCC 13.2 / binutils 2.42 rather than the local GCC 16.
 | `make lint` | clean, Verilator 5.050 |
 | `make sim` | 168/168 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1) and reset-commits-nothing (X1) proven by k-induction; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~1 min — see [formal-properties.md](formal-properties.md) |
+| `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1) and branch-flush correctness (B1/B2) proven by k-induction; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~1 min — see [formal-properties.md](formal-properties.md) |
 | CI on push | green (lint + sim, 164/164, all 40 rv32ui ran) at `c9267af`; the formal job is new and unproven there |
 
 ### Implemented
@@ -281,6 +281,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-08 | Redirect mask as a concatenation (Yosys cast bug) | 1115 | 501 | 47 | +0.300 | 103.1 | 0.0 |
 | 2026-10-08 | Stall properties S1–S4, under `FORMAL` (not synthesized) | 1115 | 501 | 47 | +0.300 | 103.1 | 0.0 |
 | 2026-10-08 | Reset gates store and writeback; forwarding props (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | +0.2 |
+| 2026-10-10 | Branch-flush properties B1/B2, under `FORMAL` (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | 0.0 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -889,18 +890,13 @@ the honest answer rather than pretending it fits on a hosted one.
 
 ## Next up
 
-> **Resume here (paused 2026-10-08, by choice, mid Phase B).** Last commit
-> `10f8f70`: forwarding correctness proven, reset gating fixed. Everything is
-> committed, pushed, and green locally. The next step is **branch-flush
-> correctness** (§2 below): no wrong-path instruction ever reaches WB.
-> Planned shape, not yet written: in the `ifdef FORMAL` block of
-> `rtl/core/riscv_core.sv`, track the pc each retirement should have, from the
-> previous retirement's `pc_wdata`, and assert every retiring instruction's
-> pc matches it — riscv-formal's `pc_fwd` stated as an inductive property.
-> It will likely need invariants linking the pcs held in IF/ID, ID/EX, EX/MEM
-> and MEM/WB. Same discipline as before: covers guarded by `f_past_valid` and
-> outside reset, a planted fault for every property, the induction depth
-> swept, and docs/formal-properties.md updated in the same commit.
+> **Resume here (2026-10-10, mid Phase B).** Branch-flush correctness is
+> proven (B1/B2, k = 7, see formal-properties.md §10). Remaining §5.5
+> properties: **no structural hazard** on the regfile ports, and the general
+> case of **no X into committed state**. Same discipline: covers guarded by
+> `f_past_valid` and outside reset, a planted fault for every property, the
+> induction depth swept, and docs/formal-properties.md updated in the same
+> commit.
 
 ### 1. Timing: IF/ID flush via the valid bit
 
@@ -917,12 +913,12 @@ rough order:
 
 - The remaining §5.5 hand-written properties, each added to
   [formal-properties.md](formal-properties.md) with depth, covers and a
-  planted fault it catches: **branch-flush correctness** (no wrong-path
-  instruction reaches WB), **no structural hazard** on the regfile ports, and
+  planted fault it catches: **no structural hazard** on the regfile ports, and
   the rest of **no X into committed state** — X1 covers reset; the general
   case is that every flop that can reach committed state is reset (a
   two-copy "miter" proof is one way). Done: stall correctness (S1–S4),
-  forwarding (F1/F2/L1, with invariant R1), reset commits nothing (X1).
+  forwarding (F1/F2/L1, with invariant R1), reset commits nothing (X1),
+  branch-flush correctness (B1/B2).
 - Show `pc_bwd` and `causal` failing on a planted fault.
 - Decide `liveness`/`hang` (fairness, and what liveness means once halted)
   and `ill` (needs a legality decoder, or a reasoned exclusion).
@@ -959,9 +955,8 @@ worse than no file. Specifically:
 
 ---
 
-*Last updated: 2026-10-08 — §5.5 properties proven by k-induction: stall
-correctness, forwarding correctness (one solver-chosen register + invariant
-R1), and reset-commits-nothing. Formal found a second bug simulation could
-not: reset could store power-up garbage into data memory on an ASIC; fixed
-by gating both commit points with reset. 168/168, 103.3 MHz. Next:
-branch-flush correctness, structural hazards, general X propagation.*
+*Last updated: 2026-10-10 — branch-flush correctness proven by k-induction
+(B1: bubbles are inert in every stage; B2: retirements chain their pcs),
+holding from k = 7 with no helper invariant; three planted flush faults each
+caught. Netlist unchanged: 168/168, 103.3 MHz. Next: structural hazards on
+the regfile ports, general X propagation.*

@@ -921,6 +921,70 @@ module riscv_core #(
     end
   end
 
+  // ---- Branch flush correctness (5.5) ----
+  // "No wrong-path instruction ever reaches WB", as two halves that need
+  // each other:
+  //
+  //   B1  a stage the valid bit calls a bubble can do nothing: no write to a
+  //       register other than x0 (a flushed NOP is addi x0, so rd_we alone
+  //       proves nothing), no memory access, no redirect, no halt. Checked
+  //       in every stage whose bits can act.
+  //   B2  the valid instructions retire in control-flow order: each one's pc
+  //       is the pc_wdata of the one before it, and the first after a reset
+  //       is at the reset vector.
+  //
+  // B2 alone is not enough: the valid bits are a hand-kept copy of the flush
+  // logic, not the flush itself. A design that missed a wrong-path
+  // instruction while its valid bit was cleared would pass B2 and still let
+  // that instruction write a register. B1 ties the copy to the design --
+  // whatever the valid bits drop, the design dropped. B1 alone is not enough
+  // either: it says bubbles are inert, not that wrong-path instructions are
+  // bubbles. B2 says that, since a wrong-path instruction retiring valid
+  // would carry the wrong pc. riscv-formal's insn checks prove each pc_wdata
+  // is the spec's next pc, so together the stream that commits is the
+  // program's control flow and nothing else.
+  logic            f_retire;
+  logic [XLEN-1:0] f_next_pc;   // the pc the next retirement must have
+
+  // A retirement during reset is not one: WB's write is gated off (X1).
+  assign f_retire = mem_wb_valid && !rst_i;
+
+  always_ff @(posedge clk_i) begin
+    if      (rst_i)    f_next_pc <= RESET_VECTOR;
+    else if (f_retire) f_next_pc <= mem_wb_pc_wdata;
+  end
+
+  // For a cover: the last retirement transferred control, so the next one
+  // is the first after a flush.
+  logic f_retired_taken;
+
+  always_ff @(posedge clk_i) begin
+    if      (rst_i)    f_retired_taken <= 1'b0;
+    else if (f_retire) f_retired_taken <= (mem_wb_pc_wdata != mem_wb_pc_o + 32'd4);
+  end
+
+  always_comb begin
+    if (f_past_valid) begin
+      // B1, stage by stage, oldest last.
+      if (!id_ex_valid) begin
+        assert (!(id_ex_rd_we && (id_ex_rd_addr_o != '0)));
+        assert (!id_ex_mem_read && !id_ex_mem_write);
+        assert (!id_ex_branch && !id_ex_jump && !id_ex_halt);
+      end
+      if (!ex_mem_valid) begin
+        assert (!(ex_mem_rd_we_o && (ex_mem_rd_addr_o != '0)));
+        assert (!ex_mem_mem_read && !ex_mem_mem_write && !ex_mem_halt);
+      end
+      if (!mem_wb_valid) begin
+        assert (!(mem_wb_rd_we && (mem_wb_rd_addr != '0)));
+        assert (!mem_wb_halt);
+      end
+
+      // B2.
+      if (f_retire) assert (mem_wb_pc_o == f_next_pc);
+    end
+  end
+
   // Reachability: each antecedent above must actually occur, or the
   // assertions under it pass vacuously (CLAUDE.md 5.5, 9). Guarded like the
   // assertions, and outside reset: before the first edge the registers hold
@@ -954,6 +1018,15 @@ module riscv_core #(
         cover ((id_ex_rs2_addr_o == f_reg) && id_ex_fwd_rs2_mem_wb);
         cover ((id_ex_rs2_addr_o == f_reg) && f_shadow_known
                && !id_ex_fwd_rs2_ex_mem && !id_ex_fwd_rs2_mem_wb);
+      end
+      // B2's case: a retirement straight after a taken transfer.
+      cover (f_retire && f_retired_taken);
+      // B1's: the wrong-path instruction in ID, squashed by a redirect, is
+      // one that would act -- a register write, a store, a jump.
+      if (redirect && if_id_valid) begin
+        cover (dec_rd_we && (dec_rd_addr != '0));
+        cover (dec_mem_write);
+        cover (dec_jump);
       end
     end
   end

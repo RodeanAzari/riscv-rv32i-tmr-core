@@ -37,6 +37,7 @@ Tools: OSS CAD Suite **2026-10-07** — Yosys 0.69+208, SymbiYosys 0.69, Yices
 | 7 | S1–S4 stall correctness (§5.5): stall and redirect never coincide; a stall holds pc and IF/ID, bubbles ID/EX, and lasts exactly one cycle | `riscv_core` | `tb/formal/core.sby` | k-induction, holds from k = 2, run at 10 | **proven** | 4 / 4 |
 | 8 | F1/F2 forwarding correctness (§5.5): EX's operands equal the architectural register values; L1: no instruction in EX ever needs an in-flight load result | `riscv_core` | same | k-induction, holds from k = 2, run at 10; needs invariant R1 | **proven** | 6 / 6 |
 | 9 | X1 reset commits nothing (§5.5 "no X into committed state", the reset case): no register write and no store while `rst_i` is high | `riscv_core` | same | k-induction (with the above) | **proven** | 2 / 2 |
+| 10 | B1/B2 branch flush correctness (§5.5): a bubble in any stage can do nothing; valid instructions retire in control-flow order, each at its predecessor's `pc_wdata` | `riscv_core` | same | k-induction, holds from k = 7, run at 10; no helper invariant | **proven** | 4 / 4 |
 
 ### 1. x0 invariance (register file)
 
@@ -217,6 +218,59 @@ with a store, and with a register write, in flight — so the gating matters
 after power-up too.
 
 Shown to fail: removing the store's reset gate fails X1 at step 0.
+
+### 10. Branch flush correctness (core, internal)
+
+"No wrong-path instruction ever reaches WB" is stated as two halves, and
+neither is enough alone:
+
+| | Property |
+|---|---|
+| B1 | a stage whose RVFI valid bit is clear can do nothing. In ID/EX: no write to a register other than x0, no load or store, no branch, jump or halt. In EX/MEM: no register write, no load or store, no halt. In MEM/WB: no register write, no halt |
+| B2 | every retirement outside reset has `pc == f_next_pc`: the reset vector after a reset, otherwise the previous retirement's `pc_wdata` |
+
+**Why two.** The valid bits are a hand-kept copy of the flush logic, not
+the flush itself. A design that let a wrong-path instruction through while
+its valid bit was cleared would pass B2, since the instruction never shows
+as a retirement, and it would still write a register. B1 ties the copy to the
+design: whatever the valid bits drop, the design dropped. B1 alone says
+bubbles are inert, not that wrong-path instructions are bubbles. B2 says
+that, because a wrong-path instruction retiring valid carries the wrong pc.
+The third leg is riscv-formal's `insn` checks, which prove each `pc_wdata`
+is the spec's next pc. Together they say the stream that commits is the
+program's control flow and nothing else.
+
+B1 says "a register other than x0" because the flush puts a NOP into IF/ID,
+and a NOP is `addi x0, x0, 0`, which decodes `rd_we = 1`. So a flushed
+bubble legitimately carries `rd_we` with `rd = x0`.
+
+B2 is riscv-formal's `pc_fwd` stated as an inductive property. `pc_fwd` is
+a bounded check, clean for 25 cycles from reset. B2 holds forever.
+
+**Induction depth.** k = 1–6 fail and k = 7 holds. The k = 6
+counterexample is an unreachable start state: the pc register is two above
+IF/ID's pc (both misaligned), which no reset, `+4` or masked target
+produces. Two load-use stalls stretch it to six cycles before the bad pc
+reaches WB. A finite k is enough because every such inconsistency drains.
+IF/ID reloads from the pc on every non-stall cycle, a stall lasts one cycle
+(S4), and past ID nothing holds. A helper invariant was tried, `pc ==
+if_id_pc + 4` while IF/ID is valid and the core is not halted. It held, but
+it lowered k only to 6, because the rest of the depth is the same drain
+through ID/EX, EX/MEM and MEM/WB. It was removed, as S1's helper was. The
+resume note had predicted invariants linking every stage's pc; none turned
+out to be needed.
+
+Covers, all after reset: a retirement directly after a taken transfer
+(step 8), and a redirect squashing an instruction in ID that would have
+acted: a register write, a store, a jump (step 3 each).
+
+Shown to fail (2026-10-10):
+
+| Planted fault | Result |
+|---|---|
+| redirect no longer flushes IF/ID's word; the valid bit still clears | B1 (ID/EX), step 5: the unflushed word issues as a bubble that can branch |
+| redirect forgotten in IF/ID entirely, word **and** valid bit | **B2**, step 7: the wrong-path word retires as valid, at the wrong pc. B1 cannot see this one, because the copy is wrong in the same way as the design |
+| redirect no longer bubbles ID/EX's control bits | B1 (ID/EX), step 4: a bubble with a register write |
 
 ## Bugs formal found that simulation missed
 
