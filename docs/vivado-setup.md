@@ -306,13 +306,19 @@ in §2 was diagnosed.
 
 ## 6. JTAG programming from WSL2
 
-**WSL2 cannot see USB devices by default**, so Vivado's Hardware Manager will
-not find the Arty A7 out of the box. Two options:
+**WSL2 cannot see USB devices by default**, so no programmer running inside
+WSL will find the Arty A7 out of the box. That includes Vivado's Hardware
+Manager and `openFPGALoader`. `openFPGALoader` replaces Hardware Manager; it
+does not get around the USB problem. Two options:
 
 | Approach | Notes |
 |---|---|
-| **`openFPGALoader`** *(recommended)* | Installs in WSL, programs the board from a bitstream without Vivado's Hardware Manager. Less fragile, scripts cleanly into `make prog`. |
-| **`usbipd-win`** | Attaches the Digilent USB device into WSL from the Windows side. More moving parts, needs re-attaching after reboots. |
+| **`usbipd-win` + `openFPGALoader` in WSL** | `usbipd-win` (Windows side) attaches the Digilent USB device into WSL; `openFPGALoader -b arty` programs the bitstream from there. Scripts cleanly into `make prog`. Needs `usbipd attach` again after every reboot or replug. |
+| **Program from Windows** | Build the `.bit` in WSL, load it with Hardware Manager or `openFPGALoader` on Windows via `\\wsl$\...`. No USB passthrough, but `make prog` cannot do the programming itself. |
+
+The board's USB-UART has the same limit: it is a Windows COM port, reachable
+from WSL only through `usbipd-win`. The choice is open; see PROGRESS.md
+"Next up" §3.
 
 Synthesis, implementation, and timing closure all work regardless — only the
 final bitstream download needs the USB path.

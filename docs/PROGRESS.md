@@ -897,6 +897,13 @@ the honest answer rather than pretending it fits on a hosted one.
 > `f_past_valid` and outside reset, a planted fault for every property, the
 > induction depth swept, and docs/formal-properties.md updated in the same
 > commit.
+>
+> **Plan agreed 2026-10-10:** finish those two properties, then go straight to
+> a **first-light board bring-up (§3 below) before starting Phase C**. Goal:
+> see it run on the Arty A7: LEDs blink, text prints over UART, a simple
+> program runs. This is an early slice of Phase D, not a phase skip. Phase C
+> (UVM) follows, and Phase D's remaining boxes (Dhrystone/IPC, ILA, photo)
+> come after that as planned.
 
 ### 1. Timing: IF/ID flush via the valid bit
 
@@ -923,16 +930,57 @@ rough order:
 - Decide `liveness`/`hang` (fairness, and what liveness means once halted)
   and `ill` (needs a legality decoder, or a reasoned exclusion).
 
-### 3. Board-level top
+### 3. Board-level top: first light (next after Phase B's last two properties)
 
-Deferred until the core executes instructions: `constr/arty_a7.xdc` pin
-constraints, a top with BRAM instruction memory and clocking, then `make prog`
+Scheduled ahead of Phase C (see the plan under "Resume here"). Done when all
+three are seen on the board:
+
+1. **LEDs blink**: a program in BRAM writes to a memory-mapped LED register
+2. **Text prints**: a UART transmitter (`rtl/periph/`) prints "hello" to a
+   serial terminal over the board's USB-UART
+3. **A simple program runs**: a small compiled C program (e.g. a counter or
+   a sum printed over UART), not just hand-written assembly
+
+Pieces: `constr/arty_a7.xdc` pin constraints (copied from Digilent's master XDC),
+a top with BRAM instruction/data memory, clocking (likely an MMCM to 50 MHz for
+first light, given the thin OOC margin), a simple address decode for the
+LED and UART registers, `make impl`, then `make prog`
 (still blocked on WSL2 USB passthrough, §6 of vivado-setup.md). Only then does
 Fmax become a board number, and it gets its own table. It is also the first run
 that times `pc + 4` → `imem_addr_o` → BRAM address, which the out-of-context
 flow leaves unconstrained; expect it, plus the branch-target mux added in §1,
 to be a candidate critical path — it now carries the branch comparator and
 target adder too.
+
+**Programming the board from WSL2: undecided, pick at bring-up.** WSL2 cannot
+see USB devices by default, so neither Vivado's Hardware Manager nor
+`openFPGALoader` *running inside WSL* will find the Arty's JTAG on its own.
+vivado-setup.md §6 reads as if `openFPGALoader` avoids this; it does not. It
+avoids Vivado's Hardware Manager, not the USB problem. Two options:
+
+1. **`usbipd-win` + `openFPGALoader` in WSL.** `usbipd-win` (installed on
+   Windows) attaches the Digilent USB device into WSL; `openFPGALoader -b arty`
+   then programs the `.bit` from WSL. Fully scriptable, so `make prog` does
+   the whole job. Cost: the device must be re-attached (`usbipd attach`) after
+   every reboot or replug.
+2. **Program from the Windows side.** Build the `.bit` in WSL with `make impl`,
+   then load it with Vivado Hardware Manager or `openFPGALoader` on Windows,
+   pointed at the file through `\\wsl$\...`. Fewest moving parts, but
+   `make prog` would no longer program the board itself; it could only
+   print instructions.
+
+The serial console (UART text) has the same issue: the Arty's USB-UART
+appears as a COM port on Windows, and reaches WSL only through `usbipd-win`.
+A Windows terminal (PuTTY, Tera Term) on the COM port avoids that.
+
+**Learning the Vivado GUI alongside the scripts.** The build stays scripted
+(`make impl` / `make prog`, Tcl in batch mode, never GUI-only, per CLAUDE.md
+§2), but the user wants to learn the Vivado GUI too. At bring-up, walk through
+it on the same design: open the checkpoints (`.dcp`) `make impl` writes to
+look at the device view, the placed design, the critical path and the timing
+and utilization reports, and use Hardware Manager (at least once, even if
+option 1 is chosen above) to program the board and later view ILA captures.
+The GUI is for looking and learning; the scripts produce the committed results.
 
 ---
 
