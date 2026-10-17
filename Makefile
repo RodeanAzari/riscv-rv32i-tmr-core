@@ -7,11 +7,14 @@
 #   make sw     build sw/*.c to .elf and .hex
 #   make spike  run the .elf on the spike reference model
 #   make synth  out-of-context synth + impl of the core, reports to docs/reports
+#   make fw     first-light firmware for the board SoC
+#   make impl   board-level bitstream for the Arty A7;  make prog  program it
+#   make model-test  the C golden model alone, on riscv-tests rv32ui
+#   make uvm    UVM regression in XSim against the golden model
 #   make clean
 #
-# uvm / asic / impl / prog exist as stubs that say which phase they
-# belong to, so a clean checkout gets a reason rather than "No rule to make
-# target". They become real in the phase they name.
+# asic exists as a stub that says which phase it belongs to, so a clean
+# checkout gets a reason rather than "No rule to make target".
 
 XLEN_GCC := $(HOME)/riscv-toolchain/bin/riscv32-unknown-elf-gcc
 ELF2HEX  := $(HOME)/riscv-toolchain/bin/elf2hex
@@ -173,6 +176,19 @@ synth:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART)
 
+# --- UVM -------------------------------------------------------------------
+# The Phase C regression in XSim (tb/uvm/, docs/coverage-plan.md): random
+# programs checked retirement by retirement against the C golden model, and
+# fails below COV_MIN percent functional coverage.
+#   make uvm SEED=7 PROGRAMS=300 COV_MIN=95
+SEED     ?= 1
+PROGRAMS ?= 300
+COV_MIN  ?= 95
+
+.PHONY: uvm
+uvm:
+	scripts/setup-vivado-env.sh bash tb/uvm/run.sh $(SEED) $(PROGRAMS) $(COV_MIN)
+
 # --- board -----------------------------------------------------------------
 # Board-level synthesis, place & route and bitstream for the Arty A7 (Phase D):
 # rtl/top/arty_a7_top.sv with the first-light firmware in its RAM. See
@@ -208,11 +224,7 @@ prog:
 
 # --- not yet built ---------------------------------------------------------
 # Each names its phase and what it is waiting on. Fail loudly, not silently.
-.PHONY: uvm asic
-
-uvm:
-	@echo "make uvm: Phase C. Needs the UVM environment in tb/uvm/, run in XSim." >&2
-	@exit 1
+.PHONY: asic
 
 asic:
 	@echo "make asic: LibreLane RTL-to-GDSII (CLAUDE.md §6.4). Run #1 closes" >&2

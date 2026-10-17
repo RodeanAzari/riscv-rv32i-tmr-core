@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** B — formal verification, started 2026-10-08 (every §5.5 property done; a few riscv-formal items open). **First light on the Arty A7 2026-10-17** (early Phase D): text over UART, a compiled C program, LEDs counting. Phase A **done** 2026-10-08, CI run 37817380686
+**Phase:** C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. B — formal verification, started 2026-10-08 (every §5.5 property done; a few riscv-formal items open). D — first light on the Arty A7 2026-10-17. Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -38,6 +38,8 @@ the local GCC 16.
 | `make synth` | routes clean, 0 errors, ~40 s |
 | `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~5 min (XT's BMC is ~3 of it) — see [formal-properties.md](formal-properties.md) |
 | `make impl` | board-level route + bitstream, timing met at 50 MHz (WNS +5.920 ns), ~5 min |
+| `make model-test` | the C golden model alone: rv32ui **40/40**; a planted SRA bug fails exactly `sra` |
+| `make uvm` | XSim, 300 random programs, ~45 s: **205/205 coverage bins (100%)** on seeds 1, 2, 3, ~45,000 retirements each compared with the model, 0 mismatches. Planted RTL faults caught: forwarding priority (in the hazard unit), LBU sign-extending, no rs2 load-use stall |
 | **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.webp](img/fpgafirstlight.webp) (Phase D's photo box; sideways and low-resolution, retake for the README) |
 | CI on push | green (lint + sim + formal) at `1b14a14`, run 38999736331; first-light work not yet pushed |
 
@@ -72,6 +74,20 @@ Only the facts that are not obvious from reading it:
   (100 → 50 MHz) and the reset. Lint reads stand-ins for the Xilinx
   primitives from `tb/models/`; Vivado must never read them. The reset
   release relies on flops powering up to 0 (Xilinx GSR), not on RTL init.
+- **UVM environment** (`tb/uvm/`, `make uvm`; Phase C): a sequence item is a
+  whole program; the driver loads it into the testbench memory and the C
+  model (`sw/model/`, via DPI-C) and resets the core; a reactive responder
+  serves both ports with BRAM timing; the scoreboard steps the model per
+  RVFI retirement; coverage is one covergroup per group of
+  `docs/coverage-plan.md`, flattened so the % is bins hit / bins. White-box
+  coverage reads core internals by hierarchical name (tb only).
+- **XSim's constraint solver is unreliable; measure the draws.** In 2025.2:
+  `x inside {queue}` hangs the elaborator forever; a class whose constraints
+  are all conditional on one `kind` gave degenerate draws (K_I never picked);
+  a `dist` beside a condition on a non-rand member, or beside implications
+  on the same variable, is ignored. The generator randomizes in stages (kind,
+  then a small class per kind) and does queue picks and offset alignment
+  procedurally. Coverage was 68.8% before this, 100% after.
 - **Firmware** (`sw/firstlight/`, `make fw`): no libgcc, so no `*`, `/`, `%`
   in C (RV32I has no M). `hello_sim.hex` has a 20-iteration delay for sim.
 - **Testbench:** `feed()` assumes no stall, so anything with a load-use pair
@@ -83,7 +99,7 @@ Only the facts that are not obvious from reading it:
 
 ### Not started
 
-UVM, TMR, the rest of hardware bring-up (Dhrystone/IPC, ILA), all of Stage 2.
+TMR, the rest of hardware bring-up (Dhrystone/IPC, ILA, 100 MHz), all of Stage 2.
 
 ---
 
@@ -190,6 +206,7 @@ through the core to the data RAM's address, 13.4 ns, 12 levels, 64% routing.
 | spike | — | `~/riscv-toolchain/bin/spike` |
 | gh CLI | 2.100.0 | `~/.local/bin/gh`, authed as RodeanAzari |
 | **Vivado** | 2025.2 | `~/Xilinx/2025.2/Vivado` — ML Standard, no license file. Run `vivado-env` first |
+| ↳ XSim | 2025.2 | Vivado's simulator, with its bundled UVM 1.2 and DPI-C (`xsc`); used by `make uvm` |
 | **OSS CAD Suite** | nightly **2026-10-07** | `~/.local/opt/oss-cad-suite` (2.5 GB), `bin/` **appended** to PATH in `~/.bashrc`. The bundle's date is its version — pin CI to the same one |
 | ↳ Yosys | 0.69+208 (`7b1913f4c`) | from the suite. Also the ASIC flow's synthesis step (§6.4) |
 | ↳ SymbiYosys (`sby`) | 0.69 | from the suite, with `yosys-smtbmc` |
@@ -239,7 +256,9 @@ riscv-formal found on its first run (see Decisions).
 | `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
 | `make prog` | Arty attached to WSL (usbipd): programs it with `openFPGALoader -b arty_a7_100t`; otherwise prints the Hardware Manager steps and the Windows path | working, both routes tried on the board |
 | `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks, then `scripts/riscv-formal.sh` (checks + covers, verdicts read from status files); appends OSS CAD Suite's `bin/` to PATH itself; `FORMAL_JOBS=n` | working |
-| `make uvm` / `asic` | — | stubs that name their phase and what they wait on |
+| `make model-test` | C golden model on rv32ui (host cc + RISC-V gcc) | working |
+| `make uvm` | UVM regression in XSim (`tb/uvm/run.sh`): `SEED`, `PROGRAMS` (300), `COV_MIN` (95); fails on any UVM error or coverage below `COV_MIN` | working; local only (Vivado), like `make synth` |
+| `make asic` | — | stub that names its phase |
 
 ---
 
@@ -320,14 +339,11 @@ history, [formal-properties.md](formal-properties.md) and
 
 ## Next up
 
-> **Resume here (2026-10-17, first light done).** The core runs compiled C
-> on the Arty at 50 MHz: greeting, sum and an endless count over the UART,
-> LEDs counting. Programmed from Windows with Lab Edition 2025.2, terminal
-> PuTTY at 115200 8N1. Both programming routes work (2026-10-17): Windows
-> Hardware Manager, and WSL via `usbipd attach` + `make prog`
-> (openFPGALoader), UART on `/dev/ttyUSB1`. **Next**, per the plan: Phase C
-> (UVM), with Phase B's remaining items (§2) and Phase D's other
-> boxes (Dhrystone/IPC, ILA, 100 MHz) after.
+> **Resume here (2026-10-17, Phase C done).** UVM: 205/205 coverage bins,
+> every retirement checked against the C golden model, three planted RTL
+> faults caught. First light is on the board too (both programming routes
+> work). **Next:** Phase B's remaining items (§2) and Phase D's other boxes
+> (Dhrystone/IPC, ILA, 100 MHz), then Phase E (TMR).
 >
 > **Plan agreed 2026-10-10:** finish the last property, then go straight to
 > a **first-light board bring-up (§3 below) before starting Phase C**. Goal:
@@ -448,7 +464,8 @@ that changed meaningful state.
 
 ---
 
-*Last updated: 2026-10-17 — first light on the Arty A7: the core runs
-compiled C at 50 MHz, printing over the UART and counting on the LEDs; photo
-committed. Both programming routes work: Windows Hardware Manager, and WSL
-via usbipd-win + `make prog` (openFPGALoader). Next: Phase C (UVM).*
+*Last updated: 2026-10-17 — Phase C done. C golden model (`sw/model/`,
+rv32ui 40/40 alone), UVM environment in XSim with DPI-C, coverage plan of
+205 bins closed at 100% on three seeds with 0 mismatches; three planted RTL
+faults caught. XSim's solver needed a staged generator (draws measured).
+Next: Phase B leftovers, Phase D's remaining boxes.*

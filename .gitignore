@@ -41,3 +41,4 @@ sw/*.elf
 sw/*.bin
 sw/*.hex
 sw/build/
+tb/uvm/build/
