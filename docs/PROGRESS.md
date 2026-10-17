@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** B — formal verification, started 2026-10-08 (riscv-formal passing: 37 instructions + reg/pc/unique/causal). Phase A **done** 2026-10-08, CI run 37817380686
+**Phase:** B — formal verification, started 2026-10-08 (every §5.5 property done; a few riscv-formal items open). **First light on the Arty A7 2026-10-17** (early Phase D): text over UART, a compiled C program, LEDs counting. Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -34,10 +34,12 @@ the local GCC 16.
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 168/168 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
+| `make sim` | 174/174 passing across 9 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, soc), including the 40 official `riscv-tests` and the first-light firmware running on the whole SoC, UART decoded at 115200 |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~5 min (XT's BMC is ~3 of it) — see [formal-properties.md](formal-properties.md) |
-| CI on push | green (lint + sim, 164/164, all 40 rv32ui ran) at `c9267af`; the formal job is new and unproven there |
+| `make impl` | board-level route + bitstream, timing met at 50 MHz (WNS +5.920 ns), ~5 min |
+| **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen |
+| CI on push | green (lint + sim + formal) at `1b14a14`, run 38999736331; first-light work not yet pushed |
 
 ### Implemented, and what to know before touching it
 
@@ -64,6 +66,14 @@ Only the facts that are not obvious from reading it:
   that depend on forwarding preset registers first, or they can pass vacuously.
 - **RVFI port and `FORMAL` property blocks are compiled out of synthesis**
   (`RISCV_FORMAL` / `FORMAL`); `make lint` runs both configurations.
+- **First-light SoC** (`rtl/top/`): `soc.sv` is board-independent (core, one
+  32 KiB dual-port RAM for code and data, LED and UART registers; memory map
+  in its header) and is what cocotb runs; `arty_a7_top.sv` adds the MMCM
+  (100 → 50 MHz) and the reset. Lint reads stand-ins for the Xilinx
+  primitives from `tb/models/`; Vivado must never read them. The reset
+  release relies on flops powering up to 0 (Xilinx GSR), not on RTL init.
+- **Firmware** (`sw/firstlight/`, `make fw`): no libgcc, so no `*`, `/`, `%`
+  in C (RV32I has no M). `hello_sim.hex` has a 20-iteration delay for sim.
 - **Testbench:** `feed()` assumes no stall, so anything with a load-use pair
   goes through `run()`. `test_core` checks every retirement against the golden
   model (`tb/cocotb/rv32i_model.py`) through RVFI; `SEED=n` reruns a seed.
@@ -73,7 +83,7 @@ Only the facts that are not obvious from reading it:
 
 ### Not started
 
-UVM, TMR, hardware bring-up, all of Stage 2.
+UVM, TMR, the rest of hardware bring-up (Dhrystone/IPC, ILA, photo), all of Stage 2.
 
 ---
 
@@ -151,6 +161,25 @@ Lessons from individual rows:
 
 ---
 
+## Board-level timing (Arty A7)
+
+Separate from the trend table: different conditions. `make impl`, numbers from
+`docs/reports/summary_board.txt`. In-context on `xc7a100tcsg324-1`, core clock
+from the MMCM, LED/UART/button I/O false-pathed. LUT/FF are cell counts, as in
+the trend table; the core's debug outputs are unconnected here, so Vivado
+trims logic the OOC run keeps.
+
+| Date | Build | LUT | FF | BRAM | Core clock | WNS (ns) | Fmax (MHz) |
+|---|---|---|---|---|---|---|---|
+| 2026-10-17 | First light: core + 32 KiB RAM + LED + UART (ran on the board at 50 MHz) | 1009 | 374 | 8 | 50 MHz | +5.920 | 71.0 |
+
+The critical path is the one the OOC flow could not time: a block RAM's output
+through the core to the data RAM's address, 13.4 ns, 12 levels, 64% routing.
+100 MHz needs ~4 ns off it; that is a measured slice of its own. Hold slack is
++0.064 ns (MEM/WB rd address → regfile LUTRAM write address): positive, thin.
+
+---
+
 ## Toolchain
 
 | Tool | Version | Location |
@@ -203,12 +232,14 @@ riscv-formal found on its first run (see Decisions).
 |---|---|---|
 | `make lint` | Verilator lint of `rtl/` | working |
 | `make sim` | cocotb regression | working |
-| `make sw` | build `sw/**/*.c` → `.elf` / `.hex` | untested, no source yet |
-| `make spike` | run `.elf` on spike | untested, no source yet |
+| `make sw` | build `sw/**/*.c` → `.elf` / `.hex` | **broken**: its glob takes riscv-tests' C sources; superseded by `make fw` |
+| `make spike` | run `.elf` on spike | untested, depends on `make sw` |
+| `make fw` | first-light firmware → `sw/build/hello.hex` (board), `hello_sim.hex` (sim) | working; local riscv32 or CI's riscv64 gcc |
+| `make impl` | board-level synth + route + bitstream (`syn/impl_arty.tcl`), reports `docs/reports/*_board.*`; refuses a missing RAM image, writes no bitstream if timing fails | working |
 | `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
-| `make prog` | — | stub; blocked on USB passthrough (§6 of vivado-setup.md) |
+| `make prog` | prints the Hardware Manager steps and the `\\wsl.localhost\...` path to the bitstream | working; programming itself is done on Windows |
 | `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks, then `scripts/riscv-formal.sh` (checks + covers, verdicts read from status files); appends OSS CAD Suite's `bin/` to PATH itself; `FORMAL_JOBS=n` | working |
-| `make uvm` / `impl` / `asic` | — | stubs that name their phase and what they wait on |
+| `make uvm` / `asic` | — | stubs that name their phase and what they wait on |
 
 ---
 
@@ -289,11 +320,13 @@ history, [formal-properties.md](formal-properties.md) and
 
 ## Next up
 
-> **Resume here (2026-10-16, mid Phase B).** Every §5.5 hand-written
-> property is now done. The last was no X into committed state (XP proven by
-> k-induction, XT bounded, see formal-properties.md §12). Next: first-light
-> board bring-up (§3). Phase B's remaining items (§2) are not §5.5
-> properties and wait until after it.
+> **Resume here (2026-10-17, first light done).** The core runs compiled C
+> on the Arty at 50 MHz: greeting, sum and an endless count over the UART,
+> LEDs counting. Programmed from Windows with Lab Edition 2025.2, terminal
+> PuTTY at 115200 8N1. **Next:** set up the second programming route,
+> `usbipd-win` + `openFPGALoader` (§3), so both work. Then, per the plan,
+> Phase C (UVM), with Phase B's remaining items (§2) and Phase D's other
+> boxes (Dhrystone/IPC, ILA, photo, 100 MHz) after.
 >
 > **Plan agreed 2026-10-10:** finish the last property, then go straight to
 > a **first-light board bring-up (§3 below) before starting Phase C**. Goal:
@@ -324,7 +357,7 @@ rough order:
 - Decide `liveness`/`hang` (fairness, and what liveness means once halted)
   and `ill` (needs a legality decoder, or a reasoned exclusion).
 
-### 3. Board-level top: first light (next)
+### 3. Board-level top: first light (done 2026-10-17)
 
 Scheduled ahead of Phase C (see the plan under "Resume here"). Done when all
 three are seen on the board:
@@ -346,7 +379,17 @@ flow leaves unconstrained; expect it, plus the branch-target mux added in §1,
 to be a candidate critical path — it now carries the branch comparator and
 target adder too.
 
-**Programming the board from WSL2: undecided, pick at bring-up.** WSL2 cannot
+**Programming the board: both options, user's choice per session
+(decided 2026-10-16/17).** Option 2 first, for first light and for learning the
+GUI: Vivado Lab Edition 2025.2 (Hardware Manager only, cable drivers ticked)
+on Windows loads the `.bit` built in WSL; the UART goes to a Windows
+terminal. **Option 1 is to be set up as well, after first light**, because
+it is faster for everyday runs: `usbipd-win` + `openFPGALoader` in WSL.
+Then `make prog` should program the board itself when the Arty is attached
+to WSL, and print the Windows steps when it is not. Note: `usbipd attach`
+takes the USB device away from Windows (Hardware Manager and the COM port
+both lose it) until `usbipd detach`, so switching method means switching
+the attachment. Background: WSL2 cannot
 see USB devices by default, so neither Vivado's Hardware Manager nor
 `openFPGALoader` *running inside WSL* will find the Arty's JTAG on its own.
 vivado-setup.md §6 reads as if `openFPGALoader` avoids this; it does not. It
@@ -404,9 +447,8 @@ that changed meaningful state.
 
 ---
 
-*Last updated: 2026-10-16 — every §5.5 hand-written property done. No
-structural hazard on the regfile ports (SH1, k = 1). No X into committed
-state via Yosys `xprop`: XP, with the regfile defined at power-up, proven
-from k = 7; XT, regfile X too until software reads one, BMC to 10. Two
-planted unreset flops caught by both. Netlist unchanged: 168/168,
-103.3 MHz. Next: first light on the board.*
+*Last updated: 2026-10-17 — first light on the Arty A7: the core runs
+compiled C at 50 MHz, printing over the UART and counting on the LEDs.
+Built this session: UART transmitter, SoC, Arty top (MMCM to 50 MHz),
+firmware, `make fw` / `impl` / `prog`; 174/174 in sim. Board Fmax estimate
+71.0 MHz (BRAM→core→BRAM). Next: the usbipd-win + openFPGALoader route.*

@@ -37,10 +37,18 @@ endif
 # formal add -- RISCV_FORMAL (the RVFI port) and FORMAL (the property blocks).
 # Code inside an `ifdef that is never defined is never linted at all, so a
 # single run would leave both unchecked.
+#
+# Then the board top, which the core-only runs never elaborate. It
+# instantiates Xilinx primitives (MMCME2_BASE, BUFG); tb/models/ has lint
+# stand-ins for them, never read by Vivado.
+XILINX_MODELS := $(shell find tb/models -name '*.sv' | sort)
+
 .PHONY: lint
 lint:
 	verilator --lint-only -Wall --top-module $(TOP) $(RTL)
 	verilator --lint-only -Wall --top-module $(TOP) -DRISCV_FORMAL -DFORMAL $(RTL)
+	verilator --lint-only -Wall --top-module arty_a7_top $(RTL) $(XILINX_MODELS)
+	verilator --lint-only -Wall --top-module arty_a7_top -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim
@@ -139,9 +147,32 @@ synth:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART)
 
+# --- board -----------------------------------------------------------------
+# Board-level synthesis, place & route and bitstream for the Arty A7 (Phase D):
+# rtl/top/arty_a7_top.sv with the first-light firmware in its RAM. See
+# syn/impl_arty.tcl; reports land in docs/reports/*_board.*, the bitstream in
+# syn/build/board/.
+BIT := syn/build/board/arty_a7_top.bit
+
+.PHONY: impl prog
+impl: $(FW_BUILD)/hello.hex
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_BUILD)/hello.hex
+
+# Programming happens on Windows (docs/vivado-setup.md section 6): WSL2 cannot
+# see the board's USB. This prints the steps and the path to use.
+prog:
+	@test -f $(BIT) || { echo "no bitstream: run make impl first" >&2; exit 1; }
+	@echo "Program the Arty from Windows, in Vivado Lab Edition (Hardware Manager):"
+	@echo "  1. Open Hardware Manager > Open Target > Auto Connect"
+	@echo "  2. Right-click xc7a100t_0 > Program Device, bitstream:"
+	@printf '     %s\n' "$$(wslpath -w $(abspath $(BIT)))"
+	@echo "  3. Serial terminal on the board's COM port: 115200 baud, 8N1"
+	@echo "  4. Press the red RESET button to restart the program"
+
 # --- not yet built ---------------------------------------------------------
 # Each names its phase and what it is waiting on. Fail loudly, not silently.
-.PHONY: uvm asic impl prog
+.PHONY: uvm asic
 
 uvm:
 	@echo "make uvm: Phase C. Needs the UVM environment in tb/uvm/, run in XSim." >&2
@@ -153,16 +184,6 @@ asic:
 	@echo "           Needs LibreLane + Sky130 (not installed)." >&2
 	@exit 1
 
-impl:
-	@echo "make impl: Phase D. Board-level place & route and bitstream; needs" >&2
-	@echo "           constr/arty_a7.xdc and a board top, neither of which exists." >&2
-	@echo "           For core-only numbers today, use: make synth" >&2
-	@exit 1
-
-prog:
-	@echo "make prog: Phase D. Blocked on WSL2 USB passthrough for JTAG --" >&2
-	@echo "           see docs/vivado-setup.md section 6." >&2
-	@exit 1
 
 # --- housekeeping ----------------------------------------------------------
 .PHONY: clean

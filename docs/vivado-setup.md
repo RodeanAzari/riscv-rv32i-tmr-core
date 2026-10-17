@@ -317,8 +317,14 @@ does not get around the USB problem. Two options:
 | **Program from Windows** | Build the `.bit` in WSL, load it with Hardware Manager or `openFPGALoader` on Windows via `\\wsl$\...`. No USB passthrough, but `make prog` cannot do the programming itself. |
 
 The board's USB-UART has the same limit: it is a Windows COM port, reachable
-from WSL only through `usbipd-win`. The choice is open; see PROGRESS.md
-"Next up" §3.
+from WSL only through `usbipd-win`. **Chosen
+(2026-10-16/17): both, picked per session.** Set up first: program from
+Windows with Vivado Lab Edition 2025.2 (install with "Install Cable Drivers"
+ticked), and read the UART in a Windows terminal (PuTTY or Tera Term) on the
+board's COM port. Set up after first light: `usbipd-win` + `openFPGALoader`
+in WSL, the faster route for everyday runs. The USB device is on one side at
+a time: `usbipd attach` hides it from Windows (Hardware Manager and the COM
+port) until `usbipd detach`.
 
 Synthesis, implementation, and timing closure all work regardless — only the
 final bitstream download needs the USB path.
