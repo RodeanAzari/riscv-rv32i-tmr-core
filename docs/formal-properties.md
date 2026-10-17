@@ -39,6 +39,7 @@ Tools: OSS CAD Suite **2026-10-07** — Yosys 0.69+208, SymbiYosys 0.69, Yices
 | 9 | X1 reset commits nothing (§5.5 "no X into committed state", the reset case): no register write and no store while `rst_i` is high | `riscv_core` | same | k-induction (with the above) | **proven** | 2 / 2 |
 | 10 | B1/B2 branch flush correctness (§5.5): a bubble in any stage can do nothing; valid instructions retire in control-flow order, each at its predecessor's `pc_wdata` | `riscv_core` | same | k-induction, holds from k = 7, run at 10; no helper invariant | **proven** | 4 / 4 |
 | 11 | SH1 no structural hazard on the register file ports (§5.5): a read of the register WB is writing returns WB's data, on each port | `riscv_core` | `tb/formal/core.sby` | k-induction; alone holds at k = 1 (combinational), run at 10 with the rest | **proven** | 2 / 2 |
+| 12 | XP/XT no X into committed state, general case (§5.5): nothing left over from power-up is ever X in a register write, store, retirement or halt after reset | `riscv_core`, X-encoded by Yosys `xprop` | `tb/formal/xprop.sby` | XP: k-induction, holds from k = 7, run at 10, needs invariant XR. XT: BMC, depth 10 | **XP proven; XT pass (bounded)** | 5 / 5 |
 
 ### 1. x0 invariance (register file)
 
@@ -302,6 +303,82 @@ Shown to fail (2026-10-16):
 |---|---|
 | write-first bypass removed from both read ports | SH1, step 5, on each port |
 | same, with SH1 disabled | F2, step 6: the stale read reaches EX one cycle later |
+
+### 12. No X into committed state, the general case (core, X-encoded)
+
+X1 proves nothing commits while reset is held. This proves nothing left
+over from power-up commits after reset.
+
+**How X is modelled.** `xprop.sby` runs Yosys's `xprop` pass over the
+flattened core. It gives every signal a second bit meaning "this bit is X"
+and splits every port into a value half (`_d`) and an X-mask half (`_x`).
+A flop with no reset powers up X. The harness `tb/formal/xprop_formal.sv`
+drives the clock, reset and both memories' read data fully defined, since
+the program is the environment's business, and asserts on the commit ports'
+X masks. The encoding is pessimistic: a mux with an X select is X even when
+both inputs agree. That can only add failures, never hide one.
+
+**Two X sources, two claims.** Every pipeline flop that can reach a commit
+is reset, so X from one is a design bug. The register file is deliberately
+not reset (RV32I leaves x1–x31 undefined), so X from it is software reading
+a register it never wrote, and a branch, address or result built on that
+read is X too.
+
+| | Property |
+|---|---|
+| XP | with the register file powering up arbitrary but defined, nothing committed is ever X after reset: register writes (enable, address, data), stores (enable, strobes, address, written lanes), retirements (valid, pc, instruction) and the halt. That is, every flop that can reach committed state is reset. **k-induction.** |
+| XT | with the register file X as well, the same holds from reset until the first instruction that reads a register not written since that reset. Register-file X reaches committed state only through an instruction that read it. The next reset re-arms the check. **BMC, depth 10.** |
+
+XR, the strengthening invariant, says no register holds X under XP, or no
+register written since reset holds X under XT. Induction needs it for the
+same reason as R1.
+
+**Why XT is bounded.** XT's induction fails, and no depth fixes it by itself.
+The counterexample starts with X in IF/ID's instruction word and in ID/EX's
+control bits, which no reset produces, since instructions come from defined
+memory. Ruling such states out needs invariants on every pipeline stage's X
+masks, but in reachable states a stage *can* hold X control legitimately:
+an instruction that read an undefined register and has not yet retired. The
+harness sees ports only. XP carries the inductive claim about the design,
+and XT is the bounded check that register-file X stays on the path
+software chose.
+
+"Read" is decided from the opcode, not RVFI's rs fields, which are raw
+instruction bits (LUI's would name a register). Missing a real read shows as
+a false failure, not a false pass.
+
+**Induction depth (XP).** k = 1–6 fail and k = 7 holds. The k = 6
+counterexample was not analysed.
+
+**Pitfall in the flow: the optimiser can hide X.** Yosys's `opt` treats a
+flop with no init value as don't-care and may fold it to a constant. The
+first version ran `opt -fast` before `xprop`. A planted fault, `halted_q`
+unreset, then passed in one second: the optimiser had chosen init 1, so the
+core was permanently halted and nothing ever committed. The flow now runs no
+`opt` before `xprop` and turns every free-init flop into `$anyinit` right
+after it. The same fault then fails at step 4.
+
+**An approach that did not scale.** The first version compared two copies of
+the core started from independent arbitrary states (a miter). Yices,
+Bitwuzla, Boolector and ABC PDR all stalled at step 8 or 9, where the first
+instructions after reset retire: an SMT solver has to prove the two
+datapaths equal with no structural sharing. Making both register files
+start equal did not help. The single-copy X encoding runs BMC to depth 10 in
+about 3 minutes and proves XP in about 90 seconds.
+
+Covers (XT's harness), all reached: X at power-up, an unreset view of the
+halt (step 0); X in the pipeline while nothing committed is X, an ID/EX
+operand read from an unwritten register (step 3); a store (step 4); the check
+stopping on a read of an undefined register (step 5); a register-register
+instruction writing a result from two defined nonzero sources (step 6).
+
+Shown to fail (2026-10-16), each in both tasks:
+
+| Planted fault | Result |
+|---|---|
+| `ex_mem_rd_we_o` loses its reset | XP and XT, step 2: an X register-write enable |
+| `halted_q` loses its reset | XP and XT, step 4: an X register-write enable, through the freeze and the bubble logic |
+| `halted_q` unreset, before the flow fix above | **passes**, because the optimiser fixed the flop's init (the `ex_mem_rd_we_o` fault was caught even then) |
 
 ## Bugs formal found that simulation missed
 

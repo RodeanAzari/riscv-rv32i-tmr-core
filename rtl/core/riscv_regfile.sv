@@ -35,6 +35,9 @@ module riscv_regfile #(
     // synthesis: nothing defines FORMAL for Vivado.
     input  logic [ADDR_W-1:0] f_raddr_i,
     output logic [XLEN-1:0]   f_rdata_o,
+    // The whole array, flattened (register i at [i*XLEN +: XLEN]), for the
+    // X-propagation proof (tb/formal/xprop_formal.sv).
+    output logic [(2**ADDR_W)*XLEN-1:0] f_regs_o,
 `endif
 
     // Read ports (combinational)
@@ -73,6 +76,9 @@ module riscv_regfile #(
 
 `ifdef FORMAL
   assign f_rdata_o = mem[f_raddr_i];
+  for (genvar i = 0; i < NUM_REGS; i++) begin : g_f_regs
+    assign f_regs_o[i*XLEN +: XLEN] = mem[i];
+  end
 `endif
 
   always_comb begin

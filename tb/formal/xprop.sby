@@ -1,0 +1,69 @@
+# "No X into committed state", the general case: nothing left over from
+# power-up reaches committed state. See xprop_formal.sv for the two claims:
+#   prove  XP, k-induction, register file defined at power-up
+#   bmc    XT, bounded, register file X too, until software reads one
+#   cover  XT's reachability
+#
+# The core is X-encoded by Yosys's xprop pass before the harness is read, so
+# the harness can instantiate it by its split _d/_x ports. On the way:
+#   chformal -remove   the core's own properties are core.sby's business
+#   (no opt)           not before xprop: opt treats a flop with no init as
+#                      don't-care and may fold it to a constant -- an
+#                      unreset flop "fixed" by the optimiser, X hidden
+#   memory_map         the register file as flops, which xprop can encode
+#   formalff -clk2ff   flops on the implicit global clock: xprop splits the
+#                      clock port too, and an encoded clock cannot clock
+#   prove: -ff2anyinit the register file's flops power up free (any defined
+#                      value) instead of X: xprop reads a flop with no init
+#                      as X, and XP is the claim about everything else
+#   formalff -ff2anyinit  every flop whose init is free (the X masks
+#                      included) becomes $anyinit, which the opt passes after
+#                      this must leave alone, for the same reason
+#   setattr -unset     the decoded clock wire must not keep clk2ff's marker,
+#                      or SBY takes it for a derived clock
+
+[tasks]
+prove
+bmc
+cover
+
+[options]
+prove: mode prove
+bmc: mode bmc
+cover: mode cover
+prove: depth 10
+bmc: depth 10
+cover: depth 10
+
+[engines]
+smtbmc yices
+
+[script]
+read_verilog -sv -formal -DRISCV_FORMAL riscv_alu.sv riscv_branch.sv riscv_decoder.sv
+read_verilog -sv -formal -DRISCV_FORMAL riscv_hazard.sv riscv_mem_align.sv riscv_regfile.sv
+read_verilog -sv -formal -DRISCV_FORMAL riscv_core.sv
+hierarchy -top riscv_core
+proc
+chformal -remove
+flatten
+opt_clean
+memory -nomap
+memory_map
+formalff -clk2ff
+prove: formalff -ff2anyinit riscv_core/c:$memory\u_regfile.mem*
+xprop -split-ports -required riscv_core
+formalff -ff2anyinit
+setattr -unset replaced_by_gclk riscv_core/w:*
+prove: read_verilog -sv -formal -DXPROP_REGFILE_DEFINED xprop_formal.sv
+~prove: read_verilog -sv -formal xprop_formal.sv
+prep -top xprop_formal
+
+[files]
+../../rtl/core/riscv_alu.sv
+../../rtl/core/riscv_branch.sv
+../../rtl/core/riscv_decoder.sv
+../../rtl/core/riscv_hazard.sv
+../../rtl/core/riscv_mem_align.sv
+../../rtl/core/riscv_regfile.sv
+../../rtl/core/riscv_core.sv
+xprop_formal.sv

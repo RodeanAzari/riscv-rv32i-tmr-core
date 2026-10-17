@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
 ---------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
-| Date         : Fri Oct 16 20:45:56 2026
+| Date         : Fri Oct 16 23:33:47 2026
 | Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
 | Command      : report_timing_summary -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/timing_ooc.rpt
 | Design       : riscv_core

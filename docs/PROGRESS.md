@@ -36,7 +36,7 @@ the local GCC 16.
 | `make lint` | clean, Verilator 5.050 |
 | `make sim` | 168/168 passing across 7 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch), including the 40 official `riscv-tests` |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2) and no regfile structural hazard (SH1) proven by k-induction; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~1 min — see [formal-properties.md](formal-properties.md) |
+| `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~5 min (XT's BMC is ~3 of it) — see [formal-properties.md](formal-properties.md) |
 | CI on push | green (lint + sim, 164/164, all 40 rv32ui ran) at `c9267af`; the formal job is new and unproven there |
 
 ### Implemented, and what to know before touching it
@@ -73,8 +73,7 @@ Only the facts that are not obvious from reading it:
 
 ### Not started
 
-UVM, TMR, hardware bring-up, all of Stage 2, and the last §5.5 property
-(see Next up).
+UVM, TMR, hardware bring-up, all of Stage 2.
 
 ---
 
@@ -109,6 +108,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-08 | Reset gates store and writeback; forwarding props (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | +0.2 |
 | 2026-10-10 | Branch-flush properties B1/B2, under `FORMAL` (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | 0.0 |
 | 2026-10-16 | Regfile structural-hazard property SH1, under `FORMAL` (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | 0.0 |
+| 2026-10-16 | `f_regs_o` port for the X-propagation proof, under `FORMAL` (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | 0.0 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -260,6 +260,10 @@ history, [formal-properties.md](formal-properties.md) and
   assumptions live in `tb/formal/`.** Yosys turns a hierarchical reference from
   a harness into a free undriven wire, so the assertion silently vanishes.
   "Previous cycle" values are explicit `f_past_*` flops, not `$past()`.
+- **X-propagation uses Yosys `xprop`, not a two-copy miter** (the miter
+  stalled every solver at step 8). In that flow, never `opt` before `xprop`
+  and make free-init flops `$anyinit` after it: `opt` folds a flop with no
+  init to a constant, which hid a planted unreset flop (`tb/formal/xprop.sby`).
 - **riscv-formal runs from a symlink tree** (`scripts/riscv-formal.sh`), never
   writing into the submodule. Its generated `.sby` files say `expect pass,fail`,
   so `sby` exits 0 on a FAILED check; the script reads every `status` file and
@@ -285,12 +289,11 @@ history, [formal-properties.md](formal-properties.md) and
 
 ## Next up
 
-> **Resume here (2026-10-16, mid Phase B).** No structural hazard on the
-> regfile ports is proven (SH1, see formal-properties.md §11). Remaining §5.5
-> property: the general case of **no X into committed state**. Same
-> discipline: covers guarded by `f_past_valid` and outside reset, a planted
-> fault for every property, the induction depth swept, and
-> docs/formal-properties.md updated in the same commit.
+> **Resume here (2026-10-16, mid Phase B).** Every §5.5 hand-written
+> property is now done. The last was no X into committed state (XP proven by
+> k-induction, XT bounded, see formal-properties.md §12). Next: first-light
+> board bring-up (§3). Phase B's remaining items (§2) are not §5.5
+> properties and wait until after it.
 >
 > **Plan agreed 2026-10-10:** finish the last property, then go straight to
 > a **first-light board bring-up (§3 below) before starting Phase C**. Goal:
@@ -312,18 +315,16 @@ riscv-formal passes: 37 instruction checks plus `reg`, `pc_fwd`, `pc_bwd`,
 `unique`, `causal`, each non-vacuous (covers or planted faults). Open, in
 rough order:
 
-- The last §5.5 hand-written property, added to
-  [formal-properties.md](formal-properties.md) with depth, covers and a
-  planted fault it catches: the rest of **no X into committed state**. X1
-  covers reset; the general case is that every flop that can reach committed state is reset (a
-  two-copy "miter" proof is one way). Done: stall correctness (S1–S4),
+- §5.5's hand-written properties are all done, in
+  [formal-properties.md](formal-properties.md): stall correctness (S1–S4),
   forwarding (F1/F2/L1, with invariant R1), reset commits nothing (X1),
-  branch-flush correctness (B1/B2), no regfile structural hazard (SH1).
+  branch-flush correctness (B1/B2), no regfile structural hazard (SH1), and
+  no X into committed state (XP by induction, XT bounded to depth 10).
 - Show `pc_bwd` and `causal` failing on a planted fault.
 - Decide `liveness`/`hang` (fairness, and what liveness means once halted)
   and `ill` (needs a legality decoder, or a reasoned exclusion).
 
-### 3. Board-level top: first light (next after Phase B's last property)
+### 3. Board-level top: first light (next)
 
 Scheduled ahead of Phase C (see the plan under "Resume here"). Done when all
 three are seen on the board:
@@ -403,8 +404,9 @@ that changed meaningful state.
 
 ---
 
-*Last updated: 2026-10-16 — no structural hazard on the regfile ports proven
-(SH1: a read of the register WB is writing returns WB's data, on each port;
-alone holds at k = 1); the bypass-removal fault caught by SH1 at step 5 and by
-F2 at step 6. Netlist unchanged: 168/168, 103.3 MHz. Next: general X
-propagation, then first light on the board.*
+*Last updated: 2026-10-16 — every §5.5 hand-written property done. No
+structural hazard on the regfile ports (SH1, k = 1). No X into committed
+state via Yosys `xprop`: XP, with the regfile defined at power-up, proven
+from k = 7; XT, regfile X too until software reads one, BMC to 10. Two
+planted unreset flops caught by both. Netlist unchanged: 168/168,
+103.3 MHz. Next: first light on the board.*

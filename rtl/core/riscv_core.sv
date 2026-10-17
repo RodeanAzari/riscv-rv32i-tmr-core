@@ -31,6 +31,13 @@ module riscv_core #(
     input  logic            clk_i,
     input  logic            rst_i,
 
+`ifdef FORMAL
+    // The register file's contents, flattened. Formal-only, for the
+    // X-propagation proof (tb/formal/xprop_formal.sv), which sees the core
+    // only through its ports.
+    output logic [(2**ADDR_W)*XLEN-1:0] f_regs_o,
+`endif
+
     // Instruction memory port (synchronous read, 1-cycle latency). The address
     // is the NEXT pc, combinational -- the BRAM's address register stands in
     // for the pc register, and imem_rdata_i is the word at pc.
@@ -236,6 +243,7 @@ module riscv_core #(
 `ifdef FORMAL
       .f_raddr_i   (f_reg),
       .f_rdata_o   (f_reg_stored),
+      .f_regs_o    (f_regs_o),
 `endif
       .rs1_addr_i  (dec_rs1_addr),
       .rs1_rdata_o (rf_rs1_rdata),
