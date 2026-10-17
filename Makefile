@@ -132,6 +132,32 @@ $(FW_BUILD)/%.hex: $(FW_BUILD)/%.elf scripts/bin2hex.py
 	$(RISCV_PREFIX)objcopy -O binary $< $(FW_BUILD)/$*.bin
 	python3 scripts/bin2hex.py $(FW_BUILD)/$*.bin $@
 
+# --- golden model ----------------------------------------------------------
+# The C golden model the UVM environment steps through DPI-C (sw/model/).
+# Checked on its own first: every rv32ui test the cocotb suite runs, with the
+# same two exclusions (tb/cocotb/test_riscv_tests.py says why), must pass on
+# the model alone before it is trusted to judge the RTL.
+MODEL_DIR   := sw/model
+MODEL_BUILD := sw/build/model
+RV32UI_SKIP := fence_i ma_data
+RV32UI      := $(filter-out $(RV32UI_SKIP), \
+                 $(basename $(notdir $(wildcard sw/riscv-tests/isa/rv32ui/*.S))))
+
+.PHONY: model-test
+model-test: $(MODEL_BUILD)/rv32ui_check $(RV32UI:%=$(MODEL_BUILD)/rv32ui/%.bin)
+	$(MODEL_BUILD)/rv32ui_check $(RV32UI:%=$(MODEL_BUILD)/rv32ui/%.bin)
+
+$(MODEL_BUILD)/rv32ui_check: $(MODEL_DIR)/rv32ui_check.c $(MODEL_DIR)/rv32i_iss.c $(MODEL_DIR)/rv32i_iss.h
+	@mkdir -p $(@D)
+	cc -std=c11 -O2 -Wall -Wextra -Werror -o $@ $(MODEL_DIR)/rv32ui_check.c $(MODEL_DIR)/rv32i_iss.c
+
+$(MODEL_BUILD)/rv32ui/%.bin: sw/riscv-tests/isa/rv32ui/%.S
+	@mkdir -p $(@D)
+	$(RISCV_PREFIX)gcc -march=rv32i -mabi=ilp32 -static -nostdlib -nostartfiles \
+		-Isw/riscv-tests-env -Isw/riscv-tests/isa/macros/scalar \
+		-Tsw/riscv-tests-env/link.ld -o $(@:.bin=.elf) $<
+	$(RISCV_PREFIX)objcopy -O binary $(@:.bin=.elf) $@
+
 # --- synthesis -------------------------------------------------------------
 # Out-of-context: the core alone, no board-level top yet. See syn/synth_ooc.tcl
 # for why, and docs/vivado-setup.md for the environment the wrapper sets up.
