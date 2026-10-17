@@ -159,16 +159,26 @@ impl: $(FW_BUILD)/hello.hex
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_BUILD)/hello.hex
 
-# Programming happens on Windows (docs/vivado-setup.md section 6): WSL2 cannot
-# see the board's USB. This prints the steps and the path to use.
+# Two routes, picked per session (docs/vivado-setup.md section 6). If the Arty
+# is attached to WSL with usbipd-win (FTDI 0403:6010 visible here), program it
+# with openFPGALoader; otherwise print the Windows Hardware Manager steps.
+# Either way the configuration is volatile: it lasts until power-off.
+ARTY_USB := 0403:6010
+
 prog:
 	@test -f $(BIT) || { echo "no bitstream: run make impl first" >&2; exit 1; }
-	@echo "Program the Arty from Windows, in Vivado Lab Edition (Hardware Manager):"
-	@echo "  1. Open Hardware Manager > Open Target > Auto Connect"
-	@echo "  2. Right-click xc7a100t_0 > Program Device, bitstream:"
-	@printf '     %s\n' "$$(wslpath -w $(abspath $(BIT)))"
-	@echo "  3. Serial terminal on the board's COM port: 115200 baud, 8N1"
-	@echo "  4. Press the red RESET button to restart the program"
+	@if $(OSS_CAD_BIN)/lsusb 2>/dev/null | grep -q "^$(ARTY_USB) "; then \
+	  $(OSS_CAD_BIN)/openFPGALoader -b arty_a7_100t $(BIT) && \
+	  echo "UART: screen /dev/ttyUSB1 115200  (ls /dev/ttyUSB* if not 1; Ctrl-a k quits)"; \
+	else \
+	  echo "Arty not attached to WSL (usbipd attach --wsl --busid <id> on Windows)."; \
+	  echo "Or program it from Windows, in Vivado Lab Edition (Hardware Manager):"; \
+	  echo "  1. Open Hardware Manager > Open Target > Auto Connect"; \
+	  echo "  2. Right-click xc7a100t_0 > Program Device, bitstream:"; \
+	  printf '     %s\n' "$$(wslpath -w $(abspath $(BIT)))"; \
+	  echo "  3. Serial terminal on the board's COM port: 115200 baud, 8N1"; \
+	  echo "  4. Press the red RESET button to restart the program"; \
+	fi
 
 # --- not yet built ---------------------------------------------------------
 # Each names its phase and what it is waiting on. Fail loudly, not silently.

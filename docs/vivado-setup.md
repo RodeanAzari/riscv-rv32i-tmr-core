@@ -313,7 +313,7 @@ does not get around the USB problem. Two options:
 
 | Approach | Notes |
 |---|---|
-| **`usbipd-win` + `openFPGALoader` in WSL** | `usbipd-win` (Windows side) attaches the Digilent USB device into WSL; `openFPGALoader -b arty` programs the bitstream from there. Scripts cleanly into `make prog`. Needs `usbipd attach` again after every reboot or replug. |
+| **`usbipd-win` + `openFPGALoader` in WSL** | `usbipd-win` (Windows side) attaches the Digilent USB device into WSL; `openFPGALoader -b arty_a7_100t` (plain `arty` is the 35T) programs the bitstream from there. Scripts cleanly into `make prog`. Needs `usbipd attach` again after every reboot or replug. |
 | **Program from Windows** | Build the `.bit` in WSL, load it with Hardware Manager or `openFPGALoader` on Windows via `\\wsl$\...`. No USB passthrough, but `make prog` cannot do the programming itself. |
 
 The board's USB-UART has the same limit: it is a Windows COM port, reachable
@@ -325,6 +325,34 @@ board's COM port. Set up after first light: `usbipd-win` + `openFPGALoader`
 in WSL, the faster route for everyday runs. The USB device is on one side at
 a time: `usbipd attach` hides it from Windows (Hardware Manager and the COM
 port) until `usbipd detach`.
+
+### Setting up the WSL route (usbipd-win + openFPGALoader)
+
+`openFPGALoader` comes with OSS CAD Suite (v1.1.1 in the 2026-10-07
+bundle), and the WSL kernel has the USB/IP and FTDI serial drivers. The
+Arty is an FTDI FT2232H, `0403:6010`: interface A is JTAG, B the UART.
+
+Once, on Windows, in an **administrator** PowerShell:
+
+    winget install --interactive --exact dorssel.usbipd-win
+    usbipd list                      # find the Arty's BUSID (0403:6010)
+    usbipd bind --busid <BUSID>      # share it; survives reboots
+
+Once, in WSL (root, so in a terminal of your own -- Claude Code cannot
+answer sudo's prompt):
+
+    sudo cp scripts/99-arty-a7.rules /etc/udev/rules.d/
+    sudo udevadm control --reload-rules && sudo udevadm trigger
+
+Each session (after every replug or reboot), on Windows, no admin needed:
+
+    usbipd attach --wsl --busid <BUSID>    # board leaves Windows, joins WSL
+    usbipd detach --busid <BUSID>          # and back again
+
+While attached to WSL, `make prog` programs the board with
+`openFPGALoader -b arty_a7_100t`, and the UART is `/dev/ttyUSB1` (`screen
+/dev/ttyUSB1 115200`). While detached, `make prog` prints the Hardware
+Manager steps instead.
 
 Synthesis, implementation, and timing closure all work regardless — only the
 final bitstream download needs the USB path.

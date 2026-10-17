@@ -1,0 +1,12 @@
+# udev rules for the Arty A7's USB (Digilent, on an FTDI FT2232H, 0403:6010)
+# once usbipd-win has attached it into WSL. Interface A is JTAG, which
+# openFPGALoader drives through libftdi; interface B is the USB-UART, which
+# appears as /dev/ttyUSB*. Both go to plugdev, so neither needs root or the
+# dialout group.
+#
+# Install (needs root, so run in a WSL terminal of your own):
+#   sudo cp scripts/99-arty-a7.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# then detach and re-attach the board (usbipd) so the rules apply.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6010", MODE="0664", GROUP="plugdev"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6010", MODE="0664", GROUP="plugdev"

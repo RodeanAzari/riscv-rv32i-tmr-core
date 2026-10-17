@@ -237,7 +237,7 @@ riscv-formal found on its first run (see Decisions).
 | `make fw` | first-light firmware → `sw/build/hello.hex` (board), `hello_sim.hex` (sim) | working; local riscv32 or CI's riscv64 gcc |
 | `make impl` | board-level synth + route + bitstream (`syn/impl_arty.tcl`), reports `docs/reports/*_board.*`; refuses a missing RAM image, writes no bitstream if timing fails | working |
 | `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
-| `make prog` | prints the Hardware Manager steps and the `\\wsl.localhost\...` path to the bitstream | working; programming itself is done on Windows |
+| `make prog` | Arty attached to WSL (usbipd): programs it with `openFPGALoader -b arty_a7_100t`; otherwise prints the Hardware Manager steps and the Windows path | working, both routes tried on the board |
 | `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks, then `scripts/riscv-formal.sh` (checks + covers, verdicts read from status files); appends OSS CAD Suite's `bin/` to PATH itself; `FORMAL_JOBS=n` | working |
 | `make uvm` / `asic` | — | stubs that name their phase and what they wait on |
 
@@ -323,9 +323,10 @@ history, [formal-properties.md](formal-properties.md) and
 > **Resume here (2026-10-17, first light done).** The core runs compiled C
 > on the Arty at 50 MHz: greeting, sum and an endless count over the UART,
 > LEDs counting. Programmed from Windows with Lab Edition 2025.2, terminal
-> PuTTY at 115200 8N1. **Next:** set up the second programming route,
-> `usbipd-win` + `openFPGALoader` (§3), so both work. Then, per the plan,
-> Phase C (UVM), with Phase B's remaining items (§2) and Phase D's other
+> PuTTY at 115200 8N1. Both programming routes work (2026-10-17): Windows
+> Hardware Manager, and WSL via `usbipd attach` + `make prog`
+> (openFPGALoader), UART on `/dev/ttyUSB1`. **Next**, per the plan: Phase C
+> (UVM), with Phase B's remaining items (§2) and Phase D's other
 > boxes (Dhrystone/IPC, ILA, 100 MHz) after.
 >
 > **Plan agreed 2026-10-10:** finish the last property, then go straight to
@@ -379,8 +380,8 @@ flow leaves unconstrained; expect it, plus the branch-target mux added in §1,
 to be a candidate critical path — it now carries the branch comparator and
 target adder too.
 
-**Programming the board: both options, user's choice per session
-(decided 2026-10-16/17).** Option 2 first, for first light and for learning the
+**Programming the board: both options set up and working (2026-10-17),
+user's choice per session.** Setup steps: vivado-setup.md §6. Option 2 first, for first light and for learning the
 GUI: Vivado Lab Edition 2025.2 (Hardware Manager only, cable drivers ticked)
 on Windows loads the `.bit` built in WSL; the UART goes to a Windows
 terminal. **Option 1 is to be set up as well, after first light**, because
@@ -396,7 +397,7 @@ vivado-setup.md §6 reads as if `openFPGALoader` avoids this; it does not. It
 avoids Vivado's Hardware Manager, not the USB problem. Two options:
 
 1. **`usbipd-win` + `openFPGALoader` in WSL.** `usbipd-win` (installed on
-   Windows) attaches the Digilent USB device into WSL; `openFPGALoader -b arty`
+   Windows) attaches the Digilent USB device into WSL; `openFPGALoader -b arty_a7_100t` (plain `arty` is the 35T)
    then programs the `.bit` from WSL. Fully scriptable, so `make prog` does
    the whole job. Cost: the device must be re-attached (`usbipd attach`) after
    every reboot or replug.
@@ -448,7 +449,6 @@ that changed meaningful state.
 ---
 
 *Last updated: 2026-10-17 — first light on the Arty A7: the core runs
-compiled C at 50 MHz, printing over the UART and counting on the LEDs.
-Built this session: UART transmitter, SoC, Arty top (MMCM to 50 MHz),
-firmware, `make fw` / `impl` / `prog`; 174/174 in sim. Board Fmax estimate
-71.0 MHz (BRAM→core→BRAM). Next: the usbipd-win + openFPGALoader route.*
+compiled C at 50 MHz, printing over the UART and counting on the LEDs; photo
+committed. Both programming routes work: Windows Hardware Manager, and WSL
+via usbipd-win + `make prog` (openFPGALoader). Next: Phase C (UVM).*
