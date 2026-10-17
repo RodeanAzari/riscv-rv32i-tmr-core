@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. B — formal verification, started 2026-10-08 (every §5.5 property done; a few riscv-formal items open). D — first light on the Arty A7 2026-10-17. Phase A **done** 2026-10-08, CI run 37817380686
+**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D — first light on the Arty A7 2026-10-17. Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -34,9 +34,9 @@ the local GCC 16.
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 174/174 passing across 9 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, soc), including the 40 official `riscv-tests` and the first-light firmware running on the whole SoC, UART decoded at 115200 |
+| `make sim` | 175/175 passing across 9 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, soc), including the 40 official `riscv-tests` and the first-light firmware running on the whole SoC, UART decoded at 115200 |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~5 min (XT's BMC is ~3 of it) — see [formal-properties.md](formal-properties.md) |
+| `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 46/46 checks and 46/46 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`, `causal_mem`, `liveness`, `hang`, `ill`), ~4 min (XT's BMC is ~2 of it) — see [formal-properties.md](formal-properties.md) |
 | `make impl` | board-level route + bitstream, timing met at 50 MHz (WNS +5.920 ns), ~5 min |
 | `make model-test` | the C golden model alone: rv32ui **40/40**; a planted SRA bug fails exactly `sra` |
 | `make uvm` | XSim, 300 random programs, ~45 s: **205/205 coverage bins (100%)** on seeds 1, 2, 3, ~45,000 retirements each compared with the model, 0 mismatches. Planted RTL faults caught: forwarding priority (in the hazard unit), LBU sign-extending, no rs2 load-use stall |
@@ -55,11 +55,12 @@ Only the facts that are not obvious from reading it:
 - **Branches and jumps resolve in EX**, static not-taken: taken costs two
   cycles, not taken none. A jump's link address replaces the ALU result going
   into EX/MEM. Forwarding selects are decided in ID and registered into ID/EX.
-- **Every exception halts the core** (ECALL, EBREAK, misaligned access, taken
-  misaligned target); `halt_o` is sticky until reset. FENCE is a NOP.
-- **Encodings outside RV32I decode inert** (CSRs, MRET, WFI, illegal words): no
-  write, no memory access, no redirect, no halt. Half-working would surface
-  later as a riscv-formal mismatch that reads like a forwarding bug.
+- **Every exception halts the core** (ECALL, EBREAK, illegal instruction,
+  misaligned access, taken misaligned target); `halt_o` is sticky until reset.
+  FENCE is a NOP. **Illegal** = any word outside the 40 RV32I encodings (CSRs,
+  MRET, WFI, FENCE.I, reserved funct3/funct7, all zeros): it traps and does
+  nothing else. Was inert (no halt) until 2026-10-17; changed for
+  riscv-formal's `ill`.
 - **A bubble clears six ID/EX bits** (`rd_we`, `mem_read`, `mem_write`,
   `branch`, `jump`, `halt`), not the whole register, so `id_ex_*_o` show the
   squashed instruction during a bubble. Each bit is pinned by a test that fails
@@ -135,6 +136,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-10 | Branch-flush properties B1/B2, under `FORMAL` (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | 0.0 |
 | 2026-10-16 | Regfile structural-hazard property SH1, under `FORMAL` (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | 0.0 |
 | 2026-10-16 | `f_regs_o` port for the X-propagation proof, under `FORMAL` (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | 0.0 |
+| 2026-10-17 | Illegal instructions trap (legality decode in ID) | 1130 | 501 | 47 | +0.382 | 104.0 | +0.7 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -339,18 +341,12 @@ history, [formal-properties.md](formal-properties.md) and
 
 ## Next up
 
-> **Resume here (2026-10-17, Phase C done).** UVM: 205/205 coverage bins,
-> every retirement checked against the C golden model, three planted RTL
-> faults caught. First light is on the board too (both programming routes
-> work). **Next:** Phase B's remaining items (§2) and Phase D's other boxes
-> (Dhrystone/IPC, ILA, 100 MHz), then Phase E (TMR).
->
-> **Plan agreed 2026-10-10:** finish the last property, then go straight to
-> a **first-light board bring-up (§3 below) before starting Phase C**. Goal:
-> see it run on the Arty A7: LEDs blink, text prints over UART, a simple
-> program runs. This is an early slice of Phase D, not a phase skip. Phase C
-> (UVM) follows, and Phase D's remaining boxes (Dhrystone/IPC, ILA, photo)
-> come after that as planned.
+> **Resume here (2026-10-17, Phases B and C done).** Formal: riscv-formal
+> 46/46 incl. `liveness`, `hang`, `ill` (illegal words now trap), every
+> consistency check shown to fail on a planted fault. UVM: 205/205 coverage
+> bins. First light is on the board (both programming routes work).
+> **Next:** Phase D's other boxes (Dhrystone/IPC, ILA, 100 MHz), then
+> Phase E (TMR).
 
 ### 1. Timing: IF/ID flush via the valid bit
 
@@ -359,24 +355,9 @@ exists, but only under `RISCV_FORMAL`; moving `if_id_valid` into the core
 proper and gating decode with it would let a redirect clear one bit instead of
 64. Its own measured slice.
 
-### 2. Formal, continued (Phase B)
+### 2. Board-level top: first light (done 2026-10-17)
 
-riscv-formal passes: 37 instruction checks plus `reg`, `pc_fwd`, `pc_bwd`,
-`unique`, `causal`, each non-vacuous (covers or planted faults). Open, in
-rough order:
-
-- §5.5's hand-written properties are all done, in
-  [formal-properties.md](formal-properties.md): stall correctness (S1–S4),
-  forwarding (F1/F2/L1, with invariant R1), reset commits nothing (X1),
-  branch-flush correctness (B1/B2), no regfile structural hazard (SH1), and
-  no X into committed state (XP by induction, XT bounded to depth 10).
-- Show `pc_bwd` and `causal` failing on a planted fault.
-- Decide `liveness`/`hang` (fairness, and what liveness means once halted)
-  and `ill` (needs a legality decoder, or a reasoned exclusion).
-
-### 3. Board-level top: first light (done 2026-10-17)
-
-Scheduled ahead of Phase C (see the plan under "Resume here"). Done when all
+Scheduled ahead of Phase C as an early slice of Phase D. Done when all
 three are seen on the board:
 
 1. **LEDs blink**: a program in BRAM writes to a memory-mapped LED register
@@ -464,8 +445,7 @@ that changed meaningful state.
 
 ---
 
-*Last updated: 2026-10-17 — Phase C done. C golden model (`sw/model/`,
-rv32ui 40/40 alone), UVM environment in XSim with DPI-C, coverage plan of
-205 bins closed at 100% on three seeds with 0 mismatches; three planted RTL
-faults caught. XSim's solver needed a staged generator (draws measured).
-Next: Phase B leftovers, Phase D's remaining boxes.*
+*Last updated: 2026-10-17 — Phase B done. Illegal instructions now trap
+(decoder, both models, tests); riscv-formal gained `ill`, `liveness`, `hang`,
+`causal_mem` (46/46); `pc_bwd`, `causal`, `liveness`, `hang`, `ill` each shown
+to fail on a planted fault. Next: Phase D's remaining boxes.*

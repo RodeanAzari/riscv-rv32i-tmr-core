@@ -41,8 +41,8 @@ _start:                                                                 \
         li x29, 0; li x30, 0; li x31, 0;
 
 // Unreachable: every test ends in PASS or FAIL. If one ever falls through,
-// unimp assembles to csrrw x0, cycle, x0 (0xc0001073), a CSR access this core
-// decodes inert, so the testbench's cycle budget is what catches it.
+// unimp assembles to csrrw x0, cycle, x0 (0xc0001073), a CSR access: an
+// illegal instruction here, so the core halts without the pass ECALL.
 #define RVTEST_CODE_END                                                 \
         unimp
 

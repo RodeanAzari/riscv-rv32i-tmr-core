@@ -315,21 +315,48 @@ async def test_fence_is_inert_and_does_not_halt(dut):
 
 
 @cocotb.test()
-async def test_other_system_encodings_neither_act_nor_halt(dut):
-    """SYSTEM also holds CSR accesses, MRET and WFI, which this core does not
-    implement, and encodings one field away from ECALL/EBREAK. Matching the
-    opcode alone would make every one of them halt. Inert beats plausibly
-    wrong -- a half-implemented instruction that writes something is what
-    riscv-formal would later blame on forwarding."""
-    for instr in (enc_i(0x300, rs1=2, funct3=0b001, rd=1, opcode=OPCODE_SYSTEM),  # csrrw
+async def test_illegal_words_trap_and_do_nothing_else(dut):
+    """Any word outside the 40 RV32I encodings is an illegal instruction: it
+    halts, and does nothing else. The reserved funct3/funct7 cases sit under
+    legal opcodes, so they would otherwise write a register, access memory
+    or branch -- a plausible-looking wrong result."""
+    for instr in (0x0000_0000,                                 # all zeros (riscv-formal `ill`)
+                  0xFFFF_FFFF,
+                  0x0000_4501,                                 # compressed (low bits not 11)
+                  enc_i(0x300, rs1=2, funct3=0b001, rd=1, opcode=OPCODE_SYSTEM),  # csrrw
                   enc_i(0x302, opcode=OPCODE_SYSTEM),          # mret
                   enc_i(0x105, opcode=OPCODE_SYSTEM),          # wfi
                   enc_i(2, opcode=OPCODE_SYSTEM),              # imm one past ebreak
                   enc_i(0, rd=1, opcode=OPCODE_SYSTEM),        # ecall with rd set
                   enc_i(0, rs1=1, opcode=OPCODE_SYSTEM),       # ecall with rs1 set
-                  enc_i(0, funct3=0b100, opcode=OPCODE_SYSTEM)):
+                  enc_i(0, funct3=0b100, opcode=OPCODE_SYSTEM),
+                  enc_i(0, funct3=0b001, opcode=OPCODE_FENCE), # fence.i (Zifencei)
+                  enc_i(0, rs1=1, funct3=0b001, rd=1, opcode=OPCODE_JALR),
+                  enc_b(8, funct3=0b010), enc_b(8, funct3=0b011),
+                  enc_i(0, rs1=1, funct3=0b011, rd=1, opcode=OPCODE_LOAD),   # ld (RV64)
+                  enc_i(0, rs1=1, funct3=0b110, rd=1, opcode=OPCODE_LOAD),   # lwu (RV64)
+                  enc_s(0, rs1=1, rs2=2, funct3=0b011),        # sd (RV64)
+                  enc_r(0b000, funct7=0b0000001),              # mul (M)
+                  enc_r(0b001, funct7=0b0100000),              # "sub" funct7 on sll
+                  enc_i(0x401, rs1=1, funct3=0b001, rd=1),     # slli, funct7 alt bit
+                  enc_i(0x021, rs1=1, funct3=0b101, rd=1)):    # srli, shamt[5] (RV64)
         await assert_inert(dut, instr)
+        assert int(dut.halt_o.value) == 1, f"{instr:#010x} does not halt"
+
+
+@cocotb.test()
+async def test_legal_neighbours_of_illegal_words_do_not_halt(dut):
+    """The other side of each line drawn above: instr[30] set on a non-shift
+    OP-IMM is immediate bit 10, not funct7, and SUB, SRA and SRAI are the
+    alt-bit encodings that are legal."""
+    for instr in (enc_i(-1, rs1=1, rd=1),                      # addi x1, x1, -1
+                  enc_i(0x400, rs1=1, funct3=0b111, rd=1),     # andi, imm bit 10
+                  enc_i(0x401, rs1=1, funct3=0b101, rd=1),     # srai
+                  enc_r(0b000, funct7=0b0100000),              # sub
+                  enc_r(0b101, funct7=0b0100000)):             # sra
+        await decode(dut, instr)
         assert int(dut.halt_o.value) == 0, f"{instr:#010x} halts"
+        assert int(dut.rd_we_o.value) == 1, f"{instr:#010x} does not write rd"
 
 
 # --- control flow ------------------------------------------------------------

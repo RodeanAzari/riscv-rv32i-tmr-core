@@ -444,9 +444,9 @@ async def test_slt_signed_through_the_core(dut):
 
 
 @cocotb.test()
-async def test_csr_instruction_is_inert(dut):
+async def test_csr_instruction_traps(dut):
     """csrrw x1, mstatus, x2: SYSTEM, but not ECALL/EBREAK. No CSRs exist, so
-    it must neither write rd nor halt."""
+    it is an illegal instruction: it must not write rd, and it halts."""
     await reset(dut)
     await release(dut)
 
@@ -454,7 +454,7 @@ async def test_csr_instruction_is_inert(dut):
     assert int(dut.ex_mem_rd_we_o.value) == 0, "csrrw writes rd"
     for _ in range(3):
         await feed(dut, NOP)
-    assert int(dut.halt_o.value) == 0, "csrrw halted the core"
+    assert int(dut.halt_o.value) == 1, "csrrw did not halt the core"
 
 
 @cocotb.test()

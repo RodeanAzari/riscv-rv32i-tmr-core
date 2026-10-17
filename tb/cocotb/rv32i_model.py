@@ -10,6 +10,8 @@ machinery is in scope), so it halts -- one rule, followed here
 (docs/PROGRESS.md):
 
 - ECALL and EBREAK.
+- An illegal instruction: any word that is not one of the 40 RV32I encodings
+  (CSR accesses, MRET, WFI, FENCE.I and the all-zero word included).
 - A load or store whose address is not a multiple of its size.
 - A taken branch or jump whose target is not 4-byte aligned. (JALR clears
   bit 0 first, as the spec says; a branch that is not taken never traps.)
@@ -21,9 +23,6 @@ FENCE is a NOP, which is the spec's own meaning for one hart with no caches.
 
 Each step also leaves an RVFI-shaped record of what the instruction did in
 self.trace, for per-retirement comparison against the core's RVFI port.
-
-Every other SYSTEM encoding (CSR accesses, MRET, WFI) raises rather than
-guessing, so a program that relies on one fails loudly.
 """
 
 MASK32 = 0xFFFF_FFFF
@@ -62,6 +61,29 @@ def alu(funct3, alt, a, b):
     if funct3 == 0b110:
         return a | b
     return a & b
+
+
+def legal(instr):
+    """True for exactly the 40 RV32I encodings; anything else traps."""
+    opcode, funct3, funct7 = instr & 0x7F, (instr >> 12) & 0x7, instr >> 25
+    if opcode in (LUI, AUIPC, JAL):
+        return True
+    if opcode == JALR:
+        return funct3 == 0b000
+    if opcode == BRANCH:
+        return funct3 not in (0b010, 0b011)
+    if opcode == LOAD:
+        return funct3 in (0b000, 0b001, 0b010, 0b100, 0b101)
+    if opcode == STORE:
+        return funct3 in (0b000, 0b001, 0b010)
+    if opcode == OP:
+        return funct7 == 0 or (funct7 == 0x20 and funct3 in (0b000, 0b101))
+    if opcode == OP_IMM:
+        return (funct3 not in (0b001, 0b101) or funct7 == 0
+                or (funct7 == 0x20 and funct3 == 0b101))
+    if opcode == MISC_MEM:
+        return funct3 == 0b000                       # FENCE.I is Zifencei
+    return instr in (ECALL, EBREAK)
 
 
 def branch_taken(funct3, a, b):
@@ -163,7 +185,7 @@ class RV32I:
         imm_j = sext((((instr >> 31) & 1) << 20) | (((instr >> 12) & 0xFF) << 12)
                      | (((instr >> 20) & 1) << 11) | (((instr >> 21) & 0x3FF) << 1), 21)
 
-        if instr in (ECALL, EBREAK):
+        if instr in (ECALL, EBREAK) or not legal(instr):
             return self._trap()
         if opcode == MISC_MEM and funct3 == 0b000:      # FENCE
             self.pc += 4

@@ -31,9 +31,12 @@ Tools: OSS CAD Suite **2026-10-07** — Yosys 0.69+208, SymbiYosys 0.69, Yices
 | 1 | x0 invariance: a read of x0 returns 0, on both ports, every cycle | `riscv_regfile` | `tb/formal/regfile_x0.sby` | k-induction, k = 4 | **proven** | 4 / 4 |
 | 2 | riscv-formal ISA compliance, all 37 checkable RV32I instructions (`insn_*`) | `riscv_core` | `tb/formal/rvfi/checks.cfg` | BMC, check cycle 15 | **pass, 37/37** | 4 / 4 each |
 | 3 | riscv-formal `reg`: every register read returns the last value written | `riscv_core` | same | BMC, cycles 15–25 | **pass** | — (shown to fail) |
-| 4 | riscv-formal `pc_fwd` / `pc_bwd`: consecutive retirements chain their pcs | `riscv_core` | same | BMC, cycles 10–25 | **pass** | — (`pc_fwd` shown to fail) |
+| 4 | riscv-formal `pc_fwd` / `pc_bwd`: consecutive retirements chain their pcs | `riscv_core` | same | BMC, cycles 10–25 | **pass** | — (both shown to fail) |
 | 5 | riscv-formal `unique`: no `rvfi_order` index used twice | `riscv_core` | same | BMC, cycles 1–25 | **pass** | — (shown to fail) |
-| 6 | riscv-formal `causal`: no instruction reads a result its producer has not yet written | `riscv_core` | same | BMC, cycles 10–25 | **pass** | — (not yet shown to fail) |
+| 6 | riscv-formal `causal` / `causal_mem`: no instruction reads a register or memory byte its producer has not yet written | `riscv_core` | same | BMC, cycles 10–25 | **pass** | — (shown to fail) |
+| 6a | riscv-formal `liveness`: after a non-halting retirement at cycle 10, the next instruction retires by cycle 30 | `riscv_core` | same | BMC, trigger 10, check 30 | **pass** | — (shown to fail) |
+| 6b | riscv-formal `hang`: some instruction retires within 10 cycles of reset | `riscv_core` | same | BMC, depth 10 | **pass** | — (shown to fail) |
+| 6c | riscv-formal `ill`: the all-zero word traps, writing no register and no memory | `riscv_core` | same | BMC, check cycle 15 | **pass** | 1 / 1 |
 | 7 | S1–S4 stall correctness (§5.5): stall and redirect never coincide; a stall holds pc and IF/ID, bubbles ID/EX, and lasts exactly one cycle | `riscv_core` | `tb/formal/core.sby` | k-induction, holds from k = 2, run at 10 | **proven** | 4 / 4 |
 | 8 | F1/F2 forwarding correctness (§5.5): EX's operands equal the architectural register values; L1: no instruction in EX ever needs an in-flight load result | `riscv_core` | same | k-induction, holds from k = 2, run at 10; needs invariant R1 | **proven** | 6 / 6 |
 | 9 | X1 reset commits nothing (§5.5 "no X into committed state", the reset case): no register write and no store while `rst_i` is high | `riscv_core` | same | k-induction (with the above) | **proven** | 2 / 2 |
@@ -60,7 +63,7 @@ Shown to fail (2026-10-08):
 | x0 writes ungated, read test kept | **passes, correctly**: the read mux zeroes x0 first, so a dirty x0 is invisible at the ports. The write gate is defence in depth, not observable here |
 | harness cover that cannot happen | cover task fails: the vacuity guard works |
 
-### 2–6. riscv-formal (core, through RVFI)
+### 2–6c. riscv-formal (core, through RVFI)
 
 `tb/formal/rvfi/wrapper.sv` drives the core for riscv-formal's checkers with
 **both memories free**: a new arbitrary instruction word and load value every
@@ -89,8 +92,14 @@ mutation:
 **Reachability:** the same configuration is generated again with `mode
 cover`, so every `cover()` in riscv-formal's checkers must be reached. Each
 `insn` check carries four, the last being "this instruction retires at the
-check cycle, untrapped"; all 37 reach 4/4. `reg`, `pc_*`, `unique` and
-`causal` contain no covers, so their evidence is the planted faults below.
+check cycle, untrapped"; all 37 reach 4/4, and `ill`'s one cover (the
+all-zero word retiring at the check cycle) is reached. `reg`, `pc_*`,
+`unique`, `causal`, `liveness` and `hang` contain no covers, so their
+evidence is the planted faults below — plus a guard found by planting a core
+that never retires: every check that *assumes* a retirement at its check
+cycle then reports "Assumptions are unsatisfiable" (sby status ERROR, which
+`scripts/riscv-formal.sh` counts as a failure), so none of them can pass on
+a scenario that cannot occur.
 
 Shown to fail (2026-10-08), each against all 42 checks:
 
@@ -105,14 +114,35 @@ Shown to fail (2026-10-08), each against all 42 checks:
 | redirect does not flush IF/ID | `pc_fwd`, `reg` |
 | `rvfi_order` never advances | `unique` |
 | `rvfi_order` counts bubbles (gaps) | **none** — riscv-formal's RVFI spec forbids gaps but no check enforces it; the cocotb RVFI monitor does (`order == i`) |
+| adjacent retirements swap `rvfi_order` labels (1, 0, 3, 2, …) | `causal`, `causal_mem`, `pc_bwd`, `pc_fwd`, `reg`, `liveness` (2026-10-17) |
+| a load-use stall never releases (deadlock) | `liveness` alone (2026-10-17) — every `insn`, `reg` and `pc_*` check passes on a deadlocked core |
+| stalled from reset, nothing ever retires | `hang` fails; every other check is ERROR (unsatisfiable assumptions), every `insn` cover fails (2026-10-17) |
+| illegal words inert but not trapping (the pre-2026-10-17 decoder) | `ill` alone (2026-10-17) |
 
-**Not enabled, deliberately:** `ill` (requires the all-zero word to trap;
-this core decodes non-RV32I words inert — a decision of its own),
-`liveness` and `hang` (need a fairness assumption and thought about the
-halt), the `bus_*` checks (need `RISCV_FORMAL_BUS` signals). **Not yet shown
-to fail:** `pc_bwd`, `causal`.
+`pc_bwd`, `causal` and `causal_mem` only see something when a *younger* `rvfi_order`
+retires *before* an older one. On a single-issue in-order core that cannot
+happen while `rvfi_order` counts retirements, so the only faults they can
+catch here are ones that break that numbering — which is what the swap
+fault plants.
 
-Runtime: ~1 min for both passes on 16 cores; `reg` dominates (~46 s).
+**`liveness` and `hang` need no fairness assumption here.** riscv-formal
+defines `RISCV_FORMAL_FAIRNESS` for them, for cores whose memory can stall
+indefinitely; this core's memory ports have no ready or wait signal, so the
+wrapper has nothing to constrain. Halting is excluded by the checks
+themselves (they assume the triggering retirement does not halt).
+
+**`ill` needed an RTL change (2026-10-17).** The core used to decode every
+non-RV32I word inert; it now traps (and so halts) on any word outside the 40
+RV32I encodings, as the spec requires — see `riscv_decoder`.
+
+**Not enabled, deliberately:** the `bus_*` checks (need `RISCV_FORMAL_BUS`
+signals, and this core's memory interface is the RVFI-visible port itself),
+`fault` (needs a `rvfi_mem_fault` port; this core's memory cannot fault),
+`causal_io` (needs an I/O address map, `RISCV_FORMAL_IOADDR`; the core
+has none — I/O is the SoC's address decode), `cover` (riscv-formal's generic cover check; the per-check cover
+pass already covers reachability).
+
+Runtime: ~1 min for both passes on 16 cores; `reg` dominates.
 
 ### 7. Stall correctness (core, internal)
 

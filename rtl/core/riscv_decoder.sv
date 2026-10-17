@@ -3,14 +3,16 @@
 //
 // FENCE decodes inert, which on this core is its full implementation: one
 // in-order hart with no caches already performs memory accesses in program
-// order. ECALL and EBREAK raise halt_o -- with no trap machinery in scope
-// (CLAUDE.md 5.1) there is no handler to enter, so the core stops instead.
+// order. ECALL, EBREAK and every illegal instruction raise halt_o -- with no
+// trap machinery in scope (CLAUDE.md 5.1) there is no handler to enter, so
+// the core stops instead.
 //
-// Every other opcode, and every other SYSTEM encoding (CSR accesses, MRET,
-// WFI), decodes to rd_we_o = 0, no memory access and no redirect. Inert rather
-// than wrong: a half-implemented instruction that writes a plausible-looking
-// value is exactly the kind of fault riscv-formal will later report as a
-// forwarding bug, sending the hunt to the wrong place.
+// Illegal means any word that is not one of the 40 RV32I encodings: other
+// opcodes, reserved funct3/funct7 values, and the SYSTEM encodings this core
+// does not implement (CSR accesses, MRET, WFI), FENCE.I (Zifencei) and the
+// all-zero word. Besides halting, an illegal word decodes inert -- no register
+// write, no memory access, no redirect -- so it retires with no effect but
+// the trap, as riscv-formal's `ill` check requires.
 //
 // Register address fields sit at fixed positions in every RV32I format, so they
 // are extracted unconditionally. Whether a given instruction actually *uses*
@@ -51,7 +53,8 @@ module riscv_decoder #(
     output logic [2:0]        mem_funct3_o,
     output logic              rd_we_o,
 
-    // ECALL or EBREAK: stop the core once everything older has retired.
+    // ECALL, EBREAK or an illegal instruction: stop the core once
+    // everything older has retired.
     output logic              halt_o
 );
 
@@ -65,6 +68,7 @@ module riscv_decoder #(
   localparam logic [6:0] OPCODE_STORE  = 7'b0100011;
   localparam logic [6:0] OPCODE_OP     = 7'b0110011;
   localparam logic [6:0] OPCODE_OP_IMM = 7'b0010011;
+  localparam logic [6:0] OPCODE_FENCE  = 7'b0001111;   // MISC-MEM
 
   // ECALL and EBREAK are whole-word encodings: SYSTEM with every other field
   // zero except imm[0], which tells them apart.
@@ -75,10 +79,17 @@ module riscv_decoder #(
   localparam logic [2:0] F3_SLL     = 3'b001;
   localparam logic [2:0] F3_SRL_SRA = 3'b101;
 
+  // funct7 of the R-type and shift-immediate forms: all zero, or the alt bit
+  // (SUB, SRA, SRAI) alone.
+  localparam logic [6:0] F7_BASE = 7'b0000000;
+  localparam logic [6:0] F7_ALT  = 7'b0100000;
+
   logic [6:0] opcode;
   logic [2:0] funct3;
+  logic [6:0] funct7;
   assign opcode = instr_i[6:0];
   assign funct3 = instr_i[14:12];
+  assign funct7 = instr_i[31:25];
 
   assign rs1_addr_o = instr_i[19:15];
   assign rs2_addr_o = instr_i[24:20];
@@ -90,9 +101,6 @@ module riscv_decoder #(
   // mem_write_o decide whether anything uses it.
   assign mem_funct3_o = funct3;
 
-  // Compared in full rather than by opcode: SYSTEM also holds the CSR
-  // instructions and MRET, which must stay inert, not halt.
-  assign halt_o = (instr_i == INSTR_ECALL) || (instr_i == INSTR_EBREAK);
 
   // Immediate forms. Every one is sign-extended from instr[31] except U, which
   // is not an offset at all -- it supplies the upper 20 bits directly.
@@ -138,6 +146,35 @@ module riscv_decoder #(
   // immediates -- which is why small random test values do not find it.
   logic op_imm_is_shift;
   assign op_imm_is_shift = (funct3 == F3_SLL) || (funct3 == F3_SRL_SRA);
+
+  // Exactly the 40 RV32I encodings. Opcodes are compared in all seven bits,
+  // so a word whose low two bits are not 11 (compressed, or all zeros) falls
+  // to the default. SYSTEM is legal only as ECALL or EBREAK, compared as
+  // whole words: the CSR instructions, MRET and WFI share the opcode.
+  logic legal;
+  always_comb begin
+    case (opcode)
+      OPCODE_LUI, OPCODE_AUIPC, OPCODE_JAL: legal = 1'b1;
+      OPCODE_JALR:   legal = (funct3 == F3_ADD_SUB);
+      OPCODE_BRANCH: legal = (funct3 != 3'b010) && (funct3 != 3'b011);
+      // LB LH LW LBU LHU
+      OPCODE_LOAD:   legal = (funct3 == 3'b000) || (funct3 == 3'b001) ||
+                             (funct3 == 3'b010) || (funct3 == 3'b100) ||
+                             (funct3 == 3'b101);
+      // SB SH SW
+      OPCODE_STORE:  legal = (funct3 == 3'b000) || (funct3 == 3'b001) ||
+                             (funct3 == 3'b010);
+      OPCODE_OP:     legal = (funct7 == F7_BASE) ||
+                             ((funct7 == F7_ALT) &&
+                              ((funct3 == F3_ADD_SUB) || (funct3 == F3_SRL_SRA)));
+      OPCODE_OP_IMM: legal = !op_imm_is_shift || (funct7 == F7_BASE) ||
+                             ((funct7 == F7_ALT) && (funct3 == F3_SRL_SRA));
+      OPCODE_FENCE:  legal = (funct3 == 3'b000);  // FENCE.I is Zifencei
+      default:       legal = (instr_i == INSTR_ECALL) || (instr_i == INSTR_EBREAK);
+    endcase
+  end
+
+  assign halt_o = !legal || (instr_i == INSTR_ECALL) || (instr_i == INSTR_EBREAK);
 
   always_comb begin
     // Safe defaults: compute ADD(0, imm) and write nothing. Any opcode not
@@ -218,6 +255,17 @@ module riscv_decoder #(
 
       default: ;  // inert: defaults above already write nothing
     endcase
+
+    // An illegal word under a legal opcode (a reserved funct3 or funct7)
+    // would otherwise act on the case above; it must only trap.
+    if (!legal) begin
+      branch_o    = 1'b0;
+      jump_o      = 1'b0;
+      jalr_o      = 1'b0;
+      mem_read_o  = 1'b0;
+      mem_write_o = 1'b0;
+      rd_we_o     = 1'b0;
+    end
   end
 
 endmodule

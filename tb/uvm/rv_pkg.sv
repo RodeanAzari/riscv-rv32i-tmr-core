@@ -626,7 +626,7 @@ package rv_pkg;
                    mem_rdata, mem_wdata, trap, halt);
       where = $sformatf("%s: retirement #%0d pc %h insn %h", label, retired, pc_rdata, insn);
       if (s != RV_OK && s != RV_HALTED)
-        `uvm_fatal("SB", $sformatf("%s: model status %0d (unsupported or bad address)", where, s))
+        `uvm_fatal("SB", $sformatf("%s: model status %0d (bad address)", where, s))
       if (t.order != retired)
         `uvm_error("SB", $sformatf("%s: order %0d", where, t.order))
       if (t.trap != trap || t.halt != halt || t.intr)

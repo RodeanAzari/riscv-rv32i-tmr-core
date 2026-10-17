@@ -266,11 +266,11 @@ A phase is done when **every** box is checked. No partial credit.
 
 ### Phase B — Formal verification
 - [x] `riscv-formal` ISA compliance passing
-- [ ] All §5.5 hand-written properties written and proven
-- [ ] Induction runs, not just BMC
-- [ ] Reachability checked for every property (no vacuous passes)
-- [ ] `docs/formal-properties.md` lists every property, proof depth, and result
-- [ ] Bugs formal found that simulation missed are logged
+- [x] All §5.5 hand-written properties written and proven
+- [x] Induction runs, not just BMC
+- [x] Reachability checked for every property (no vacuous passes)
+- [x] `docs/formal-properties.md` lists every property, proof depth, and result
+- [x] Bugs formal found that simulation missed are logged
 
 ### Phase C — UVM environment
 - [ ] Driver, monitor, scoreboard, coverage collector implemented

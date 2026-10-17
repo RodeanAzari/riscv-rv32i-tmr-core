@@ -120,7 +120,7 @@ int rv_step(rv_rec_t *r)
 
     case OP_JALR:
         if (f3 != 0)
-            return RV_UNSUPPORTED;
+            return trap(r);
         if (!jump((v1 + (uint32_t)imm_i) & ~1u))   /* rs1 read before rd is written */
             return trap(r);
         wr(rd, next, r);
@@ -136,7 +136,7 @@ int rv_step(rv_rec_t *r)
         case 5: t = (int32_t)v1 >= (int32_t)v2; break;
         case 6: t = v1 <  v2; break;
         case 7: t = v1 >= v2; break;
-        default: return RV_UNSUPPORTED;
+        default: return trap(r);
         }
         if (t) {
             if (!jump(pc + (uint32_t)imm_b))
@@ -151,7 +151,7 @@ int rv_step(rv_rec_t *r)
     case OP_LOAD: {
         uint32_t size = 1u << (f3 & 3), a = v1 + (uint32_t)imm_i;
         if (f3 == 3 || f3 > 5)
-            return RV_UNSUPPORTED;
+            return trap(r);
         if (a & (size - 1))
             return trap(r);
         if (a + size > RV_MEM_BYTES)
@@ -169,7 +169,7 @@ int rv_step(rv_rec_t *r)
     case OP_STORE: {
         uint32_t size = 1u << (f3 & 3), a = v1 + (uint32_t)imm_s;
         if (f3 > 2)
-            return RV_UNSUPPORTED;
+            return trap(r);
         if (a & (size - 1))
             return trap(r);
         if (a + size > RV_MEM_BYTES)
@@ -193,14 +193,14 @@ int rv_step(rv_rec_t *r)
         case 6: v = v1 | b; break;
         case 7: v = v1 & b; break;
         case 1:
-            if (f7 != 0) return RV_UNSUPPORTED;
+            if (f7 != 0) return trap(r);
             v = v1 << shamt; break;
         case 5:
             if (f7 == 0x00)      v = v1 >> shamt;
             else if (f7 == 0x20) v = (uint32_t)((int32_t)v1 >> shamt);
-            else return RV_UNSUPPORTED;
+            else return trap(r);
             break;
-        default: return RV_UNSUPPORTED;
+        default: return trap(r);
         }
         wr(rd, v, r);
         break;
@@ -224,7 +224,7 @@ int rv_step(rv_rec_t *r)
         } else if (f7 == 0x20 && f3 == 5) {
             v = (uint32_t)((int32_t)v1 >> s);
         } else {
-            return RV_UNSUPPORTED;
+            return trap(r);
         }
         wr(rd, v, r);
         break;
@@ -232,16 +232,16 @@ int rv_step(rv_rec_t *r)
 
     case OP_MISC_MEM:
         if (f3 != 0)                       /* FENCE only; FENCE.I is Zifencei */
-            return RV_UNSUPPORTED;
+            return trap(r);
         break;
 
     case OP_SYSTEM:
         if (in == INSN_ECALL || in == INSN_EBREAK)
             return trap(r);
-        return RV_UNSUPPORTED;
+        return trap(r);
 
     default:
-        return RV_UNSUPPORTED;
+        return trap(r);
     }
 
     pc = next;

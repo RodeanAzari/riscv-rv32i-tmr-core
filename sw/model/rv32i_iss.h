@@ -6,14 +6,14 @@
  * follows this core's documented choices where RV32I leaves room
  * (docs/PROGRESS.md):
  *
- *   - Every exception halts: ECALL, EBREAK, a load or store whose address is
- *     not a multiple of its size, and a taken branch or jump to a target that
- *     is not 4-byte aligned (JALR clears bit 0 first). A trapping
- *     instruction retires with trap = halt = 1, no register write and no
- *     memory access, and nothing after it executes.
+ *   - Every exception halts: ECALL, EBREAK, an illegal instruction (any word
+ *     that is not one of the 40 RV32I encodings, CSR accesses, MRET, WFI and
+ *     FENCE.I included), a load or store whose address is not a multiple of
+ *     its size, and a taken branch or jump to a target that is not 4-byte
+ *     aligned (JALR clears bit 0 first). A trapping instruction retires with
+ *     trap = halt = 1, no register write and no memory access, and nothing
+ *     after it executes.
  *   - FENCE is a NOP.
- *   - Any other encoding is reported as unsupported (RV_UNSUPPORTED), not
- *     guessed at: the testbench never generates one, so seeing one is a bug.
  *
  * Each step fills an RVFI-shaped record, in the core's conventions: rs1/rs2
  * are the instruction's register fields whether it reads them or not; rd_addr
@@ -34,7 +34,6 @@
 enum rv_status {
     RV_OK          =  0,
     RV_HALTED      =  1,   /* this instruction trapped and the model halted */
-    RV_UNSUPPORTED = -1,   /* not an RV32I encoding this core implements    */
     RV_BAD_ADDR    = -2,   /* fetch or access outside RV_MEM_BYTES          */
     RV_STOPPED     = -3,   /* stepped after a halt                          */
 };
