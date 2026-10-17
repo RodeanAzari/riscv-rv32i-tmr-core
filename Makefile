@@ -97,6 +97,33 @@ sw/prog.hex: sw/prog.elf
 spike: sw/prog.elf
 	$(SPIKE) --isa=rv32i $<
 
+# First-light firmware for rtl/top/soc.sv (sw/firstlight/): a board image and
+# a simulation image with a short delay loop, both as $readmemh hex for the
+# RAM. The local riscv32 toolchain if present, else the riscv64 one CI
+# installs -- -march/-mabi pick the target either way, and nothing is linked.
+RISCV_PREFIX ?= $(if $(wildcard $(HOME)/riscv-toolchain/bin/riscv32-unknown-elf-gcc),$(HOME)/riscv-toolchain/bin/riscv32-unknown-elf-,riscv64-unknown-elf-)
+FW_DIR    := sw/firstlight
+FW_BUILD  := sw/build
+FW_CFLAGS := -march=rv32i -mabi=ilp32 -O2 -Wall -Wextra -ffreestanding \
+             -nostdlib -nostartfiles -static -T$(FW_DIR)/link.ld \
+             -Wl,--no-warn-rwx-segments
+FW_DEPS   := $(FW_DIR)/crt0.S $(FW_DIR)/link.ld
+
+.PHONY: fw
+fw: $(FW_BUILD)/hello.hex $(FW_BUILD)/hello_sim.hex
+
+$(FW_BUILD)/hello.elf: $(FW_DIR)/hello.c $(FW_DEPS)
+	@mkdir -p $(FW_BUILD)
+	$(RISCV_PREFIX)gcc $(FW_CFLAGS) -o $@ $(FW_DIR)/crt0.S $<
+
+$(FW_BUILD)/hello_sim.elf: $(FW_DIR)/hello.c $(FW_DEPS)
+	@mkdir -p $(FW_BUILD)
+	$(RISCV_PREFIX)gcc $(FW_CFLAGS) -DDELAY_LOOPS=20u -o $@ $(FW_DIR)/crt0.S $<
+
+$(FW_BUILD)/%.hex: $(FW_BUILD)/%.elf scripts/bin2hex.py
+	$(RISCV_PREFIX)objcopy -O binary $< $(FW_BUILD)/$*.bin
+	python3 scripts/bin2hex.py $(FW_BUILD)/$*.bin $@
+
 # --- synthesis -------------------------------------------------------------
 # Out-of-context: the core alone, no board-level top yet. See syn/synth_ooc.tcl
 # for why, and docs/vivado-setup.md for the environment the wrapper sets up.

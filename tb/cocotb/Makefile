@@ -69,10 +69,20 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_mem_align:test_mem_align \
          riscv_hazard:test_hazard \
          riscv_branch:test_branch \
-         uart_tx:test_uart_tx
+         uart_tx:test_uart_tx \
+         soc:test_soc
+
+# The SoC runs the first-light firmware's simulation image, built by
+# `make fw` (the regression below builds it first; a TEST_ONE run of soc
+# needs it built). Read by $readmemh when the simulation starts, so a
+# rebuilt image needs no recompile.
+FW_SIM_HEX := $(abspath $(REPO)/sw/build/hello_sim.hex)
 
 ifdef TEST_ONE
   TOPLEVEL              := $(word 1,$(subst :, ,$(TEST_ONE)))
+  ifeq ($(TOPLEVEL),soc)
+    COMPILE_ARGS += -GINIT_FILE='"$(FW_SIM_HEX)"'
+  endif
   MODULE                := $(word 2,$(subst :, ,$(TEST_ONE)))
   SIM_BUILD             := sim_build/$(TOPLEVEL)
   COCOTB_RESULTS_FILE   := results_$(TOPLEVEL).xml
@@ -84,6 +94,7 @@ else
 # first.
 .PHONY: all
 all:
+	$(MAKE) --no-print-directory -C $(REPO) fw
 	@rc=0; \
 	for t in $(TESTS); do \
 	  echo "=== $$t ==="; \
