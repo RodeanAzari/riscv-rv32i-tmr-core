@@ -38,7 +38,7 @@ the local GCC 16.
 | `make synth` | routes clean, 0 errors, ~40 s |
 | `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 42/42 checks and 42/42 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`), ~5 min (XT's BMC is ~3 of it) — see [formal-properties.md](formal-properties.md) |
 | `make impl` | board-level route + bitstream, timing met at 50 MHz (WNS +5.920 ns), ~5 min |
-| **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen |
+| **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.webp](img/fpgafirstlight.webp) (Phase D's photo box; sideways and low-resolution, retake for the README) |
 | CI on push | green (lint + sim + formal) at `1b14a14`, run 38999736331; first-light work not yet pushed |
 
 ### Implemented, and what to know before touching it
@@ -83,7 +83,7 @@ Only the facts that are not obvious from reading it:
 
 ### Not started
 
-UVM, TMR, the rest of hardware bring-up (Dhrystone/IPC, ILA, photo), all of Stage 2.
+UVM, TMR, the rest of hardware bring-up (Dhrystone/IPC, ILA), all of Stage 2.
 
 ---
 
@@ -326,7 +326,7 @@ history, [formal-properties.md](formal-properties.md) and
 > PuTTY at 115200 8N1. **Next:** set up the second programming route,
 > `usbipd-win` + `openFPGALoader` (§3), so both work. Then, per the plan,
 > Phase C (UVM), with Phase B's remaining items (§2) and Phase D's other
-> boxes (Dhrystone/IPC, ILA, photo, 100 MHz) after.
+> boxes (Dhrystone/IPC, ILA, 100 MHz) after.
 >
 > **Plan agreed 2026-10-10:** finish the last property, then go straight to
 > a **first-light board bring-up (§3 below) before starting Phase C**. Goal:
