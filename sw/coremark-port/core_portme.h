@@ -14,7 +14,7 @@
 #include <stddef.h>
 
 #ifndef CLK_HZ
-#define CLK_HZ 50000000u                 /* the core clock on the Arty A7 */
+#define CLK_HZ 100000000u                /* the core clock on the Arty A7 */
 #endif
 
 #define HAS_FLOAT  0

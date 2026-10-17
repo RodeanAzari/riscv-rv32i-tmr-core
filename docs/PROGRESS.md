@@ -21,9 +21,10 @@ core; FENCE is a NOP. Both memories are external, BRAM-timed ports, in the
 testbench as well as the design. The official **`riscv-tests` rv32ui suite
 passes 40 of 42** (exclusions below).
 
-**Timing margin: +0.317 ns at 100 MHz out-of-context (103.3 MHz).** Thin, and the
-paths that cross the memory ports are not timed at all. The critical path is
-branch resolution fed by the MEM/WB forward of the writeback mux.
+**Timing: the board runs at 100 MHz** (WNS +1.550 ns in context, Fmax estimate
+118.3 MHz; out of context 122.7 MHz) since data memory is accessed from EX
+(2026-10-17). The critical path is branch resolution into the instruction
+memory's address: forwarding select → branch comparator → redirect → pc mux.
 
 `make lint`, `make sim` and `make synth` pass locally; lint and sim pass in CI,
 including the official suite, assembled there by Ubuntu's GCC 13.2 rather than
@@ -36,13 +37,13 @@ the local GCC 16.
 | `make lint` | clean, Verilator 5.050 |
 | `make sim` | 176/176 passing across 10 entries (core, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, soc ×2), including the 40 official `riscv-tests`, the first-light firmware and one CoreMark iteration on the whole SoC (CRCs checked, IPC counted through RVFI, ~50 s), UART decoded at 115200 |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 46/46 checks and 46/46 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`, `causal_mem`, `liveness`, `hang`, `ill`), ~4 min (XT's BMC is ~2 of it) — see [formal-properties.md](formal-properties.md) |
-| `make impl` | board-level route + bitstream, timing met at 50 MHz (WNS +4.917 ns), ~2 min |
+| `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 46/46 checks and 46/46 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`, `causal_mem`, `liveness`, `hang`, `ill`), ~6 min (XT's BMC is ~5 of it) — see [formal-properties.md](formal-properties.md) |
+| `make impl` | board-level route + bitstream, timing met at 100 MHz (WNS +1.550 ns), ~2 min |
 | `make model-test` | the C golden model alone: rv32ui **40/40**; a planted SRA bug fails exactly `sra` |
 | `make uvm` | XSim, 300 random programs, ~45 s: **205/205 coverage bins (100%)** on seeds 1, 2, 3, ~45,000 retirements each compared with the model, 0 mismatches. Planted RTL faults caught: forwarding priority (in the hazard unit), LBU sign-extending, no rs2 load-use stall |
 | **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.jpg](img/fpgafirstlight.jpg) (Phase D's photo box; low-resolution, retake for the README) |
-| **CoreMark on the board** | 2026-10-17, 1000 iterations at 50 MHz, programmed from WSL (`make prog`): **0.962 CoreMark/MHz**, "Correct operation validated", 1,038,847,073 cycles ([coremark_board.txt](reports/coremark_board.txt)). **IPC 0.691** (CPI 1.447) over the timed region, counted in RTL simulation of the same SoC ([coremark_sim.txt](reports/coremark_sim.txt)); simulated cycles per iteration match the board's to 0.0013%. RV32I without M: every multiply and divide is a libgcc call |
-| **ILA on the board** | 2026-10-17, `make impl ILA=1` then `make ila` from WSL (Hardware Manager in batch through `hw_server`): 13 probes, 328 bits (pc and instruction of all four pipeline registers, EX/MEM ALU result, writeback, halt), depth 1024, core clock. First-light program: every EX→MEM→WB shift consistent, 227 stall cycles and 114 flush bubbles in the window ([ila_summary.txt](reports/ila_summary.txt), [ila_capture.csv](reports/ila_capture.csv)). ILA build: +2233 LUT, +3772 FF, +10 BRAM, WNS +4.162 ns at 50 MHz ([summary_board_ila.txt](reports/summary_board_ila.txt)) |
+| **CoreMark on the board** | 2026-10-17, 2000 iterations at **100 MHz** (`make prog` from WSL): **0.962 CoreMark/MHz, about 96 CoreMark**, "Correct operation validated", 2,077,692,270 cycles ([coremark_board.txt](reports/coremark_board.txt)); the 50 MHz run before the clock change gave the same cycles per iteration. **IPC 0.691** (CPI 1.447) over the timed region, counted in RTL simulation of the same SoC ([coremark_sim.txt](reports/coremark_sim.txt)); simulated cycles per iteration match the board's to 0.0013%. RV32I without M: every multiply and divide is a libgcc call |
+| **ILA on the board** | 2026-10-17, `make impl ILA=1` then `make ila` from WSL (Hardware Manager in batch through `hw_server`): 13 probes, 328 bits (pc and instruction of all four pipeline registers, EX/MEM ALU result, writeback, halt), depth 1024, core clock. First-light program: every EX→MEM→WB shift consistent, 227 stall cycles and 114 flush bubbles in the window ([ila_summary.txt](reports/ila_summary.txt), [ila_capture.csv](reports/ila_capture.csv)). ILA build (at 50 MHz, before the clock change): +2233 LUT, +3772 FF, +10 BRAM, WNS +4.162 ns ([summary_board_ila.txt](reports/summary_board_ila.txt)) |
 | CI on push | green (lint + sim + formal) at `fb522f2`, run 39064737102 |
 
 ### Implemented, and what to know before touching it
@@ -53,7 +54,10 @@ Only the facts that are not obvious from reading it:
 
 - **Both memories are external ports, synchronous read, BRAM-timed.** The core
   presents `pc_next` to IMEM so the BRAM and the pc latch the same address on
-  the same edge. Load data is not re-registered in MEM/WB.
+  the same edge. **Data memory is accessed from EX** (address from its own
+  adder, stores issued there): load data arrives in MEM, is aligned there and
+  registered into MEM/WB, so no forward ever starts at a BRAM output. Was in
+  MEM until 2026-10-17; the load-use stall is one cycle either way.
 - **Branches and jumps resolve in EX**, static not-taken: taken costs two
   cycles, not taken none. A jump's link address replaces the ALU result going
   into EX/MEM. Forwarding selects are decided in ID and registered into ID/EX.
@@ -102,7 +106,7 @@ Only the facts that are not obvious from reading it:
 
 ### Not started
 
-TMR, the rest of hardware bring-up (100 MHz), all of Stage 2.
+TMR, all of Stage 2.
 
 ---
 
@@ -139,6 +143,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-16 | Regfile structural-hazard property SH1, under `FORMAL` (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | 0.0 |
 | 2026-10-16 | `f_regs_o` port for the X-propagation proof, under `FORMAL` (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | 0.0 |
 | 2026-10-17 | Illegal instructions trap (legality decode in ID) | 1130 | 501 | 47 | +0.382 | 104.0 | +0.7 |
+| 2026-10-17 | Data memory accessed from EX; load data registered in MEM/WB | 964 | 467 | 55 | +1.850 | 122.7 | +18.7 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -150,19 +155,18 @@ so Vivado cannot estimate clock delay or skew. Read it as the core's logic
 limit. A real board number arrives with the Arty A7 top and gets its own table;
 measurement conditions travel with the measurement.
 
-**The critical path is the same family every time:** `mem_wb` writeback select
-or load lane select → writeback mux → forwarding mux → branch comparator carry
-chain → `redirect` → IF/ID flush and ID/EX bubble clear, 9-11 levels, about 75%
-routing. Two levers remain: the IF/ID flush fanout (needs a valid bit rather
-than a bit clear; see Next up), and the load data on the MEM/WB forward, which
-on the board starts at a BRAM's ~2 ns clock-to-out.
+**The critical path, through 2026-10-16:** `mem_wb` writeback select or load
+lane select → writeback mux → forwarding mux → branch comparator carry chain
+→ `redirect` → IF/ID flush and ID/EX bubble clear, 9-11 levels, about 75%
+routing. Since data memory moved to EX (2026-10-17) the forward starts at a
+flop: out of context it is now forwarding select → ALU → EX/MEM (7.8 ns, 6
+levels, 79% routing). The remaining lever is the redirect fanout (IF/ID flush
+via a valid bit; see Next up).
 
-**The out-of-context slack is optimistic.** Three paths that matter on the board
-cross the core's ports and are untimed here (no output delays are set):
-`pc + 4` / stall mux → `imem_addr_o`; the stall comparator and the whole
-branch-resolution path → `imem_addr_o`; and `dmem_rdata_i` → load alignment →
-writeback mux → forwarding mux → ALU. The board-level run will say whether
-100 MHz survives.
+**The out-of-context slack is optimistic.** Paths that cross the core's ports
+are untimed here (no output delays are set): the pc and branch-resolution
+paths → `imem_addr_o`, and since 2026-10-17 the data address adder →
+`dmem_addr_o`. The board-level table is the one that times them.
 
 Lessons from individual rows:
 
@@ -193,11 +197,15 @@ trims logic the OOC run keeps.
 |---|---|---|---|---|---|---|---|
 | 2026-10-17 | First light: core + 32 KiB RAM + LED + UART (ran on the board at 50 MHz) | 1009 | 374 | 8 | 50 MHz | +5.920 | 71.0 |
 | 2026-10-17 | + illegal-instruction trap, + cycle counter; CoreMark image (ran on the board at 50 MHz) | 1141 | 434 | 8 | 50 MHz | +4.917 | 66.3 |
+| 2026-10-17 | Data memory accessed from EX; core clock to 100 MHz; CoreMark image (ran on the board at 100 MHz) | 1085 | 398 | 8 | 100 MHz | +1.550 | 118.3 |
 
-The critical path is the one the OOC flow could not time: a block RAM's output
-through the core to the data RAM's address, 14.2 ns, 11 levels, 68% routing
-(it was 13.4 ns, 12 levels, at first light: the same path, placed differently).
-100 MHz needs ~5 ns off it; that is a measured slice of its own. Hold slack is
+At 50 MHz the critical path was the one the OOC flow could not time: a block
+RAM's output (load data) through alignment, the forwarding mux and the branch
+comparator to the RAM's fetch address, 14.2 ns, 11 levels, 68% routing (13.4
+ns at first light). Accessing data memory from EX removed it; at 100 MHz the
+worst path is forwarding select → branch comparator → redirect → pc mux →
+fetch address, 7.8 ns, 7 levels, 74% routing. The note below on the 50 MHz
+build's hold slack is history; that is a measured slice of its own. Hold slack is
 +0.064 ns (MEM/WB rd address → regfile LUTRAM write address): positive, thin.
 
 ---
@@ -216,6 +224,7 @@ RTL simulation of the same SoC, one iteration. `-O2 -march=rv32i
 | Date | Build | Core clock | Iterations | Cycles | CoreMark/MHz | IPC (sim) |
 |---|---|---|---|---|---|---|
 | 2026-10-17 | First CoreMark: core + illegal trap, SoC + cycle counter | 50 MHz | 1000 | 1,038,847,073 | 0.962 | 0.691 |
+| 2026-10-17 | Data memory accessed from EX; 100 MHz | 100 MHz | 2000 | 2,077,692,270 | 0.962 | 0.691 |
 
 ---
 
@@ -364,18 +373,22 @@ history, [formal-properties.md](formal-properties.md) and
 
 ## Next up
 
-> **Resume here (2026-10-17, Phases B and C done; CoreMark on the board).**
-> 0.962 CoreMark/MHz on the Arty, IPC 0.691; `make bench` builds it, `make
-> impl FW_IMAGE=sw/build/coremark.hex` puts it in the bitstream. ILA: `make
-> impl ILA=1`, then `make ila` captures and checks the pipeline registers from
-> WSL. **Next:** 100 MHz (and a better photo), then Phase E (TMR).
+> **Resume here (2026-10-17, Phases B and C done; the board runs at 100 MHz).**
+> Data memory is accessed from EX, which took the load-data path off the
+> critical path: 100 MHz closes (WNS +1.550 ns). CoreMark 0.962/MHz, about 96
+> at 100 MHz, IPC 0.691 (`make bench`, `make impl
+> FW_IMAGE=sw/build/coremark.hex`). ILA: `make impl ILA=1`, `make ila`.
+> **Next:** Phase D's last box is the photo (the first-light one is
+> low-resolution); then Phase E (TMR).
 
 ### 1. Timing: IF/ID flush via the valid bit
 
-The current critical path ends in the IF/ID flush (fo 95). The valid bit now
-exists, but only under `RISCV_FORMAL`; moving `if_id_valid` into the core
-proper and gating decode with it would let a redirect clear one bit instead of
-64. Its own measured slice.
+Not needed for 100 MHz (met with +1.550 ns), but still the next lever: the
+board's worst path is the branch comparator → redirect → pc mux → fetch
+address, and the redirect also drives the IF/ID flush (fo ~95). The valid
+bit exists, but only under `RISCV_FORMAL`; moving `if_id_valid` into the core
+proper and gating decode with it would let a redirect clear one bit instead
+of 64. Its own measured slice.
 
 ### 2. Board-level top: first light (done 2026-10-17)
 
@@ -467,7 +480,8 @@ that changed meaningful state.
 
 ---
 
-*Last updated: 2026-10-17 — CoreMark on the board: 0.962 CoreMark/MHz,
-validated; IPC 0.691 counted through RVFI in simulation. SoC gained a 32-bit
-cycle counter (0x1000_0010); CoreMark is a submodule, our port in
-sw/coremark-port/. Next: ILA, 100 MHz, then Phase E.*
+*Last updated: 2026-10-17 — 100 MHz on the board: data memory accessed from
+EX (load data registered into MEM/WB), board WNS +1.550 ns at 100 MHz, OOC
+122.7 MHz; CoreMark 0.962/MHz (about 96) validated at 100 MHz, IPC
+unchanged. XT's harness follows stores into EX. ILA on the pipeline
+registers (`make ila`). Next: the photo box, then Phase E.*

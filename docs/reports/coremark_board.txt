@@ -1,14 +1,14 @@
 CoreMark on the Arty A7-100T (xc7a100tcsg324-1), 2026-10-17
-rtl/top/arty_a7_top.sv, core at 50 MHz (MMCM from 100 MHz), make impl FW_IMAGE=sw/build/coremark.hex
+rtl/top/arty_a7_top.sv, core at 100 MHz (MMCM from 100 MHz), make impl FW_IMAGE=sw/build/coremark.hex
 Captured from the board's USB-UART (/dev/ttyUSB1, 115200 8N1) after make prog. Ticks are core cycles.
 ----
-CoreMark on rv32i, 1000 iterations
+CoreMark on rv32i, 2000 iterations
 2K performance run parameters for coremark.
 CoreMark Size    : 666
-Total ticks      : 1038847073
+Total ticks      : 2077692270
 Total time (secs): 20
-Iterations/Sec   : 50
-Iterations       : 1000
+Iterations/Sec   : 100
+Iterations       : 2000
 Compiler version : GCC16.1.0
 Compiler flags   : -O2 -march=rv32i -mabi=ilp32
 Memory location  : STATIC
@@ -16,6 +16,6 @@ seedcrc          : 0xe9f5
 [0]crclist       : 0xe714
 [0]crcmatrix     : 0x1fd7
 [0]crcstate      : 0x8e3a
-[0]crcfinal      : 0xd340
+[0]crcfinal      : 0x4983
 Correct operation validated. See README.md for run and reporting rules.
 CoreMark/MHz: 0.962

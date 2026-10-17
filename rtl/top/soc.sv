@@ -13,7 +13,7 @@
 //   0x1000_0010  CYCLE    R: cycles since reset, mod 2^32     W: ignored
 //
 // The cycle counter is how software times itself (the core has no CSRs, so
-// rdcycle is an illegal instruction). 32 bits wrap after 85 s at 50 MHz;
+// rdcycle is an illegal instruction). 32 bits wrap after 43 s at 100 MHz;
 // the difference of two reads is exact for any interval shorter than that.
 //
 // A byte written to UART TX while it is not ready is dropped: software polls

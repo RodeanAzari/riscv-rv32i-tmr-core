@@ -21,9 +21,14 @@
 // clock edge and returns that word during the following cycle. The core
 // therefore presents pc_next, not pc -- see the IF section for why.
 //
-// Data memory is external for the same reason. Its address comes straight off
-// the EX/MEM register, so the BRAM sees a flop rather than the ALU's carry
-// chain; it latches the address at the end of MEM and load data arrives in WB.
+// Data memory is external for the same reason, and is accessed from EX: the
+// BRAM latches the address (and a store) at the end of EX, and load data
+// arrives during MEM, where it is aligned and registered into MEM/WB. So the
+// value MEM/WB forwards is always a flop, never a BRAM output -- with the
+// access in MEM, a load's data ran from the BRAM output through alignment and
+// the forwarding mux into the next instruction's branch comparator in one
+// cycle, the board's critical path at 50 MHz (docs/PROGRESS.md). The load-use
+// stall is unchanged: one cycle.
 module riscv_core #(
     parameter int unsigned XLEN   = 32,
     parameter int unsigned ADDR_W = 5
@@ -383,11 +388,10 @@ module riscv_core #(
   // this instruction architecturally read -- the RVFI rs1_rdata / rs2_rdata
   // taps. The selects were decided in ID and arrive here off flops.
   //
-  // The MEM/WB source is wb_rd_wdata, the writeback mux output, so a load's
-  // data forwards along with ALU results. That makes the longest path into EX
-  // BRAM output -> load alignment -> writeback mux -> forwarding mux -> ALU ->
-  // EX/MEM. The out-of-context run cannot time it: dmem_rdata_i is a port with
-  // no input delay.
+  // The MEM/WB source is wb_rd_wdata, the MEM/WB result register -- a load's
+  // aligned data or an ALU result, already selected in MEM -- so both sources
+  // into these muxes start at a flop. EX/MEM never forwards load data: a load
+  // in MEM with a consumer in EX is the load-use case, stalled in ID (L1).
   logic [XLEN-1:0] ex_rs1, ex_rs2;
   logic [XLEN-1:0] alu_a, alu_b, alu_result;
 
@@ -481,12 +485,12 @@ module riscv_core #(
   //               multiple of its size, or a taken branch or jump whose
   //               target has bit 1 set.
   //
-  // The address's low bits get their own 2-bit add rather than coming from
-  // alu_result: bits [1:0] of a sum depend only on bits [1:0] of its
-  // operands, so two LUTs off the forwarding mux are exact. alu_result[0] is
-  // the ALU's final mux output, which also carries SLT's full 32-bit compare;
-  // synthesis cannot know a load only adds, and taking it from there put that
-  // compare and the pc + 4 carry chain in series (21 levels, -0.912 ns).
+  // The address's low bits come from the data address's own adder (below),
+  // not from alu_result: alu_result[0] is the ALU's final mux output, which
+  // also carries SLT's full 32-bit compare; synthesis cannot know a load only
+  // adds, and taking it from there put that compare and the pc + 4 carry
+  // chain in series (21 levels, -0.912 ns). Bits [1:0] of the dedicated
+  // adder are its first carry stage.
   //
   // A trapping instruction has no architectural effect: EX/MEM below drops
   // its register write and memory access. riscv-formal checks exactly this
@@ -505,10 +509,15 @@ module riscv_core #(
   // (landing on the masked target), and halted_q takes over the next cycle.
   // Adding it to freeze would hang the branch comparator -- the slowest
   // logic in EX -- on a second net for no change in behaviour.
-  logic [1:0] mem_addr_lo;
-  logic       mem_misaligned, ex_trap, halted_q;
+  // The data address gets its own adder rather than the ALU's result: the
+  // ALU's output mux also carries SLT's compare and the shifter, and none of
+  // that belongs on the path into the BRAM's address pins.
+  logic [XLEN-1:0] mem_addr;
+  logic [1:0]      mem_addr_lo;
+  logic            mem_misaligned, ex_trap, halted_q;
 
-  assign mem_addr_lo = ex_rs1[1:0] + id_ex_imm_o[1:0];
+  assign mem_addr    = ex_rs1 + id_ex_imm_o;
+  assign mem_addr_lo = mem_addr[1:0];
 
   always_comb begin
     mem_misaligned = 1'b0;
@@ -530,26 +539,63 @@ module riscv_core #(
 
   assign freeze = id_ex_halt || mem_misaligned || halted_q;
 
-  // EX/MEM. rd_we and mem_write reset low so nothing appears to retire, and
-  // nothing is stored, on cycle one. alu_result_o is the EX result: the ALU's,
-  // or a jump's link address. rs2_rdata is a store's data, and it must
-  // be the FORWARDED value: `addi x1, ...` directly followed by `sw x1, ...`
-  // would otherwise store x1's stale contents. A trap in EX drops the
-  // register write and both memory controls here, so the trapping
-  // instruction reaches WB with no effect but its halt bit.
-  logic [XLEN-1:0] ex_mem_rs2_rdata;
-  logic            ex_mem_mem_read, ex_mem_mem_write, ex_mem_halt;
+  // ----- the data access, from EX -----
+  // The store side of the alignment block works on EX's values; the load
+  // side, in MEM below, on EX/MEM's. See riscv_mem_align for why the two
+  // halves share a module. The store data must be the FORWARDED rs2:
+  // `addi x1, ...` directly followed by `sw x1, ...` would otherwise store
+  // x1's stale contents.
+  //
+  // Only valid instructions reach EX -- a redirect, a stall and a trap all
+  // bubble ID/EX before a younger instruction gets here -- so a store issued
+  // from EX is never on a wrong path. It is dropped only if it traps itself
+  // (misaligned), and while reset is held: ID/EX is cleared AT the end of the
+  // reset cycle, so during it the register still holds its power-up contents
+  // -- on an ASIC, anything -- and an ungated port would store garbage into
+  // memory that is not undefined at reset: it holds the program's data. FPGA
+  // flops and simulators both start at 0, so only formal showed this (X1).
+  logic [XLEN-1:0] st_wdata, load_data;
+  logic [3:0]      st_wstrb;
+
+  // Declared ahead of use by the alignment block; driven in EX/MEM below.
+  logic            ex_mem_mem_read, ex_mem_halt;
   logic [2:0]      ex_mem_mem_funct3;
 
+  riscv_mem_align u_mem_align (
+      .st_size_i    (id_ex_mem_funct3[1:0]),
+      .st_addr_lo_i (mem_addr_lo),
+      .st_data_i    (ex_rs2),
+      .st_wdata_o   (st_wdata),
+      .st_wstrb_o   (st_wstrb),
+      .ld_funct3_i  (ex_mem_mem_funct3),
+      .ld_addr_lo_i (ex_mem_alu_result_o[1:0]),
+      .ld_rdata_i   (dmem_rdata_i),
+      .ld_data_o    (load_data)
+  );
+
+  logic mem_store;
+  assign mem_store    = id_ex_mem_write && !mem_misaligned && !rst_i;
+  assign dmem_addr_o  = {mem_addr[XLEN-1:2], 2'b00};
+  assign dmem_wdata_o = st_wdata;
+  assign dmem_we_o    = mem_store;
+  // Gated so a non-store never shows strobes. The memory ignores them while
+  // dmem_we_o is low, but rvfi_mem_wmask must read zero for anything that is
+  // not a store, and it is tapped here.
+  assign dmem_wstrb_o = mem_store ? st_wstrb : 4'b0000;
+
+  // EX/MEM. rd_we resets low so nothing appears to retire on cycle one.
+  // alu_result_o is the EX result: the ALU's, or a jump's link address; for
+  // a load it is the address, whose low bits pick the lanes in MEM. A trap in
+  // EX drops the register write and the memory controls here, so the
+  // trapping instruction reaches WB with no effect but its halt bit. A store
+  // needs nothing here: it was done in EX.
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
       ex_mem_pc_o         <= RESET_VECTOR;
       ex_mem_instr_o      <= NOP;
       ex_mem_alu_result_o <= '0;
-      ex_mem_rs2_rdata    <= '0;
       ex_mem_rd_addr_o    <= '0;
       ex_mem_mem_read     <= 1'b0;
-      ex_mem_mem_write    <= 1'b0;
       ex_mem_mem_funct3   <= 3'b000;
       ex_mem_rd_we_o      <= 1'b0;
       ex_mem_halt         <= 1'b0;
@@ -557,10 +603,8 @@ module riscv_core #(
       ex_mem_pc_o         <= id_ex_pc_o;
       ex_mem_instr_o      <= id_ex_instr_o;
       ex_mem_alu_result_o <= ex_result;
-      ex_mem_rs2_rdata    <= ex_rs2;
       ex_mem_rd_addr_o    <= id_ex_rd_addr_o;
       ex_mem_mem_read     <= id_ex_mem_read  && !ex_trap;
-      ex_mem_mem_write    <= id_ex_mem_write && !ex_trap;
       ex_mem_mem_funct3   <= id_ex_mem_funct3;
       ex_mem_rd_we_o      <= id_ex_rd_we && !ex_trap;
       ex_mem_halt         <= id_ex_halt || ex_trap;
@@ -568,76 +612,34 @@ module riscv_core #(
   end
 
   // --------------------------------------------------------------- MEM -----
-  // One alignment block serves both directions: the store side reads EX/MEM
-  // here, the load side reads MEM/WB in WB below. See riscv_mem_align for why
-  // the two halves share a module.
-  logic [XLEN-1:0] st_wdata, load_data;
-  logic [3:0]      st_wstrb;
-
-  // Declared ahead of use by the alignment block; driven in the MEM/WB
-  // register below.
-  logic [XLEN-1:0] mem_wb_alu_result;
-  logic [2:0]      mem_wb_mem_funct3;
-
-  riscv_mem_align u_mem_align (
-      .st_size_i    (ex_mem_mem_funct3[1:0]),
-      .st_addr_lo_i (ex_mem_alu_result_o[1:0]),
-      .st_data_i    (ex_mem_rs2_rdata),
-      .st_wdata_o   (st_wdata),
-      .st_wstrb_o   (st_wstrb),
-      .ld_funct3_i  (mem_wb_mem_funct3),
-      .ld_addr_lo_i (mem_wb_alu_result[1:0]),
-      .ld_rdata_i   (dmem_rdata_i),
-      .ld_data_o    (load_data)
-  );
-
-  assign dmem_addr_o  = {ex_mem_alu_result_o[XLEN-1:2], 2'b00};
-  assign dmem_wdata_o = st_wdata;
-  // Gated by reset. EX/MEM is cleared AT the end of the reset cycle, so
-  // during it the register still holds its power-up contents -- on an ASIC,
-  // anything -- and an ungated port would store garbage into memory that is
-  // not undefined at reset: it holds the program's data. FPGA flops and
-  // simulators both start at 0, so only formal showed this (X1, below).
-  logic mem_store;
-  assign mem_store    = ex_mem_mem_write && !rst_i;
-  assign dmem_we_o    = mem_store;
-  // Gated so a non-store never shows strobes. The memory ignores them while
-  // dmem_we_o is low, but rvfi_mem_wmask must read zero for anything that is
-  // not a store, and this is where it will be tapped.
-  assign dmem_wstrb_o = mem_store ? st_wstrb : 4'b0000;
-
-  // MEM/WB. Load data is NOT registered here: the BRAM's own output register
-  // is this stage's register for it. Registering dmem_rdata_i again would add
-  // a cycle of load latency and buy nothing. The ALU result rides along both
-  // as the non-load writeback value and for its low bits, which tell the load
-  // side which lane to pick.
+  // The load data arrived from the BRAM this cycle; load_data is it aligned
+  // and extended (riscv_mem_align, above). MEM/WB registers the writeback
+  // value itself -- the load's or the EX result -- so WB, and the MEM/WB
+  // forward into EX, start at a flop.
+  logic [XLEN-1:0]   mem_wb_result;
   logic [ADDR_W-1:0] mem_wb_rd_addr;
-  logic              mem_wb_rd_we, mem_wb_mem_read, mem_wb_halt;
+  logic              mem_wb_rd_we, mem_wb_halt;
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
       mem_wb_pc_o        <= RESET_VECTOR;
       mem_wb_instr_o     <= NOP;
-      mem_wb_alu_result  <= '0;
+      mem_wb_result      <= '0;
       mem_wb_rd_addr     <= '0;
-      mem_wb_mem_read    <= 1'b0;
-      mem_wb_mem_funct3  <= 3'b000;
       mem_wb_rd_we       <= 1'b0;
       mem_wb_halt        <= 1'b0;
     end else begin
       mem_wb_pc_o        <= ex_mem_pc_o;
       mem_wb_instr_o     <= ex_mem_instr_o;
-      mem_wb_alu_result  <= ex_mem_alu_result_o;
+      mem_wb_result      <= ex_mem_mem_read ? load_data : ex_mem_alu_result_o;
       mem_wb_rd_addr     <= ex_mem_rd_addr_o;
-      mem_wb_mem_read    <= ex_mem_mem_read;
-      mem_wb_mem_funct3  <= ex_mem_mem_funct3;
       mem_wb_rd_we       <= ex_mem_rd_we_o;
       mem_wb_halt        <= ex_mem_halt;
     end
   end
 
   // ---------------------------------------------------------------- WB -----
-  assign wb_rd_wdata   = mem_wb_mem_read ? load_data : mem_wb_alu_result;
+  assign wb_rd_wdata   = mem_wb_result;
   // Gated by reset for the same reason as the store above. Here it matters
   // less -- RV32I leaves x1-x31 undefined at reset -- but nothing should
   // commit while reset is held, and the rule is simpler with no exception.
@@ -687,8 +689,12 @@ module riscv_core #(
 
   // EX: the operands the instruction architecturally read -- the forwarding
   // mux outputs, NOT id_ex_rs*_rdata_o, which is stale whenever forwarding
-  // fired (the "one that bites" in the plan) -- and the next pc. rs2's value
-  // already rides EX/MEM as store data, ex_mem_rs2_rdata.
+  // fired (the "one that bites" in the plan) -- and the next pc. And the
+  // data access, which happens here: lane-style like the port itself -- a
+  // word address, byte masks, data in its lanes. The store strobes are the
+  // write mask. The read mask reuses the same lane logic: mem_funct3[1:0] is
+  // the access size for loads as for stores, so st_wstrb is a load's lanes
+  // too; a misaligned load reads nothing, as it traps.
   //
   // The shadow registers have no reset: a shadow is read only when the valid
   // bit says its instruction retired, and that instruction wrote it.
@@ -696,22 +702,26 @@ module riscv_core #(
   assign ex_pc_wdata = redirect ? redirect_target : ex_link;
 
   logic [ADDR_W-1:0] ex_mem_rs1_addr, ex_mem_rs2_addr;
-  logic [XLEN-1:0]   ex_mem_rs1_rdata, ex_mem_pc_wdata;
+  logic [XLEN-1:0]   ex_mem_rs1_rdata, ex_mem_rs2_rdata, ex_mem_pc_wdata;
+  logic [XLEN-1:0]   ex_mem_mem_addr, ex_mem_mem_wdata;
+  logic [3:0]        ex_mem_mem_rmask, ex_mem_mem_wmask;
 
   always_ff @(posedge clk_i) begin
     ex_mem_rs1_addr  <= id_ex_rs1_addr_o;
     ex_mem_rs2_addr  <= id_ex_rs2_addr_o;
     ex_mem_rs1_rdata <= ex_rs1;
+    ex_mem_rs2_rdata <= ex_rs2;
     ex_mem_pc_wdata  <= ex_pc_wdata;
+    ex_mem_mem_addr  <= dmem_addr_o;
+    ex_mem_mem_rmask <= (id_ex_mem_read && !mem_misaligned) ? st_wstrb : 4'b0000;
+    ex_mem_mem_wmask <= dmem_wstrb_o;
+    ex_mem_mem_wdata <= dmem_wdata_o;
   end
 
-  // MEM: the access, lane-style like the port itself -- a word address, byte
-  // masks, data in its lanes. The store strobes are the write mask. The read
-  // mask reuses the same lane logic: mem_funct3[1:0] is the access size for
-  // loads as for stores, so st_wstrb is a load's lanes too.
+  // MEM: the load data, as the memory returned it (whole word, all lanes).
   logic [ADDR_W-1:0] mem_wb_rs1_addr, mem_wb_rs2_addr;
   logic [XLEN-1:0]   mem_wb_rs1_rdata, mem_wb_rs2_rdata, mem_wb_pc_wdata;
-  logic [XLEN-1:0]   mem_wb_mem_addr, mem_wb_mem_wdata;
+  logic [XLEN-1:0]   mem_wb_mem_addr, mem_wb_mem_rdata, mem_wb_mem_wdata;
   logic [3:0]        mem_wb_mem_rmask, mem_wb_mem_wmask;
 
   always_ff @(posedge clk_i) begin
@@ -720,15 +730,15 @@ module riscv_core #(
     mem_wb_rs1_rdata <= ex_mem_rs1_rdata;
     mem_wb_rs2_rdata <= ex_mem_rs2_rdata;
     mem_wb_pc_wdata  <= ex_mem_pc_wdata;
-    mem_wb_mem_addr  <= dmem_addr_o;
-    mem_wb_mem_rmask <= ex_mem_mem_read ? st_wstrb : 4'b0000;
-    mem_wb_mem_wmask <= dmem_wstrb_o;
-    mem_wb_mem_wdata <= dmem_wdata_o;
+    mem_wb_mem_addr  <= ex_mem_mem_addr;
+    mem_wb_mem_rmask <= ex_mem_mem_rmask;
+    mem_wb_mem_wmask <= ex_mem_mem_wmask;
+    mem_wb_mem_rdata <= dmem_rdata_i;
+    mem_wb_mem_wdata <= ex_mem_mem_wdata;
   end
 
   // WB: the record. rd reads zero when nothing is written, and rd_wdata reads
-  // zero whenever rd_addr does -- riscv-formal requires both. Load data is
-  // the BRAM output, which is this stage's register for it.
+  // zero whenever rd_addr does -- riscv-formal requires both.
   logic [63:0] order;
 
   always_ff @(posedge clk_i) begin
@@ -757,7 +767,7 @@ module riscv_core #(
   assign rvfi_mem_addr_o  = mem_wb_mem_addr;
   assign rvfi_mem_rmask_o = mem_wb_mem_rmask;
   assign rvfi_mem_wmask_o = mem_wb_mem_wmask;
-  assign rvfi_mem_rdata_o = dmem_rdata_i;
+  assign rvfi_mem_rdata_o = mem_wb_mem_rdata;
   assign rvfi_mem_wdata_o = mem_wb_mem_wdata;
 `endif
 
@@ -998,7 +1008,7 @@ module riscv_core #(
       end
       if (!ex_mem_valid) begin
         assert (!(ex_mem_rd_we_o && (ex_mem_rd_addr_o != '0)));
-        assert (!ex_mem_mem_read && !ex_mem_mem_write && !ex_mem_halt);
+        assert (!ex_mem_mem_read && !ex_mem_halt);
       end
       if (!mem_wb_valid) begin
         assert (!(mem_wb_rd_we && (mem_wb_rd_addr != '0)));
@@ -1026,10 +1036,11 @@ module riscv_core #(
       // waiting instruction reaches EX one cycle later.
       cover (f_after_stall_q && redirect);
     end
-    // X1's case after power-up: a reset arriving while a store or a register
-    // write is in flight (rst_i is high here, so outside the guard above).
+    // X1's case after power-up: a reset arriving while a store (issued from
+    // EX) or a register write is in flight (rst_i is high here, so outside
+    // the guard above).
     if (f_past_valid && rst_i) begin
-      cover (ex_mem_mem_write);
+      cover (id_ex_mem_write);
       cover (mem_wb_rd_we);
     end
     if (f_past_valid && !rst_i) begin

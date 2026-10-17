@@ -1,10 +1,12 @@
 // Board-level top for the Digilent Arty A7-100T: clocking, reset and pins
 // around soc.sv. Pin assignments are in constr/arty_a7.xdc.
 //
-// Clock: the board's 100 MHz oscillator through an MMCM to 50 MHz (VCO
-// 1000 MHz: x10, /20). 50 MHz for first light because the out-of-context
-// margin at 100 MHz is thin and the paths to the block RAM were never timed
-// there; 100 MHz is a later, measured step.
+// Clock: the board's 100 MHz oscillator through an MMCM to 100 MHz (VCO
+// 1000 MHz: x10, /10). First light ran at 50 MHz (/20), when a load's data
+// went from the block RAM's output to the next instruction's branch
+// comparator in one cycle; accessing data memory from EX took that path out
+// (riscv_core.sv). The MMCM stays, rather than the oscillator directly: it
+// is where the clock is chosen, and its deskew is part of the timing.
 //
 // Reset: held while the red RESET button (active low) is pressed or the MMCM
 // is not locked, and for RST_HOLD clocks after both clear. The request is
@@ -32,7 +34,7 @@ module arty_a7_top #(
     output logic       uart_tx_o     // uart_rxd_out, to the USB-UART bridge
 );
 
-  localparam int unsigned CLK_HZ   = 50_000_000;
+  localparam int unsigned CLK_HZ   = 100_000_000;
   localparam int unsigned RST_HOLD = 4;
 
   // ---- clock ----
@@ -42,7 +44,7 @@ module arty_a7_top #(
       .CLKIN1_PERIOD    (10.0),
       .DIVCLK_DIVIDE    (1),
       .CLKFBOUT_MULT_F  (10.0),
-      .CLKOUT0_DIVIDE_F (20.0)
+      .CLKOUT0_DIVIDE_F (10.0)
   ) u_mmcm (
       .CLKIN1   (clk100_i),
       .CLKFBIN  (clk_fb),

@@ -12,7 +12,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge
 
-CLK_PERIOD_NS = 20          # 50 MHz, as on the board
+CLK_PERIOD_NS = 20          # 50 MHz, soc.sv's default CLK_HZ (the board runs 100)
 CLKS_PER_BIT = 434          # 115200 baud
 
 GREETING = "\r\nhello from rv32i\r\nsum 1..100 = 5050\r\n"

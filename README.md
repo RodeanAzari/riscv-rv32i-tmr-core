@@ -45,10 +45,10 @@ share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
 
 | Metric | Value |
 |---|---|
-| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 104.1 MHz *(Phase A in progress)* |
-| Fmax, board-level | — |
-| LUT / FF / BRAM / DSP | 1095 / 496 / 0 / 0 *(Phase A in progress)* |
-| CoreMark/MHz (on the board, 50 MHz, 1000 iterations, validated) | 0.962 — RV32I without M, so multiply and divide run in software |
+| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 122.7 MHz |
+| Fmax, board-level (Arty A7, core + BRAM + I/O, in context) | runs at 100 MHz, WNS +1.550 ns (118.3 MHz estimate) |
+| LUT / FF / BRAM / DSP (core, out-of-context) | 964 / 467 / 0 / 0 |
+| CoreMark/MHz (on the board, 100 MHz, 2000 iterations, validated) | 0.962 (about 96 CoreMark) — RV32I without M, so multiply and divide run in software |
 | IPC / CPI (CoreMark timed region, RTL simulation of the same SoC) | 0.691 / 1.447 |
 | Formal: properties proven, proof depth | — |
 | Bugs formal caught that simulation missed | — |

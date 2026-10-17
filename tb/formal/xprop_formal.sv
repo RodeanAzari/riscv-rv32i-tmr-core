@@ -48,6 +48,9 @@ module xprop_formal (
   localparam logic [6:0] OP_STORE  = 7'b0100011;
   localparam logic [6:0] OP_IMM    = 7'b0010011;
   localparam logic [6:0] OP_OP     = 7'b0110011;
+  localparam logic [6:0] OP_LUI    = 7'b0110111;
+  localparam logic [6:0] OP_AUIPC  = 7'b0010111;
+  localparam logic [6:0] OP_JAL    = 7'b1101111;
 
   // Each commit port: value (_d) and X mask (_x).
   logic [31:0]   dmem_addr_d, dmem_addr_x, dmem_wdata_d, dmem_wdata_x;
@@ -60,7 +63,7 @@ module xprop_formal (
   logic          rvfi_valid_d, rvfi_valid_x;
   logic [31:0]   rvfi_insn_d, rvfi_insn_x, rvfi_pc_d, rvfi_pc_x;
   logic [4:0]    rvfi_rd_d;
-  logic [31:0]   ex_mem_instr_d;
+  logic [31:0]   id_ex_instr_d, ex_mem_instr_d;
   logic [31:0]   id_ex_rs1_rdata_x;
   logic [1023:0] regs_x;
 
@@ -82,6 +85,7 @@ module xprop_formal (
       .rvfi_insn_o_d         (rvfi_insn_d),    .rvfi_insn_o_x         (rvfi_insn_x),
       .rvfi_pc_rdata_o_d     (rvfi_pc_d),      .rvfi_pc_rdata_o_x     (rvfi_pc_x),
       .rvfi_rd_addr_o_d      (rvfi_rd_d),      .rvfi_rd_addr_o_x      (),
+      .id_ex_instr_o_d       (id_ex_instr_d),  .id_ex_instr_o_x       (),
       .ex_mem_instr_o_d      (ex_mem_instr_d), .ex_mem_instr_o_x      (),
       .id_ex_rs1_rdata_o_d   (),               .id_ex_rs1_rdata_o_x   (id_ex_rs1_rdata_x)
   );
@@ -105,24 +109,40 @@ module xprop_formal (
                   || (use2 && (insn[24:20] != '0) && !def[insn[24:20]]);
   endfunction
 
+  // Does insn write a register? From the opcode, like reads_undef.
+  function automatic logic writes_rd(input logic [31:0] insn);
+    logic [6:0] op;
+    op = insn[6:0];
+    writes_rd = (op == OP_LUI) || (op == OP_AUIPC) || (op == OP_JAL) || (op == OP_JALR)
+                || (op == OP_LOAD) || (op == OP_IMM) || (op == OP_OP);
+  endfunction
+
   // f_def: registers written since the last reset. f_tainted: an instruction
   // that read an undefined one has retired, so commits may be X from here.
   // Both read the retirement's value half, which XP keeps defined until then.
   logic [31:0] f_def, f_def_now;
-  logic        f_tainted, f_retire, f_taint_wb, f_taint_mem, f_stop;
+  logic [31:0] f_def_ex;
+  logic        f_tainted, f_retire, f_taint_wb, f_taint_ex, f_stop;
 
   assign f_retire   = rvfi_valid_d && !rst_i;
   assign f_taint_wb = f_retire && reads_undef(rvfi_insn_d, f_def);
 
-  // A store commits in MEM, a cycle before it retires, while the instruction
-  // retiring ahead of it may be writing a source it read (forwarded).
-  assign f_def_now   = f_def | ((f_retire && (rvfi_rd_d != '0)) ? (32'd1 << rvfi_rd_d) : '0);
-  assign f_taint_mem = (ex_mem_instr_d[6:0] == OP_STORE) && reads_undef(ex_mem_instr_d, f_def_now);
+  // A store commits in EX, two cycles before it retires, with its sources
+  // forwarded from the two instructions ahead of it: the one retiring now
+  // and the one in MEM. So its sources count as defined if either of those
+  // writes them -- and if the one in MEM itself read an undefined register,
+  // its result may be X already and the store may carry it. (EX/MEM's word
+  // may be a bubble; counting a bubble's write or read only stops the check
+  // early, never hides a failure.)
+  assign f_def_now  = f_def | ((f_retire && (rvfi_rd_d != '0)) ? (32'd1 << rvfi_rd_d) : '0);
+  assign f_def_ex   = f_def_now | (writes_rd(ex_mem_instr_d) ? (32'd1 << ex_mem_instr_d[11:7]) : '0);
+  assign f_taint_ex = (id_ex_instr_d[6:0] == OP_STORE)
+                      && (reads_undef(id_ex_instr_d, f_def_ex) || reads_undef(ex_mem_instr_d, f_def_now));
 
 `ifdef XPROP_REGFILE_DEFINED
   assign f_stop = 1'b0;   // XP: nothing can taint
 `else
-  assign f_stop = f_tainted || f_taint_wb || f_taint_mem;
+  assign f_stop = f_tainted || f_taint_wb || f_taint_ex;
 `endif
 
   always_ff @(posedge clk_i) begin

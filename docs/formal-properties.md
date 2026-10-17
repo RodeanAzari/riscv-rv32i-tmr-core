@@ -409,6 +409,16 @@ Shown to fail (2026-10-16), each in both tasks:
 | `ex_mem_rd_we_o` loses its reset | XP and XT, step 2: an X register-write enable |
 | `halted_q` loses its reset | XP and XT, step 4: an X register-write enable, through the freeze and the bubble logic |
 | `halted_q` unreset, before the flow fix above | **passes**, because the optimiser fixed the flop's init (the `ex_mem_rd_we_o` fault was caught even then) |
+| `id_ex_mem_write` (the store enable, since stores issue from EX) loses its reset (2026-10-17) | XP and XT, step 1: an X store enable |
+
+**Stores issue from EX since 2026-10-17** (data memory moved there for
+100 MHz). XT's harness decides when a store may legitimately carry X from
+the instruction in ID/EX, counting as defined the destinations of both
+older in-flight instructions (retiring, and in MEM) and stopping if the one
+in MEM itself read an undefined register. With the old MEM-stage version
+of that check, XT failed at step 3 on a correct core: a false failure, as
+the harness promises, never a false pass. BMC to depth 10 now takes about 5
+minutes.
 
 ## Bugs formal found that simulation missed
 

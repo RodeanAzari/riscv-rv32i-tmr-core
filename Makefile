@@ -135,10 +135,11 @@ $(FW_BUILD)/hello_sim.elf: $(FW_DIR)/hello.c $(FW_DEPS)
 
 # CoreMark (sw/coremark, unmodified, as its run rules require) with this
 # SoC's port (sw/coremark-port/). The board image runs COREMARK_ITERATIONS,
-# enough for CoreMark's 10-second minimum at 50 MHz; the simulation image
+# about 21 s at 100 MHz: over CoreMark's 10-second minimum, under the 43 s
+# the 32-bit cycle counter takes to wrap; the simulation image
 # runs one iteration, which still validates every CRC. Unlike first light it
 # links libgcc: RV32I has no multiply or divide, and CoreMark uses both.
-COREMARK_ITERATIONS ?= 1000
+COREMARK_ITERATIONS ?= 2000
 BENCH_OPT    := -O2
 BENCH_SRCS   := sw/coremark-port/core_portme.c \
                 $(addprefix sw/coremark/,core_list_join.c core_main.c \

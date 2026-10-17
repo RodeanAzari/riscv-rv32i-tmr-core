@@ -280,12 +280,12 @@ A phase is done when **every** box is checked. No partial credit.
 - [ ] ≥95% functional coverage achieved
 
 ### Phase D — Hardware bring-up
-- [ ] Synthesizes and meets timing; Fmax documented
-- [ ] UART peripheral working
-- [ ] Compiled C program boots and prints over UART
+- [x] Synthesizes and meets timing; Fmax documented
+- [x] UART peripheral working
+- [x] Compiled C program boots and prints over UART
 - [x] Dhrystone or CoreMark runs; IPC measured
 - [x] ILA probes on pipeline registers
-- [ ] Timing + utilization reports committed to `docs/`
+- [x] Timing + utilization reports committed to `docs/`
 - [ ] Photo/video of the board running
 
 ### Phase E — TMR + fault injection

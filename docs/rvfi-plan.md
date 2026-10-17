@@ -43,8 +43,8 @@ so they ride the pipeline registers as shadow fields alongside the real data.
 | `rvfi_rs1_addr`, `rvfi_rs2_addr` | ID | Decoder output |
 | `rvfi_rs1_rdata`, `rvfi_rs2_rdata` | **EX, after the forwarding mux** | `ex_rs1` / `ex_rs2` in `riscv_core.sv`. Today only `ex_rs2` is carried on (as store data, in EX/MEM); both need shadow registers to WB. See below |
 | `rvfi_pc_wdata` | EX | `redirect ? redirect_target : pc + 4` — both exist in `riscv_core.sv`; needs shadow registers to WB. Not `pc_next`: that also covers the stall, and it belongs to the instruction in IF, not EX |
-| `rvfi_mem_addr`, `_rmask`, `_wmask`, `_wdata` | MEM | Masks encode width and alignment. Stores: `dmem_addr_o`/`dmem_wstrb_o`/`dmem_wdata_o` already are these values; `rmask` needs computing for loads. All need one MEM/WB shadow register when the port lands |
-| `rvfi_mem_rdata` | MEM→WB | Load data lands a stage after its address |
+| `rvfi_mem_addr`, `_rmask`, `_wmask`, `_wdata` | EX (MEM until 2026-10-17) | Masks encode width and alignment. Data memory is accessed from EX, so `dmem_addr_o`/`dmem_wstrb_o`/`dmem_wdata_o` are these values there; `rmask` is computed for loads. Shadow registers carry them through EX/MEM and MEM/WB |
+| `rvfi_mem_rdata` | MEM | Load data lands a stage after its address; registered into the MEM/WB shadow |
 | `rvfi_rd_addr`, `rvfi_rd_wdata` | WB | Both read 0 when no write happens |
 | `rvfi_order` | WB | Free-running retirement counter |
 | `rvfi_valid` | WB | One pulse per retired instruction. A valid bit rides the pipeline: cleared in IF/ID by reset and redirect (held through a stall), cleared in ID/EX by every bubble, then carried unchanged |
