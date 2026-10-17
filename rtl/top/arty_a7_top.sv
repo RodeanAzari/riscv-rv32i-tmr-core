@@ -13,11 +13,18 @@
 // chain is all zeros (a Xilinx flop powers up to its INIT value, 0), so the
 // core starts in reset with no initial value written in RTL.
 //
+// ILA: with ILA = 1 (make impl ILA=1) the core's pipeline registers and
+// writeback, brought out by soc.sv, are marked for debug here, and
+// syn/impl_arty.tcl attaches an Integrated Logic Analyzer to them. With
+// ILA = 0, the default, they are left unconnected and trimmed, so the timing
+// and utilization the reports track are the design's own.
+//
 // MMCME2_BASE and BUFG are Xilinx primitives. Lint reads stand-in models of
 // them from tb/models/; Vivado uses the real ones. Simulation runs soc.sv,
 // not this module.
 module arty_a7_top #(
-    parameter string INIT_FILE = ""
+    parameter string INIT_FILE = "",
+    parameter bit    ILA       = 1'b0
 ) (
     input  logic       clk100_i,     // CLK100MHZ, E3
     input  logic       rst_ni,       // ck_rst, the RESET button, C2
@@ -65,14 +72,62 @@ module arty_a7_top #(
   assign rst = !rst_n_q[RST_HOLD-1];
 
   // ---- the SoC ----
+  // Unread in RTL: only the ILA reads them, and only when ILA = 1. The
+  // waiver runs to the end of the probe block below.
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [31:0] if_id_pc, if_id_instr, id_ex_pc, id_ex_instr;
+  logic [31:0] ex_mem_pc, ex_mem_instr, ex_mem_alu_result;
+  logic [31:0] mem_wb_pc, mem_wb_instr, wb_rd_wdata;
+  logic [4:0]  wb_rd_addr;
+  logic        wb_rd_we, halt;
+
   soc #(
       .CLK_HZ    (CLK_HZ),
       .INIT_FILE (INIT_FILE)
   ) u_soc (
-      .clk_i     (clk),
-      .rst_i     (rst),
-      .led_o     (led_o),
-      .uart_tx_o (uart_tx_o)
+      .clk_i                   (clk),
+      .rst_i                   (rst),
+      .led_o                   (led_o),
+      .uart_tx_o               (uart_tx_o),
+      .dbg_if_id_pc_o          (if_id_pc),
+      .dbg_if_id_instr_o       (if_id_instr),
+      .dbg_id_ex_pc_o          (id_ex_pc),
+      .dbg_id_ex_instr_o       (id_ex_instr),
+      .dbg_ex_mem_pc_o         (ex_mem_pc),
+      .dbg_ex_mem_instr_o      (ex_mem_instr),
+      .dbg_ex_mem_alu_result_o (ex_mem_alu_result),
+      .dbg_mem_wb_pc_o         (mem_wb_pc),
+      .dbg_mem_wb_instr_o      (mem_wb_instr),
+      .dbg_wb_rd_we_o          (wb_rd_we),
+      .dbg_wb_rd_addr_o        (wb_rd_addr),
+      .dbg_wb_rd_wdata_o       (wb_rd_wdata),
+      .dbg_halt_o              (halt)
   );
+
+  // The probe nets. Their names are the probe names Hardware Manager shows
+  // (prefixed g_ila.), so they are named after the pipeline register.
+  if (ILA) begin : g_ila
+    (* mark_debug = "true" *) logic [31:0] if_id_pc_p, if_id_instr_p;
+    (* mark_debug = "true" *) logic [31:0] id_ex_pc_p, id_ex_instr_p;
+    (* mark_debug = "true" *) logic [31:0] ex_mem_pc_p, ex_mem_instr_p, ex_mem_alu_result_p;
+    (* mark_debug = "true" *) logic [31:0] mem_wb_pc_p, mem_wb_instr_p;
+    (* mark_debug = "true" *) logic [31:0] wb_rd_wdata_p;
+    (* mark_debug = "true" *) logic [4:0]  wb_rd_addr_p;
+    (* mark_debug = "true" *) logic        wb_rd_we_p, halt_p;
+    assign if_id_pc_p          = if_id_pc;
+    assign if_id_instr_p       = if_id_instr;
+    assign id_ex_pc_p          = id_ex_pc;
+    assign id_ex_instr_p       = id_ex_instr;
+    assign ex_mem_pc_p         = ex_mem_pc;
+    assign ex_mem_instr_p      = ex_mem_instr;
+    assign ex_mem_alu_result_p = ex_mem_alu_result;
+    assign mem_wb_pc_p         = mem_wb_pc;
+    assign mem_wb_instr_p      = mem_wb_instr;
+    assign wb_rd_wdata_p       = wb_rd_wdata;
+    assign wb_rd_addr_p        = wb_rd_addr;
+    assign wb_rd_we_p          = wb_rd_we;
+    assign halt_p              = halt;
+  end
+  /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

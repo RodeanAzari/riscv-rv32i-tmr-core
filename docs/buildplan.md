@@ -284,7 +284,7 @@ A phase is done when **every** box is checked. No partial credit.
 - [ ] UART peripheral working
 - [ ] Compiled C program boots and prints over UART
 - [x] Dhrystone or CoreMark runs; IPC measured
-- [ ] ILA probes on pipeline registers
+- [x] ILA probes on pipeline registers
 - [ ] Timing + utilization reports committed to `docs/`
 - [ ] Photo/video of the board running
 

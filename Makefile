@@ -10,6 +10,7 @@
 #   make fw     first-light firmware for the board SoC
 #   make bench  CoreMark for the board SoC (board and simulation images)
 #   make impl   board-level bitstream for the Arty A7;  make prog  program it
+#   make ila    program an ILA=1 build and capture the pipeline registers
 #   make model-test  the C golden model alone, on riscv-tests rv32ui
 #   make uvm    UVM regression in XSim against the golden model
 #   make clean
@@ -226,14 +227,18 @@ uvm:
 # syn/build/board/.
 BIT := syn/build/board/arty_a7_top.bit
 
-.PHONY: impl prog
+.PHONY: impl prog ila
 # FW_IMAGE picks the program the bitstream's RAM holds: first light by
 # default, or e.g. FW_IMAGE=sw/build/coremark.hex for the benchmark.
+# ILA=1 attaches a logic analyser to the core's pipeline registers and writes
+# its probes file beside the bitstream; its reports stay in syn/build/board/,
+# so docs/reports/ always describes the design without debug logic.
 FW_IMAGE ?= $(FW_BUILD)/hello.hex
+ILA      ?= 0
 
 impl: $(FW_IMAGE)
 	$(VIVADO) -mode batch -nojournal -notrace \
-		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE)
+		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA)
 
 # Two routes, picked per session (docs/vivado-setup.md section 6). If the Arty
 # is attached to WSL with usbipd-win (FTDI 0403:6010 visible here), program it
@@ -255,6 +260,19 @@ prog:
 	  echo "  3. Serial terminal on the board's COM port: 115200 baud, 8N1"; \
 	  echo "  4. Press the red RESET button to restart the program"; \
 	fi
+
+# Program an ILA build (make impl ILA=1) from WSL and capture one window of
+# the core's pipeline registers to syn/build/board/ila_capture.{csv,vcd},
+# then check it (scripts/ila_check.py): each pipeline stage after ID must
+# hold, one cycle later, what the stage before it held. Needs the Arty
+# attached with usbipd; Hardware Manager's GUI reads the same .bit and .ltx.
+LTX := $(BIT:.bit=.ltx)
+
+ila:
+	@test -f $(LTX) || { echo "no $(LTX): run make impl ILA=1 first" >&2; exit 1; }
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/ila_capture.tcl -tclargs $(abspath $(BIT)) $(abspath $(LTX)) $(abspath syn/build/board)
+	python3 scripts/ila_check.py syn/build/board/ila_capture.csv syn/build/board/ila_summary.txt
 
 # --- not yet built ---------------------------------------------------------
 # Each names its phase and what it is waiting on. Fail loudly, not silently.

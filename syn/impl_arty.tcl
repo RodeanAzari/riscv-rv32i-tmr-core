@@ -1,11 +1,17 @@
 # Board-level synthesis, implementation and bitstream for the Arty A7-100T.
 #
-#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex>
+#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila]
 #
 # Top: rtl/top/arty_a7_top.sv, pins in constr/arty_a7.xdc, the RAM loaded
 # from <hex> (sw/build/hello.hex, from `make fw`). Unlike synth_ooc.tcl this
 # is in-context: real pins, real clocking through the MMCM, and the paths
 # between the core and the block RAM timed for the first time.
+#
+# With ila = 1, an Integrated Logic Analyzer is attached to the core's
+# pipeline registers (marked for debug in arty_a7_top.sv) and the probes file
+# Hardware Manager needs is written beside the bitstream. Its reports go to
+# the build directory, not docs/reports/: the committed reports, and the
+# trend tables transcribed from them, are of the design without debug logic.
 #
 # The bitstream is written only if every timing path meets: a board that
 # fails timing behaves in ways no simulation predicts, and that is a worse
@@ -13,12 +19,14 @@
 
 set part [lindex $argv 0]
 set hex  [lindex $argv 1]
+set ila  [expr {[lindex $argv 2] eq "1"}]
 if {$part eq ""} { set part xc7a100tcsg324-1 }
 
 set top     arty_a7_top
 set repo    [file normalize [file join [file dirname [info script]] ..]]
 set rundir  [file join $repo syn build board]
-set reports [file join $repo docs reports]
+set reports [expr {$ila ? [file join $rundir ila_reports] : [file join $repo docs reports]}]
+set ila_depth 1024
 
 # A missing $readmemh file is only a warning in Vivado, and the result is a
 # bitstream whose RAM holds nothing -- a board that does nothing, for no
@@ -48,11 +56,42 @@ if {[llength $sv] == 0} {
 read_verilog -sv $sv
 read_xdc [file join $repo constr arty_a7.xdc]
 
-synth_design -top $top -part $part -generic "INIT_FILE=\"$hex\""
+synth_design -top $top -part $part -generic "INIT_FILE=\"$hex\"" -generic "ILA=$ila"
 
 set bb [get_cells -hier -quiet -filter {IS_BLACKBOX == 1}]
 if {[llength $bb] > 0} {
     error "black boxes in the synthesized netlist: $bb"
+}
+
+# --- ILA ---------------------------------------------------------------------
+# One probe per marked bus, in the order the nets sort, bit 0 first; sampled
+# on the core clock. Probe names in Hardware Manager are the net names.
+if {$ila} {
+    set marked [get_nets -hier -filter {MARK_DEBUG == 1}]
+    if {[llength $marked] == 0} { error "ILA=1 but no nets are marked for debug" }
+    set buses [dict create]
+    foreach n [lsort -dictionary $marked] {
+        regsub {\[[0-9]+\]$} $n "" base
+        dict lappend buses $base $n
+    }
+    create_debug_core u_ila ila
+    set_property C_DATA_DEPTH        $ila_depth [get_debug_cores u_ila]
+    set_property C_INPUT_PIPE_STAGES 0          [get_debug_cores u_ila]
+    set_property C_TRIGIN_EN         false      [get_debug_cores u_ila]
+    set_property C_TRIGOUT_EN        false      [get_debug_cores u_ila]
+    set_property port_width 1 [get_debug_ports u_ila/clk]
+    connect_debug_port u_ila/clk [get_nets -of_objects [get_pins u_bufg/O]]
+    set i 0
+    dict for {base nets} $buses {
+        if {$i > 0} { create_debug_port u_ila probe }
+        set port [get_debug_ports u_ila/probe$i]
+        set_property port_width [llength $nets] $port
+        set_property PROBE_TYPE DATA_AND_TRIGGER $port
+        connect_debug_port $port $nets
+        puts [format "ILA probe%-2d %3d bits  %s" $i [llength $nets] $base]
+        incr i
+    }
+    implement_debug_core
 }
 
 write_checkpoint -force [file join $rundir post_synth.dcp]
@@ -95,7 +134,7 @@ foreach {label group total} [list \
 set fh [open [file join $reports summary_board.txt] w]
 foreach out [list stdout $fh] {
     puts $out ""
-    puts $out "=== arty_a7_top (core + 32 KiB RAM + LED + UART), board-level, post-route ==="
+    puts $out "=== arty_a7_top (core + 32 KiB RAM + LED + UART[expr {$ila ? " + ILA" : ""}]), board-level, post-route ==="
     puts $out [format "part            %s" $part]
     puts $out [format "core clock      %s, %.3f ns (%.1f MHz), MMCM from 100 MHz" \
                [get_property NAME $clk] $period [expr {1000.0/$period}]]
@@ -129,3 +168,13 @@ if {$worst < 0 || $hold < 0} {
 set bit [file join $rundir $top.bit]
 write_bitstream -force $bit
 puts "bitstream: $bit"
+
+# Without ILA, remove a stale probes file so Hardware Manager never pairs
+# this bitstream with probes from an earlier ILA build.
+set ltx [file join $rundir $top.ltx]
+if {$ila} {
+    write_debug_probes -force $ltx
+    puts "probes:    $ltx"
+} else {
+    file delete -force $ltx
+}

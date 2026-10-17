@@ -32,7 +32,23 @@ module soc #(
     input  logic       clk_i,
     input  logic       rst_i,
     output logic [3:0] led_o,
-    output logic       uart_tx_o
+    output logic       uart_tx_o,
+
+    // The core's pipeline registers and writeback, for the board top's ILA
+    // (make impl ILA=1). Left open otherwise, and then trimmed.
+    output logic [31:0] dbg_if_id_pc_o,
+    output logic [31:0] dbg_if_id_instr_o,
+    output logic [31:0] dbg_id_ex_pc_o,
+    output logic [31:0] dbg_id_ex_instr_o,
+    output logic [31:0] dbg_ex_mem_pc_o,
+    output logic [31:0] dbg_ex_mem_instr_o,
+    output logic [31:0] dbg_ex_mem_alu_result_o,
+    output logic [31:0] dbg_mem_wb_pc_o,
+    output logic [31:0] dbg_mem_wb_instr_o,
+    output logic        dbg_wb_rd_we_o,
+    output logic [4:0]  dbg_wb_rd_addr_o,
+    output logic [31:0] dbg_wb_rd_wdata_o,
+    output logic        dbg_halt_o
 );
 
   localparam int unsigned RAM_AW = $clog2(RAM_WORDS);
@@ -49,8 +65,8 @@ module soc #(
   logic [3:0]  dmem_wstrb;
   logic        dmem_we;
 
-  // The core's pipeline-register outputs are left open on purpose: they are
-  // for ILA probes (Phase D) and RVFI, not for this top. Waived here only.
+  // The core's remaining debug outputs (operand values, RVFI) are left open
+  // on purpose: not needed by this top. Waived here only.
   /* verilator lint_off PINCONNECTEMPTY */
   riscv_core u_core (
       .clk_i               (clk_i),
@@ -65,10 +81,10 @@ module soc #(
       .dmem_wstrb_o        (dmem_wstrb),
       .dmem_we_o           (dmem_we),
       .dmem_rdata_i        (dmem_rdata),
-      .wb_rd_we_o          (),
-      .wb_rd_addr_o        (),
-      .wb_rd_wdata_o       (),
-      .halt_o              (),
+      .wb_rd_we_o          (dbg_wb_rd_we_o),
+      .wb_rd_addr_o        (dbg_wb_rd_addr_o),
+      .wb_rd_wdata_o       (dbg_wb_rd_wdata_o),
+      .halt_o              (dbg_halt_o),
 `ifdef RISCV_FORMAL
       .rvfi_valid_o        (),
       .rvfi_order_o        (),
@@ -90,23 +106,23 @@ module soc #(
       .rvfi_mem_rdata_o    (),
       .rvfi_mem_wdata_o    (),
 `endif
-      .if_id_pc_o          (),
-      .if_id_instr_o       (),
-      .id_ex_pc_o          (),
-      .id_ex_instr_o       (),
+      .if_id_pc_o          (dbg_if_id_pc_o),
+      .if_id_instr_o       (dbg_if_id_instr_o),
+      .id_ex_pc_o          (dbg_id_ex_pc_o),
+      .id_ex_instr_o       (dbg_id_ex_instr_o),
       .id_ex_rs1_addr_o    (),
       .id_ex_rs2_addr_o    (),
       .id_ex_rs1_rdata_o   (),
       .id_ex_rs2_rdata_o   (),
       .id_ex_imm_o         (),
       .id_ex_rd_addr_o     (),
-      .ex_mem_pc_o         (),
-      .ex_mem_instr_o      (),
-      .ex_mem_alu_result_o (),
+      .ex_mem_pc_o         (dbg_ex_mem_pc_o),
+      .ex_mem_instr_o      (dbg_ex_mem_instr_o),
+      .ex_mem_alu_result_o (dbg_ex_mem_alu_result_o),
       .ex_mem_rd_addr_o    (),
       .ex_mem_rd_we_o      (),
-      .mem_wb_pc_o         (),
-      .mem_wb_instr_o      ()
+      .mem_wb_pc_o         (dbg_mem_wb_pc_o),
+      .mem_wb_instr_o      (dbg_mem_wb_instr_o)
   );
   /* verilator lint_on PINCONNECTEMPTY */
 

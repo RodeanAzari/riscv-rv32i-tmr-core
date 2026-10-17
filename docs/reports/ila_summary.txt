@@ -1,0 +1,4 @@
+ILA capture: 1024 samples on the core clock
+stage advance EX->MEM->WB (pc, instr): OK
+cycles holding a stall: 227; flush bubbles in ID/EX: 114; register writes: 454
+pc range in WB: 00000000-00000220

@@ -42,6 +42,7 @@ the local GCC 16.
 | `make uvm` | XSim, 300 random programs, ~45 s: **205/205 coverage bins (100%)** on seeds 1, 2, 3, ~45,000 retirements each compared with the model, 0 mismatches. Planted RTL faults caught: forwarding priority (in the hazard unit), LBU sign-extending, no rs2 load-use stall |
 | **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.jpg](img/fpgafirstlight.jpg) (Phase D's photo box; low-resolution, retake for the README) |
 | **CoreMark on the board** | 2026-10-17, 1000 iterations at 50 MHz, programmed from WSL (`make prog`): **0.962 CoreMark/MHz**, "Correct operation validated", 1,038,847,073 cycles ([coremark_board.txt](reports/coremark_board.txt)). **IPC 0.691** (CPI 1.447) over the timed region, counted in RTL simulation of the same SoC ([coremark_sim.txt](reports/coremark_sim.txt)); simulated cycles per iteration match the board's to 0.0013%. RV32I without M: every multiply and divide is a libgcc call |
+| **ILA on the board** | 2026-10-17, `make impl ILA=1` then `make ila` from WSL (Hardware Manager in batch through `hw_server`): 13 probes, 328 bits (pc and instruction of all four pipeline registers, EX/MEM ALU result, writeback, halt), depth 1024, core clock. First-light program: every EX→MEM→WB shift consistent, 227 stall cycles and 114 flush bubbles in the window ([ila_summary.txt](reports/ila_summary.txt), [ila_capture.csv](reports/ila_capture.csv)). ILA build: +2233 LUT, +3772 FF, +10 BRAM, WNS +4.162 ns at 50 MHz ([summary_board_ila.txt](reports/summary_board_ila.txt)) |
 | CI on push | green (lint + sim + formal) at `fb522f2`, run 39064737102 |
 
 ### Implemented, and what to know before touching it
@@ -101,7 +102,7 @@ Only the facts that are not obvious from reading it:
 
 ### Not started
 
-TMR, the rest of hardware bring-up (ILA, 100 MHz), all of Stage 2.
+TMR, the rest of hardware bring-up (100 MHz), all of Stage 2.
 
 ---
 
@@ -275,9 +276,10 @@ riscv-formal found on its first run (see Decisions).
 | `make spike` | run `.elf` on spike | untested, depends on `make sw` |
 | `make fw` | first-light firmware → `sw/build/hello.hex` (board), `hello_sim.hex` (sim) | working; local riscv32 or CI's riscv64 gcc |
 | `make bench` | CoreMark (submodule `sw/coremark`, port `sw/coremark-port/`, links libgcc) → `sw/build/coremark.hex` (board, `COREMARK_ITERATIONS`=1000), `coremark_sim.hex` (1 iteration) | working, locally and in CI (the riscv64 package's rv32i/ilp32 libgcc) |
-| `make impl` | board-level synth + route + bitstream (`syn/impl_arty.tcl`), reports `docs/reports/*_board.*`; refuses a missing RAM image, writes no bitstream if timing fails; `FW_IMAGE=` picks the RAM image (default first light) | working |
+| `make impl` | board-level synth + route + bitstream (`syn/impl_arty.tcl`), reports `docs/reports/*_board.*`; refuses a missing RAM image, writes no bitstream if timing fails; `FW_IMAGE=` picks the RAM image (default first light); `ILA=1` adds the ILA and its `.ltx`, reports to `syn/build/board/ila_reports/` so `docs/reports/` stays ILA-free | working |
 | `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
 | `make prog` | Arty attached to WSL (usbipd): programs it with `openFPGALoader -b arty_a7_100t`; otherwise prints the Hardware Manager steps and the Windows path | working, both routes tried on the board |
+| `make ila` | after `make impl ILA=1`, with the Arty attached to WSL: programs it and captures the pipeline registers (`syn/ila_capture.tcl`, Vivado Hardware Manager in batch) to `syn/build/board/ila_capture.{csv,vcd}`, then checks the capture (`scripts/ila_check.py`) | working |
 | `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks, then `scripts/riscv-formal.sh` (checks + covers, verdicts read from status files); appends OSS CAD Suite's `bin/` to PATH itself; `FORMAL_JOBS=n` | working |
 | `make model-test` | C golden model on rv32ui (host cc + RISC-V gcc) | working |
 | `make uvm` | UVM regression in XSim (`tb/uvm/run.sh`): `SEED`, `PROGRAMS` (300), `COV_MIN` (95); fails on any UVM error or coverage below `COV_MIN` | working; local only (Vivado), like `make synth` |
@@ -364,8 +366,9 @@ history, [formal-properties.md](formal-properties.md) and
 
 > **Resume here (2026-10-17, Phases B and C done; CoreMark on the board).**
 > 0.962 CoreMark/MHz on the Arty, IPC 0.691; `make bench` builds it, `make
-> impl FW_IMAGE=sw/build/coremark.hex` puts it in the bitstream. **Next:**
-> Phase D's other boxes (ILA, 100 MHz, a better photo), then Phase E (TMR).
+> impl FW_IMAGE=sw/build/coremark.hex` puts it in the bitstream. ILA: `make
+> impl ILA=1`, then `make ila` captures and checks the pipeline registers from
+> WSL. **Next:** 100 MHz (and a better photo), then Phase E (TMR).
 
 ### 1. Timing: IF/ID flush via the valid bit
 

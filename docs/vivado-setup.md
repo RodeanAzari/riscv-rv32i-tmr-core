@@ -354,6 +354,13 @@ While attached to WSL, `make prog` programs the board with
 /dev/ttyUSB1 115200`). While detached, `make prog` prints the Hardware
 Manager steps instead.
 
+**Vivado's own Hardware Manager works in WSL too** (checked 2026-10-17):
+with the board attached, Vivado 2025.2's `hw_server` finds the Digilent
+cable through the same udev rule, no Xilinx cable-driver install needed.
+`make ila` uses it in batch to program an ILA build and capture from it. The
+GUI (`vivado-env; vivado`, then Open Hardware Manager) would work the same
+way, through WSLg.
+
 Synthesis, implementation, and timing closure all work regardless — only the
 final bitstream download needs the USB path.
 
