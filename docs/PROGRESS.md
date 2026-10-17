@@ -41,7 +41,7 @@ the local GCC 16.
 | `make model-test` | the C golden model alone: rv32ui **40/40**; a planted SRA bug fails exactly `sra` |
 | `make uvm` | XSim, 300 random programs, ~45 s: **205/205 coverage bins (100%)** on seeds 1, 2, 3, ~45,000 retirements each compared with the model, 0 mismatches. Planted RTL faults caught: forwarding priority (in the hazard unit), LBU sign-extending, no rs2 load-use stall |
 | **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.webp](img/fpgafirstlight.webp) (Phase D's photo box; sideways and low-resolution, retake for the README) |
-| CI on push | green (lint + sim + formal) at `1b14a14`, run 38999736331; first-light work not yet pushed |
+| CI on push | green (lint + sim + formal) at `01f0f13`, run 39059548996 |
 
 ### Implemented, and what to know before touching it
 
