@@ -54,10 +54,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Assembles riscv-tests. Ubuntu packages a riscv64 toolchain, not a
-      # riscv32 one; it builds RV32I just the same, because -march=rv32i
-      # -mabi=ilp32 pick the target and these tests link no libraries.
-      # test_riscv_tests.py finds it on PATH.
+      # Assembles riscv-tests and builds the SoC firmware and CoreMark.
+      # Ubuntu packages a riscv64 toolchain, not a riscv32 one; it builds
+      # RV32I just the same, because -march=rv32i -mabi=ilp32 pick the
+      # target. CoreMark also links libgcc, from the package's rv32i/ilp32
+      # multilib. test_riscv_tests.py finds it on PATH.
       - name: Install RISC-V assembler
         run: |
           sudo apt-get update

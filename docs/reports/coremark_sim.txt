@@ -1,0 +1,4 @@
+CoreMark, 1 iteration, RTL simulation of rtl/top/soc.sv (Verilator)
+timed region: 718009 instructions retired, 1038833 cycles
+IPC 0.6912  CPI 1.4468
+CoreMark/MHz (1 iteration) 0.963

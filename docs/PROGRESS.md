@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D — first light on the Arty A7 2026-10-17. Phase A **done** 2026-10-08, CI run 37817380686
+**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D — first light on the Arty A7 2026-10-17; CoreMark on the board 2026-10-17, 0.962 CoreMark/MHz, IPC 0.691. Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -34,13 +34,14 @@ the local GCC 16.
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 175/175 passing across 9 toplevels (core, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, soc), including the 40 official `riscv-tests` and the first-light firmware running on the whole SoC, UART decoded at 115200 |
+| `make sim` | 176/176 passing across 10 entries (core, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, soc ×2), including the 40 official `riscv-tests`, the first-light firmware and one CoreMark iteration on the whole SoC (CRCs checked, IPC counted through RVFI, ~50 s), UART decoded at 115200 |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 46/46 checks and 46/46 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`, `causal_mem`, `liveness`, `hang`, `ill`), ~4 min (XT's BMC is ~2 of it) — see [formal-properties.md](formal-properties.md) |
-| `make impl` | board-level route + bitstream, timing met at 50 MHz (WNS +5.920 ns), ~5 min |
+| `make impl` | board-level route + bitstream, timing met at 50 MHz (WNS +4.917 ns), ~2 min |
 | `make model-test` | the C golden model alone: rv32ui **40/40**; a planted SRA bug fails exactly `sra` |
 | `make uvm` | XSim, 300 random programs, ~45 s: **205/205 coverage bins (100%)** on seeds 1, 2, 3, ~45,000 retirements each compared with the model, 0 mismatches. Planted RTL faults caught: forwarding priority (in the hazard unit), LBU sign-extending, no rs2 load-use stall |
-| **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.webp](img/fpgafirstlight.webp) (Phase D's photo box; sideways and low-resolution, retake for the README) |
+| **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.jpg](img/fpgafirstlight.jpg) (Phase D's photo box; low-resolution, retake for the README) |
+| **CoreMark on the board** | 2026-10-17, 1000 iterations at 50 MHz, programmed from WSL (`make prog`): **0.962 CoreMark/MHz**, "Correct operation validated", 1,038,847,073 cycles ([coremark_board.txt](reports/coremark_board.txt)). **IPC 0.691** (CPI 1.447) over the timed region, counted in RTL simulation of the same SoC ([coremark_sim.txt](reports/coremark_sim.txt)); simulated cycles per iteration match the board's to 0.0013%. RV32I without M: every multiply and divide is a libgcc call |
 | CI on push | green (lint + sim + formal) at `01f0f13`, run 39059548996 |
 
 ### Implemented, and what to know before touching it
@@ -100,7 +101,7 @@ Only the facts that are not obvious from reading it:
 
 ### Not started
 
-TMR, the rest of hardware bring-up (Dhrystone/IPC, ILA, 100 MHz), all of Stage 2.
+TMR, the rest of hardware bring-up (ILA, 100 MHz), all of Stage 2.
 
 ---
 
@@ -190,11 +191,30 @@ trims logic the OOC run keeps.
 | Date | Build | LUT | FF | BRAM | Core clock | WNS (ns) | Fmax (MHz) |
 |---|---|---|---|---|---|---|---|
 | 2026-10-17 | First light: core + 32 KiB RAM + LED + UART (ran on the board at 50 MHz) | 1009 | 374 | 8 | 50 MHz | +5.920 | 71.0 |
+| 2026-10-17 | + illegal-instruction trap, + cycle counter; CoreMark image (ran on the board at 50 MHz) | 1141 | 434 | 8 | 50 MHz | +4.917 | 66.3 |
 
 The critical path is the one the OOC flow could not time: a block RAM's output
-through the core to the data RAM's address, 13.4 ns, 12 levels, 64% routing.
-100 MHz needs ~4 ns off it; that is a measured slice of its own. Hold slack is
+through the core to the data RAM's address, 14.2 ns, 11 levels, 68% routing
+(it was 13.4 ns, 12 levels, at first light: the same path, placed differently).
+100 MHz needs ~5 ns off it; that is a measured slice of its own. Hold slack is
 +0.064 ns (MEM/WB rd address → regfile LUTRAM write address): positive, thin.
+
+---
+
+## Benchmark trend (CoreMark)
+
+Append-only, like the synthesis trend. A row per CoreMark run on the board:
+`make impl FW_IMAGE=sw/build/coremark.hex`, `make prog`, then the UART log
+saved as `docs/reports/coremark_board.txt` and the simulation's
+`tb/cocotb/sim_build/coremark_sim.txt` (from `make sim`) as
+`docs/reports/coremark_sim.txt`, both committed with the change that
+produced them. CoreMark/MHz is from the board; IPC is counted through RVFI in
+RTL simulation of the same SoC, one iteration. `-O2 -march=rv32i
+-mabi=ilp32`, GCC 16.1.0, 2K performance run.
+
+| Date | Build | Core clock | Iterations | Cycles | CoreMark/MHz | IPC (sim) |
+|---|---|---|---|---|---|---|
+| 2026-10-17 | First CoreMark: core + illegal trap, SoC + cycle counter | 50 MHz | 1000 | 1,038,847,073 | 0.962 | 0.691 |
 
 ---
 
@@ -254,7 +274,8 @@ riscv-formal found on its first run (see Decisions).
 | `make sw` | build `sw/**/*.c` → `.elf` / `.hex` | **broken**: its glob takes riscv-tests' C sources; superseded by `make fw` |
 | `make spike` | run `.elf` on spike | untested, depends on `make sw` |
 | `make fw` | first-light firmware → `sw/build/hello.hex` (board), `hello_sim.hex` (sim) | working; local riscv32 or CI's riscv64 gcc |
-| `make impl` | board-level synth + route + bitstream (`syn/impl_arty.tcl`), reports `docs/reports/*_board.*`; refuses a missing RAM image, writes no bitstream if timing fails | working |
+| `make bench` | CoreMark (submodule `sw/coremark`, port `sw/coremark-port/`, links libgcc) → `sw/build/coremark.hex` (board, `COREMARK_ITERATIONS`=1000), `coremark_sim.hex` (1 iteration) | working locally; CI's riscv64 libgcc for rv32i untested |
+| `make impl` | board-level synth + route + bitstream (`syn/impl_arty.tcl`), reports `docs/reports/*_board.*`; refuses a missing RAM image, writes no bitstream if timing fails; `FW_IMAGE=` picks the RAM image (default first light) | working |
 | `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
 | `make prog` | Arty attached to WSL (usbipd): programs it with `openFPGALoader -b arty_a7_100t`; otherwise prints the Hardware Manager steps and the Windows path | working, both routes tried on the board |
 | `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks, then `scripts/riscv-formal.sh` (checks + covers, verdicts read from status files); appends OSS CAD Suite's `bin/` to PATH itself; `FORMAL_JOBS=n` | working |
@@ -341,12 +362,10 @@ history, [formal-properties.md](formal-properties.md) and
 
 ## Next up
 
-> **Resume here (2026-10-17, Phases B and C done).** Formal: riscv-formal
-> 46/46 incl. `liveness`, `hang`, `ill` (illegal words now trap), every
-> consistency check shown to fail on a planted fault. UVM: 205/205 coverage
-> bins. First light is on the board (both programming routes work).
-> **Next:** Phase D's other boxes (Dhrystone/IPC, ILA, 100 MHz), then
-> Phase E (TMR).
+> **Resume here (2026-10-17, Phases B and C done; CoreMark on the board).**
+> 0.962 CoreMark/MHz on the Arty, IPC 0.691; `make bench` builds it, `make
+> impl FW_IMAGE=sw/build/coremark.hex` puts it in the bitstream. **Next:**
+> Phase D's other boxes (ILA, 100 MHz, a better photo), then Phase E (TMR).
 
 ### 1. Timing: IF/ID flush via the valid bit
 
@@ -445,7 +464,7 @@ that changed meaningful state.
 
 ---
 
-*Last updated: 2026-10-17 — Phase B done. Illegal instructions now trap
-(decoder, both models, tests); riscv-formal gained `ill`, `liveness`, `hang`,
-`causal_mem` (46/46); `pc_bwd`, `causal`, `liveness`, `hang`, `ill` each shown
-to fail on a planted fault. Next: Phase D's remaining boxes.*
+*Last updated: 2026-10-17 — CoreMark on the board: 0.962 CoreMark/MHz,
+validated; IPC 0.691 counted through RVFI in simulation. SoC gained a 32-bit
+cycle counter (0x1000_0010); CoreMark is a submodule, our port in
+sw/coremark-port/. Next: ILA, 100 MHz, then Phase E.*

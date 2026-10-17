@@ -8,6 +8,7 @@
 #   make spike  run the .elf on the spike reference model
 #   make synth  out-of-context synth + impl of the core, reports to docs/reports
 #   make fw     first-light firmware for the board SoC
+#   make bench  CoreMark for the board SoC (board and simulation images)
 #   make impl   board-level bitstream for the Arty A7;  make prog  program it
 #   make model-test  the C golden model alone, on riscv-tests rv32ui
 #   make uvm    UVM regression in XSim against the golden model
@@ -131,6 +132,35 @@ $(FW_BUILD)/hello_sim.elf: $(FW_DIR)/hello.c $(FW_DEPS)
 	@mkdir -p $(FW_BUILD)
 	$(RISCV_PREFIX)gcc $(FW_CFLAGS) -DDELAY_LOOPS=20u -o $@ $(FW_DIR)/crt0.S $<
 
+# CoreMark (sw/coremark, unmodified, as its run rules require) with this
+# SoC's port (sw/coremark-port/). The board image runs COREMARK_ITERATIONS,
+# enough for CoreMark's 10-second minimum at 50 MHz; the simulation image
+# runs one iteration, which still validates every CRC. Unlike first light it
+# links libgcc: RV32I has no multiply or divide, and CoreMark uses both.
+COREMARK_ITERATIONS ?= 1000
+BENCH_OPT    := -O2
+BENCH_SRCS   := sw/coremark-port/core_portme.c \
+                $(addprefix sw/coremark/,core_list_join.c core_main.c \
+                  core_matrix.c core_state.c core_util.c)
+BENCH_CFLAGS := $(filter-out -O2,$(FW_CFLAGS)) $(BENCH_OPT) \
+                -Isw/coremark-port -Isw/coremark \
+                '-DFLAGS_STR="$(BENCH_OPT) -march=rv32i -mabi=ilp32"'
+
+.PHONY: bench
+bench: $(FW_BUILD)/coremark.hex $(FW_BUILD)/coremark_sim.hex
+
+$(FW_BUILD)/coremark.elf: $(BENCH_SRCS) sw/coremark-port/core_portme.h $(FW_DEPS)
+	@test -f sw/coremark/core_main.c || { echo "sw/coremark is empty -- run: git submodule update --init sw/coremark" >&2; exit 1; }
+	@mkdir -p $(FW_BUILD)
+	$(RISCV_PREFIX)gcc $(BENCH_CFLAGS) -DITERATIONS=$(COREMARK_ITERATIONS) \
+		-o $@ $(FW_DIR)/crt0.S $(BENCH_SRCS) -lgcc
+
+$(FW_BUILD)/coremark_sim.elf: $(BENCH_SRCS) sw/coremark-port/core_portme.h $(FW_DEPS)
+	@test -f sw/coremark/core_main.c || { echo "sw/coremark is empty -- run: git submodule update --init sw/coremark" >&2; exit 1; }
+	@mkdir -p $(FW_BUILD)
+	$(RISCV_PREFIX)gcc $(BENCH_CFLAGS) -DITERATIONS=1 \
+		-o $@ $(FW_DIR)/crt0.S $(BENCH_SRCS) -lgcc
+
 $(FW_BUILD)/%.hex: $(FW_BUILD)/%.elf scripts/bin2hex.py
 	$(RISCV_PREFIX)objcopy -O binary $< $(FW_BUILD)/$*.bin
 	python3 scripts/bin2hex.py $(FW_BUILD)/$*.bin $@
@@ -197,9 +227,13 @@ uvm:
 BIT := syn/build/board/arty_a7_top.bit
 
 .PHONY: impl prog
-impl: $(FW_BUILD)/hello.hex
+# FW_IMAGE picks the program the bitstream's RAM holds: first light by
+# default, or e.g. FW_IMAGE=sw/build/coremark.hex for the benchmark.
+FW_IMAGE ?= $(FW_BUILD)/hello.hex
+
+impl: $(FW_IMAGE)
 	$(VIVADO) -mode batch -nojournal -notrace \
-		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_BUILD)/hello.hex
+		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE)
 
 # Two routes, picked per session (docs/vivado-setup.md section 6). If the Arty
 # is attached to WSL with usbipd-win (FTDI 0403:6010 visible here), program it

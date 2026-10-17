@@ -70,22 +70,26 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_hazard:test_hazard \
          riscv_branch:test_branch \
          uart_tx:test_uart_tx \
-         soc:test_soc
+         soc:test_soc \
+         soc:test_coremark
 
-# The SoC runs the first-light firmware's simulation image, built by
-# `make fw` (the regression below builds it first; a TEST_ONE run of soc
-# needs it built). Read by $readmemh when the simulation starts, so a
-# rebuilt image needs no recompile.
-FW_SIM_HEX := $(abspath $(REPO)/sw/build/hello_sim.hex)
-
+# The SoC runs a firmware simulation image from sw/build/, built by `make fw`
+# and `make bench` (the regression below builds both first; a TEST_ONE run of
+# soc needs them built): first light for test_soc, CoreMark for
+# test_coremark. The image path is a compile-time parameter, so each gets its
+# own build directory and results file. Read by $readmemh when the
+# simulation starts, so a rebuilt image needs no recompile.
 ifdef TEST_ONE
   TOPLEVEL              := $(word 1,$(subst :, ,$(TEST_ONE)))
-  ifeq ($(TOPLEVEL),soc)
-    COMPILE_ARGS += -GINIT_FILE='"$(FW_SIM_HEX)"'
-  endif
   MODULE                := $(word 2,$(subst :, ,$(TEST_ONE)))
-  SIM_BUILD             := sim_build/$(TOPLEVEL)
-  COCOTB_RESULTS_FILE   := results_$(TOPLEVEL).xml
+  BUILD_TAG             := $(TOPLEVEL)
+  ifeq ($(TOPLEVEL),soc)
+    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,hello_sim)
+    BUILD_TAG           := soc_$(SOC_IMAGE)
+    COMPILE_ARGS        += -GINIT_FILE='"$(abspath $(REPO)/sw/build/$(SOC_IMAGE).hex)"'
+  endif
+  SIM_BUILD             := sim_build/$(BUILD_TAG)
+  COCOTB_RESULTS_FILE   := results_$(BUILD_TAG).xml
   include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim
 else
 
@@ -94,7 +98,7 @@ else
 # first.
 .PHONY: all
 all:
-	$(MAKE) --no-print-directory -C $(REPO) fw
+	$(MAKE) --no-print-directory -C $(REPO) fw bench
 	@rc=0; \
 	for t in $(TESTS); do \
 	  echo "=== $$t ==="; \

@@ -1,15 +1,20 @@
-// First-light SoC: the core, one dual-port RAM, four LEDs and a UART
-// transmitter. Board-independent -- clock and reset arrive ready to use --
+// First-light SoC: the core, one dual-port RAM, four LEDs, a UART
+// transmitter and a cycle counter. Board-independent -- clock and reset arrive ready to use --
 // so cocotb can run it whole with the real program; arty_a7_top.sv adds the
 // clocking and the pins.
 //
-// Memory map (decoded on address bits [31:28] and [3:2] only, so each region
+// Memory map (decoded on address bits [31:28] and [4:2] only, so each region
 // aliases through its window):
 //
 //   0x0000_0000  RAM, RAM_WORDS x 32 bits, code and data (ram_dp.sv)
 //   0x1000_0000  LED      W: bits [3:0] drive the LEDs    R: their value
 //   0x1000_0004  UART TX  W: bits [7:0] are sent           R: 0
 //   0x1000_0008  UART ST  R: bit 0 = ready for a byte      W: ignored
+//   0x1000_0010  CYCLE    R: cycles since reset, mod 2^32     W: ignored
+//
+// The cycle counter is how software times itself (the core has no CSRs, so
+// rdcycle is an illegal instruction). 32 bits wrap after 85 s at 50 MHz;
+// the difference of two reads is exact for any interval shorter than that.
 //
 // A byte written to UART TX while it is not ready is dropped: software polls
 // UART ST first. Byte stores (sb) work on every register: the core puts a
@@ -34,9 +39,10 @@ module soc #(
 
   localparam logic [3:0] REGION_RAM = 4'h0;
   localparam logic [3:0] REGION_IO  = 4'h1;
-  localparam logic [1:0] IO_LED     = 2'd0;
-  localparam logic [1:0] IO_UART_TX = 2'd1;
-  localparam logic [1:0] IO_UART_ST = 2'd2;
+  localparam logic [2:0] IO_LED     = 3'd0;
+  localparam logic [2:0] IO_UART_TX = 3'd1;
+  localparam logic [2:0] IO_UART_ST = 3'd2;
+  localparam logic [2:0] IO_CYCLE   = 3'd4;
 
   logic [31:0] imem_addr, imem_rdata;
   logic [31:0] dmem_addr, dmem_wdata, dmem_rdata;
@@ -138,7 +144,7 @@ module soc #(
 
   always_ff @(posedge clk_i) begin
     if (rst_i)                                   led_o <= '0;
-    else if (io_we && (dmem_addr[3:2] == IO_LED)) led_o <= dmem_wdata[3:0];
+    else if (io_we && (dmem_addr[4:2] == IO_LED)) led_o <= dmem_wdata[3:0];
   end
 
   uart_tx #(
@@ -148,10 +154,18 @@ module soc #(
       .clk_i   (clk_i),
       .rst_i   (rst_i),
       .data_i  (dmem_wdata[7:0]),
-      .valid_i (io_we && (dmem_addr[3:2] == IO_UART_TX)),
+      .valid_i (io_we && (dmem_addr[4:2] == IO_UART_TX)),
       .ready_o (uart_ready),
       .tx_o    (uart_tx_o)
   );
+
+  // ---- cycle counter ----
+  logic [31:0] cycle_q;
+
+  always_ff @(posedge clk_i) begin
+    if (rst_i) cycle_q <= '0;
+    else       cycle_q <= cycle_q + 32'd1;
+  end
 
   // ---- I/O reads: registered, to arrive in WB like a block RAM's data ----
   logic        io_rsel_q;
@@ -163,9 +177,10 @@ module soc #(
       io_rdata_q <= '0;
     end else begin
       io_rsel_q <= io_sel;
-      case (dmem_addr[3:2])
+      case (dmem_addr[4:2])
         IO_LED:     io_rdata_q <= {28'b0, led_o};
         IO_UART_ST: io_rdata_q <= {31'b0, uart_ready};
+        IO_CYCLE:   io_rdata_q <= cycle_q;
         default:    io_rdata_q <= '0;
       endcase
     end

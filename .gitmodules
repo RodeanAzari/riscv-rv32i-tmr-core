@@ -4,3 +4,6 @@
 [submodule "tb/formal/riscv-formal"]
 	path = tb/formal/riscv-formal
 	url = https://github.com/YosysHQ/riscv-formal.git
+[submodule "sw/coremark"]
+	path = sw/coremark
+	url = https://github.com/eembc/coremark.git

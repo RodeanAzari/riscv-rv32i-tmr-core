@@ -283,7 +283,7 @@ A phase is done when **every** box is checked. No partial credit.
 - [ ] Synthesizes and meets timing; Fmax documented
 - [ ] UART peripheral working
 - [ ] Compiled C program boots and prints over UART
-- [ ] Dhrystone or CoreMark runs; IPC measured
+- [x] Dhrystone or CoreMark runs; IPC measured
 - [ ] ILA probes on pipeline registers
 - [ ] Timing + utilization reports committed to `docs/`
 - [ ] Photo/video of the board running
