@@ -68,7 +68,8 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_decoder:test_decoder \
          riscv_mem_align:test_mem_align \
          riscv_hazard:test_hazard \
-         riscv_branch:test_branch
+         riscv_branch:test_branch \
+         uart_tx:test_uart_tx
 
 ifdef TEST_ONE
   TOPLEVEL              := $(word 1,$(subst :, ,$(TEST_ONE)))
