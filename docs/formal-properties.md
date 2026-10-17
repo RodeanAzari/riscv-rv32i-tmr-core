@@ -38,6 +38,7 @@ Tools: OSS CAD Suite **2026-10-07** — Yosys 0.69+208, SymbiYosys 0.69, Yices
 | 8 | F1/F2 forwarding correctness (§5.5): EX's operands equal the architectural register values; L1: no instruction in EX ever needs an in-flight load result | `riscv_core` | same | k-induction, holds from k = 2, run at 10; needs invariant R1 | **proven** | 6 / 6 |
 | 9 | X1 reset commits nothing (§5.5 "no X into committed state", the reset case): no register write and no store while `rst_i` is high | `riscv_core` | same | k-induction (with the above) | **proven** | 2 / 2 |
 | 10 | B1/B2 branch flush correctness (§5.5): a bubble in any stage can do nothing; valid instructions retire in control-flow order, each at its predecessor's `pc_wdata` | `riscv_core` | same | k-induction, holds from k = 7, run at 10; no helper invariant | **proven** | 4 / 4 |
+| 11 | SH1 no structural hazard on the register file ports (§5.5): a read of the register WB is writing returns WB's data, on each port | `riscv_core` | `tb/formal/core.sby` | k-induction; alone holds at k = 1 (combinational), run at 10 with the rest | **proven** | 2 / 2 |
 
 ### 1. x0 invariance (register file)
 
@@ -271,6 +272,36 @@ Shown to fail (2026-10-10):
 | redirect no longer flushes IF/ID's word; the valid bit still clears | B1 (ID/EX), step 5: the unflushed word issues as a bubble that can branch |
 | redirect forgotten in IF/ID entirely, word **and** valid bit | **B2**, step 7: the wrong-path word retires as valid, at the wrong pc. B1 cannot see this one, because the copy is wrong in the same way as the design |
 | redirect no longer bubbles ID/EX's control bits | B1 (ID/EX), step 4: a bubble with a register write |
+
+### 11. No structural hazard on the register file ports (core, internal)
+
+Most of this property holds by construction, so there is nothing to assert
+for it. The register file has one write port, and WB is its only writer. It
+has two read ports, and only ID's decoder drives them. No two stages ever
+compete for a port, and two writes in one cycle cannot be expressed. An
+assertion of either would pass without checking anything.
+
+The one real hazard is the classic five-stage one: WB writes a register in
+the same cycle that ID reads it. The register file's write-first bypass
+resolves it, and SH1 asserts that it does. When WB writes rd ≠ x0, a read
+of rd on either port returns WB's data. The read ports are combinational
+from their inputs, so SH1 is not gated on `f_past_valid`. It holds in every
+state, including the arbitrary first one. On its own it proves at k = 1.
+
+F1/F2 already imply SH1, because a stale ID read reaches EX as a wrong
+operand. SH1 checks it where it happens, one cycle earlier, and pins it on
+the register file instead of the forwarding network.
+
+Covers, after reset, on each port: a valid instruction in ID reads `f_reg`
+in the cycle WB writes it, with WB's data different from the stored value,
+so the bypass decides the read (step 5 each).
+
+Shown to fail (2026-10-16):
+
+| Planted fault | Result |
+|---|---|
+| write-first bypass removed from both read ports | SH1, step 5, on each port |
+| same, with SH1 disabled | F2, step 6: the stale read reaches EX one cycle later |
 
 ## Bugs formal found that simulation missed
 

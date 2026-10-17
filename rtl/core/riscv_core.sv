@@ -921,6 +921,23 @@ module riscv_core #(
     end
   end
 
+  // ---- No structural hazard on the register file ports (5.5) ----
+  // Most of this holds by construction: one write port, driven only by WB,
+  // and two read ports, driven only by ID's decoder -- no two stages ever
+  // compete for a port, so there is nothing there to assert. The one real
+  // hazard is the classic five-stage one: WB writes a register in the same
+  // cycle ID reads it. The register file's write-first bypass resolves it.
+  //
+  // SH1: a read of the register WB is writing (not x0) returns WB's data, on
+  // each port. Not gated on f_past_valid: the read ports are combinational
+  // from the inputs, so it holds in every state, the arbitrary first included.
+  always_comb begin
+    if (wb_rd_we_o && (wb_rd_addr_o != '0)) begin
+      if (dec_rs1_addr == wb_rd_addr_o) assert (rf_rs1_rdata == wb_rd_wdata);
+      if (dec_rs2_addr == wb_rd_addr_o) assert (rf_rs2_rdata == wb_rd_wdata);
+    end
+  end
+
   // ---- Branch flush correctness (5.5) ----
   // "No wrong-path instruction ever reaches WB", as two halves that need
   // each other:
@@ -1018,6 +1035,14 @@ module riscv_core #(
         cover ((id_ex_rs2_addr_o == f_reg) && id_ex_fwd_rs2_mem_wb);
         cover ((id_ex_rs2_addr_o == f_reg) && f_shadow_known
                && !id_ex_fwd_rs2_ex_mem && !id_ex_fwd_rs2_mem_wb);
+      end
+      // SH1's case, on each port: a real instruction in ID reads the
+      // register WB is writing, and the new value differs from the stored
+      // one, so the bypass is what decides the read.
+      if (if_id_valid && wb_rd_we_o && (wb_rd_addr_o == f_reg) && (f_reg != '0)
+          && (wb_rd_wdata != f_reg_stored)) begin
+        cover (dec_rs1_addr == f_reg);
+        cover (dec_rs2_addr == f_reg);
       end
       // B2's case: a retirement straight after a taken transfer.
       cover (f_retire && f_retired_taken);
