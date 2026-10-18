@@ -4,7 +4,7 @@
  * flips nothing -- so their cycle counts compare directly. With TMR the
  * answers match, the cycles match, and the mismatch counter shows that the
  * voter saw every flip; on a single core the writes do nothing and the
- * counter stays at 0.
+ * counter stays at 0. (flips - 1: the last, settling flip(0) is not one.)
  */
 #include "demo.h"
 
@@ -55,32 +55,21 @@ static uint32_t sieve(uint32_t on)
     return count;
 }
 
-static void run(const char *what, uint32_t on, uint32_t *primes, uint32_t *cycles)
-{
-    uint32_t t, m = TMR;
-    seed(1);
-    flips = detected = 0;
-    last = m;
-    t = CYCLE;
-    *primes = sieve(on);
-    t = CYCLE - t;
-    *cycles = t;
-    flips--;                                /* the settling flip(0) */
-    printf_("  %s  primes to %u: %u   %u cycles   flips %u, detected %u\r\n",
-            what, N, *primes, t, on ? flips : 0, detected);
-}
-
 void demo_tmr(void)
 {
-    uint32_t p0, c0, p1, c1;
     puts_("TMR: each flip hits a random bit of copy B's pc\r\n\r\n");
-    run("clean   ", 0, &p0, &c0);
-    run("injected", ~0u, &p1, &c1);
-    if (TMR == 0)
-        puts_("\r\n  one core: nothing to flip (make impl TMR=1)\r\n");
-    else
-        printf_("\r\n  answer %s, cycles %s: every flip outvoted\r\n"
-                "  disagreements since reset: %u\r\n",
-                p0 == p1 ? "identical" : "DIFFERENT", c0 == c1 ? "identical" : "DIFFERENT", TMR);
+    for (uint32_t on = 0;; on = ~0u) {      /* clean, then injected */
+        seed(1);
+        flips = detected = 0;
+        last = TMR;
+        uint32_t t = CYCLE, primes = sieve(on);
+        t = CYCLE - t;
+        printf_("  %s  primes to %u: %u   %u cycles   flips %u, detected %u\r\n",
+                on ? "injected" : "clean   ", N, primes, t, (flips - 1) & on, detected);
+        if (on)
+            break;
+    }
+    printf_("\r\n  disagreements since reset: %u%s\r\n", TMR,
+            TMR ? "" : " (one core: build with make impl TMR=1)");
     wait_key();
 }

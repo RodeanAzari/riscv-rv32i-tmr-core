@@ -194,8 +194,8 @@ read, until software rewrites the register.
 
 | Sieve to 163,840 on the TMR core, 100 MHz | Primes | Cycles | Faults injected | Detected |
 |---|---|---|---|---|
-| Clean | 14,999 | 3,347,320 | 0 | 0 |
-| Injected | 14,999 | 3,347,320 | 1,887 | 1,887 |
+| Clean | 14,999 | 3,352,978 | 0 | 0 |
+| Injected | 14,999 | 3,352,978 | 1,887 | 1,887 |
 
   Same answer, not one cycle lost: correction happens in the vote, with
   no stall or retry. Simulation of the same SoC gives the same counts. On the
@@ -298,7 +298,7 @@ the board. Board results, from
 | **Game of Life** | Animated; pause, step, random or glider gun; the LEDs count generations | 81,581 cycles per generation |
 | **Tower of Hanoi** | Animated, adjustable speed | 2ⁿ − 1 moves |
 | **Prime sieve** | Up to 163,840, then tests any number you type | π(10⁵) = 9592; the full sieve in 16.0 ms |
-| **TMR fault injection** | The sieve again, with a random bit of one copy's pc flipped 1,887 times while it runs (TMR build) | Same 14,999 primes, same 3,347,320 cycles, all 1,887 flips detected ([`tmr_inject_board.txt`](docs/reports/tmr_inject_board.txt)) |
+| **TMR fault injection** | The sieve again, with a random bit of one copy's pc flipped 1,887 times while it runs (TMR build) | Same 14,999 primes, same 3,352,978 cycles, all 1,887 flips detected ([`tmr_inject_board.txt`](docs/reports/tmr_inject_board.txt)) |
 
 ## In Vivado
 

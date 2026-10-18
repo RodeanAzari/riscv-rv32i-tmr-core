@@ -3,15 +3,15 @@ make impl TMR=1 (three voted cores, 100 MHz, bootloader image), make prog; demo 
 (sw/demo/, -Os) loaded with scripts/load.py over /dev/ttyUSB1, keys sent by script.
 Demo 7 (sw/demo/tmr.c): the sieve to 163840 twice, the second time flipping one
 random bit of copy B's pc every 64 marks (soc.sv TMR register, 0x1000_0014).
+Built with GCC 16.1.0; cycle counts depend on the compiler (CI's GCC 13 differs).
 Run twice after one reset, then demos 1 and 6 to show the core still exact.
 Output with terminal control codes removed.
 
 TMR: each flip hits a random bit of copy B's pc
 
-  clean     primes to 163840: 14999   3347320 cycles   flips 0, detected 0
-  injected  primes to 163840: 14999   3347320 cycles   flips 1887, detected 1887
+  clean     primes to 163840: 14999   3352978 cycles   flips 0, detected 0
+  injected  primes to 163840: 14999   3352978 cycles   flips 1887, detected 1887
 
-  answer identical, cycles identical: every flip outvoted
   disagreements since reset: 1887
 
 [press a key]
@@ -32,10 +32,9 @@ TMR: each flip hits a random bit of copy B's pc
 
 TMR: each flip hits a random bit of copy B's pc
 
-  clean     primes to 163840: 14999   3347320 cycles   flips 0, detected 0
-  injected  primes to 163840: 14999   3347320 cycles   flips 1887, detected 1887
+  clean     primes to 163840: 14999   3352978 cycles   flips 0, detected 0
+  injected  primes to 163840: 14999   3352978 cycles   flips 1887, detected 1887
 
-  answer identical, cycles identical: every flip outvoted
   disagreements since reset: 3774
 
 [press a key]
@@ -58,9 +57,9 @@ system
   RV32I, all 40 instructions; 5-stage pipeline, full forwarding,
   branches resolved in EX (static not-taken), every exception halts
   core clock 100 MHz (as built; the cycle counter counts it)
-  RAM 32 KiB: bootloader 4 KiB, this program 17248 bytes + 10388 bytes of data,
+  RAM 32 KiB: bootloader 4 KiB, this program 17032 bytes + 10388 bytes of data,
   stack from the top
-  cycles since reset 1576640033 (15766.400 ms)
+  cycles since reset 1575072053 (15750.720 ms)
 
 RAM test, 10 KiB scratch buffer, 4 patterns: pass
 
