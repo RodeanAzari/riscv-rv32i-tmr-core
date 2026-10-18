@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Summarise a LibreLane run (make asic) for docs/reports/.
 
-Usage: scripts/asic_summary.py <run dir> <out dir> <img dir>
+Usage: scripts/asic_summary.py <run dir> <out dir>
 
 Writes <out dir>/summary_asic.txt from the run's final metrics, copies the
 post-PnR STA summary (sta_asic.rpt) and the manufacturability report
-(manufacturability_asic.rpt), and the layout render to <img dir>/asic_layout.png.
-Every number is read from the run's files.
+(manufacturability_asic.rpt). Every number is read from the run's files.
+LibreLane's own layout render is not copied: the top metal hides the cells.
+The layout screenshots in docs/img/asic/ are taken by hand in KLayout.
 """
 
 import glob
@@ -36,9 +37,13 @@ def fmax(period, slack):
     return 1000.0 / (period - slack)
 
 
-def main(run, out_dir, img_dir):
+def main(run, out_dir):
     m = json.load(open(os.path.join(run, "final", "metrics.json")))
-    cfg = json.load(open(os.path.join(run, "resolved.json")))
+    # The flow's configuration, merged from the steps' copies: resolved.json is
+    # rewritten when the run is opened in a viewer (--last-run --flow openinklayout).
+    cfg = {}
+    for f in glob.glob(os.path.join(run, "*-*", "config.json")):
+        cfg.update(json.load(open(f)))
     pre = json.load(open(os.path.join(step_dir(run, "openroad-staprepnr"), "state_out.json")))["metrics"]
     period = float(cfg["CLOCK_PERIOD"])
 
@@ -111,14 +116,10 @@ def main(run, out_dir, img_dir):
                 os.path.join(out_dir, "sta_asic.rpt"))
     shutil.copy(os.path.join(step_dir(run, "misc-reportmanufacturability"), "manufacturability.rpt"),
                 os.path.join(out_dir, "manufacturability_asic.rpt"))
-    renders = glob.glob(os.path.join(run, "final", "render", "*.png"))
-    if renders:
-        os.makedirs(img_dir, exist_ok=True)
-        shutil.copy(renders[0], os.path.join(img_dir, "asic_layout.png"))
     print("\n".join(lines))
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 3:
         sys.exit(__doc__)
     main(*sys.argv[1:])

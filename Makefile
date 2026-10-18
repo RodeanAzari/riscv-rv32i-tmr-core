@@ -389,7 +389,7 @@ asic:
 	nix-shell $(LIBRELANE_DIR)/shell.nix --run "librelane --run-tag asic --overwrite \
 		--design-dir $(abspath syn/build/asic) \
 		-c VERILOG_FILES='$(abspath $(RTL))' $(abspath syn/asic_config.yaml)"
-	python3 scripts/asic_summary.py syn/build/asic/runs/asic docs/reports docs/img
+	python3 scripts/asic_summary.py syn/build/asic/runs/asic docs/reports
 
 
 # --- housekeeping ----------------------------------------------------------

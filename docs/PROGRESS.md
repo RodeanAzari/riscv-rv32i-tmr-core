@@ -326,8 +326,10 @@ fanout trees the resizer built from delay cells (`clkdlybuf4s*`,
 `dlymetal*`), including the forwarding select on the critical path: 2,683
 delay cells in the netlist, 1,253 of them hold buffers. Pre-layout estimate
 (synthesised netlist): setup −1.464 ns, reg-to-reg +3.249 ns at nom_ss.
-The auto render (`docs/img/asic_layout.png`) is unreadable (top metal covers
-it); a layout screenshot with chosen layers is still to take.
+Layout screenshots from KLayout (met4/met5 power grid hidden), in
+`docs/img/asic/run1/`: `layout.png`, the whole block, and `layout-zoom.png`,
+single standard cells with li1/met1 wiring and their names. LibreLane's own
+render is not kept (the top metal covers it).
 
 ## Benchmark trend (CoreMark)
 
@@ -506,7 +508,7 @@ history, [formal-properties.md](formal-properties.md) and
 > board (WNS +0.095 ns); live injector on the board (demo 7). **Next:**
 > LibreLane run #1: done 2026-10-18 (`make asic`), DRC/LVS clean, but setup
 > fails at the slow corner on the fetch-address output (see the ASIC section);
-> decide whether to close it, then a layout screenshot, then the
+> decide whether to close it (layout screenshots taken), then the
 > Phase E README update and the Vivado/floorplan screenshot set for TMR
 > (the committed floorplan SVGs are the TMR build before the injector).
 
