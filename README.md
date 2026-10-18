@@ -202,6 +202,10 @@ read, until software rewrites the register.
   no stall or retry. Simulation of the same SoC gives the same counts. On the
   single-core build the writes do nothing, and the demo says so.
 
+https://github.com/user-attachments/assets/3b082685-84fa-4263-9e76-155c5df5d54e
+
+*On the board, TMR build: demo 7 injecting faults pass after pass; the flip and detected totals climb together while primes and cycles stay the same.*
+
 What it costs, same RTL, same conditions:
 
 | | Single core | TMR | |
