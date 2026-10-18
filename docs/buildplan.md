@@ -251,6 +251,19 @@ Hard boundaries. If a task seems to require one of these, stop and flag it rathe
 - Training hardware, backward passes, ML framework integration
 - BF16 *(only if Phases F–H finish early, and only after INT8 is complete and measured on hardware)*
 
+**After the project — the Doom finale.** Once Phase H is done and every box in
+§8 is checked, and not before: build what the SoC lacks to play Doom on the
+Arty. Everything below is out of scope until then.
+- **Memory:** the 256 MB DDR3 through Xilinx's MIG on the AXI interconnect,
+  with a cache in front of it (Doom needs a few MB; block RAM is ~600 KB)
+- **The game data:** the shareware WAD (~4 MB) read from the Arty's 16 MB
+  QSPI flash, or copied into DDR at boot
+- **Video:** a framebuffer and VGA timing in RTL, out through a VGA Pmod
+  (the Arty has no video output)
+- **Input and time:** keys over the UART; the cycle counter as the clock
+- **Speed:** the M extension (Doom's fixed-point math multiplies constantly),
+  measured as frames per second before and after
+
 ---
 
 ## 8. Phase definitions of done

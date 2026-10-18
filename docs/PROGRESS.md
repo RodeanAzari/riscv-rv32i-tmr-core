@@ -400,6 +400,11 @@ history, [formal-properties.md](formal-properties.md) and
   `make floorplan` overwrites `docs/img/floorplan_board*.svg`: move the
   previous pair into that stage's folder first, for the before/after.
 
+- **The Doom finale, at the very end of the project** (after Phase H, once
+  everything else is done): build what the SoC lacks to run Doom on the
+  Arty (DDR + cache, WAD from flash, VGA framebuffer, M extension). Scope
+  and list in buildplan.md §7.
+
 ### 1. Timing: IF/ID flush via the valid bit
 
 Not needed for 100 MHz (met with +1.550 ns), but still the next lever: the
