@@ -204,7 +204,7 @@ read, until software rewrites the register.
 
 https://github.com/user-attachments/assets/3b082685-84fa-4263-9e76-155c5df5d54e
 
-*On the board, TMR build: demo 7 injecting faults pass after pass; the flip and detected totals climb together while primes and cycles stay the same.*
+*On the board, TMR build: demo 7 injecting faults pass after pass. In the terminal the flip and detected totals climb together while primes and cycles stay the same; on the Arty, LD4-LD7 count the disagreements in binary (one step per 4,096).*
 
 What it costs, same RTL, same conditions:
 
