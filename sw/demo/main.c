@@ -65,6 +65,7 @@ static void menu(void)
           "  4  Conway's Game of Life\r\n"
           "  5  Tower of Hanoi\r\n"
           "  6  prime sieve\r\n"
+          "  7  TMR: inject faults while it runs\r\n"
           "  q  back to the bootloader\r\n"
           "\r\n> ");
 }
@@ -83,6 +84,7 @@ int main(void)
         case '4': demo_life(); break;
         case '5': demo_hanoi(); break;
         case '6': demo_primes(); break;
+        case '7': demo_tmr(); break;
         case 'q': LED = 0; return 0;
         default: break;
         }

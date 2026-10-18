@@ -42,6 +42,9 @@ SECTIONS
     __bss_end = .;
   }
 
+  /* 1 KiB of stack: the demo reel's deepest call chain (Tower of Hanoi,
+   * eight levels of recursion, then printf) takes about 660 bytes by
+   * gcc -fstack-usage (2026-10-18). */
   __stack_top = ORIGIN(APP) + LENGTH(APP);
-  ASSERT(__stack_top - __bss_end >= 2048, "program: under 2 KiB left for the stack")
+  ASSERT(__stack_top - __bss_end >= 1024, "program: under 1 KiB left for the stack")
 }

@@ -15,6 +15,8 @@
 #define UART_ST  REG(0x10000008u)    /* R: the status bits below */
 #define UART_RX  REG(0x1000000Cu)    /* R: the waiting byte; W: acknowledge */
 #define CYCLE    REG(0x10000010u)    /* R: core cycles since reset, mod 2^32 */
+#define TMR      REG(0x10000014u)    /* R: TMR mismatches since reset (0 without TMR)
+                                        W: bits to flip in copy B's pc, once */
 
 #define UART_TX_READY 1u
 #define UART_RX_VALID 2u

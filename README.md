@@ -5,7 +5,8 @@ verified, checked by a UVM environment against a golden model, and running on
 an FPGA at 100 MHz**: a Digilent Arty A7-100T, where it runs CoreMark at
 0.962 CoreMark/MHz. It can also run as **three voted copies (triple modular
 redundancy)**, still at 100 MHz: in 10,000 injected single-bit faults, none
-changed its output.
+changed its output, and on the board it shrugs off faults injected live
+while it computes.
 
 The project has two stages. Stage 1 is the CPU: verified, hardware-proven,
 then made fault-tolerant with triple modular redundancy (TMR) and taken through
@@ -34,16 +35,16 @@ and flip-flops. The single core's floorplan, from Phase D, is
 |---|---|
 | **ISA** | RV32I, all 40 instructions; every exception traps (halts) |
 | **Pipeline** | 5 stages, full forwarding, 1-cycle load-use stall, branches resolved in EX (static not-taken) |
-| **On the board** | Arty A7-100T, **100 MHz**, timing met with +0.955 ns slack (110.6 MHz estimate); the TMR core also meets 100 MHz (+0.062 ns) |
+| **On the board** | Arty A7-100T, **100 MHz**, timing met with +0.955 ns slack (110.6 MHz estimate); the TMR core also meets 100 MHz (+0.095 ns) |
 | **CoreMark** | **0.962 CoreMark/MHz**, about **96 CoreMark** at 100 MHz, validated, with no hardware multiply |
 | **IPC** | 0.691 on CoreMark (CPI 1.447), counted in RTL simulation of the same SoC; it matches the board's cycle count to 0.0013% |
-| **Size** | 966 LUT, 467 FF (core alone); 1123 LUT, 435 FF, 8 BRAM (whole SoC on the board): under 2% of the chip. TMR: 3370 LUT, 1589 FF on the board |
-| **Fault tolerance** | Three voted copies with feedback; voter formally proven; **10,000 random single-bit faults, 0 failures**, every detected fault corrected and the copies back in step |
+| **Size** | 966 LUT, 467 FF (core alone); 1123 LUT, 435 FF, 8 BRAM (whole SoC on the board): under 2% of the chip. TMR: 3446 LUT, 1621 FF on the board |
+| **Fault tolerance** | Three voted copies with feedback; voter formally proven; **10,000 random single-bit faults, 0 failures**, every detected fault corrected and the copies back in step; **live on the board**, 1,887 faults injected during one computation, all outvoted, same answer, same cycle count |
 | **Formal** | riscv-formal **46/46 checks**; the pipeline's hazard, forwarding, flush, reset and X-propagation properties proven by k-induction; every check shown reachable, and the consistency checks shown to fail on planted bugs |
 | **Bugs formal caught that simulation missed** | **2**, both of which would have broken the ASIC (below) |
 | **UVM** | **205/205** functional coverage bins (100%); ~45,000 retirements per run compared with a C golden model, 0 mismatches |
-| **Simulation** | 306/306 cocotb tests, including the official `riscv-tests` suite (40/42; the 2 exclusions are explained) |
-| **Interactive** | A serial bootloader: programs load over the UART in a fraction of a second, no FPGA rebuild; six interactive demos |
+| **Simulation** | 308/308 cocotb tests, including the official `riscv-tests` suite (40/42; the 2 exclusions are explained) |
+| **Interactive** | A serial bootloader: programs load over the UART in a fraction of a second, no FPGA rebuild; seven interactive demos, one of them injecting faults into the running TMR core |
 | **CI** | Lint, simulation and formal on every push |
 
 ## Status
@@ -138,13 +139,13 @@ model (via DPI-C) on every RVFI retirement. **205/205 coverage bins** from
 run, 0 mismatches. Three planted RTL bugs (wrong forwarding priority, LBU
 sign-extending, a missing load-use stall) are each caught.
 
-**Simulation** (`make sim`, cocotb on Verilator): **306/306 tests**. Unit
+**Simulation** (`make sim`, cocotb on Verilator): **308/308 tests**. Unit
 tests for every module; random programs with every retirement checked against
 a Python golden model; the official **`riscv-tests` rv32ui suite, 40 of 42**
 (`fence_i` needs the Zifencei extension; `ma_data` expects misaligned
 accesses to work, and this core traps them); the first-light firmware and one
 CoreMark iteration on the whole SoC, CRCs checked; the bootloader receiving a
-program bit by bit on the RX pin; and each of the six demos below, its output
+program bit by bit on the RX pin; and each of the seven demos below, its output
 checked against an independent Python model. The core's tests and the SoC's
 first-light, CoreMark and bootloader tests run again on the TMR core, which
 must also report zero mismatches, and 1,000 injected faults must change
@@ -184,13 +185,31 @@ The latent ones are the honest limit of voting: a flipped bit in a register
 the program never writes again stays in that copy, outvoted whenever it is
 read, until software rewrites the register.
 
+- **Live, on the board** (demo 7, [`tmr_inject_board.txt`](docs/reports/tmr_inject_board.txt)):
+  a write to `0x1000_0014` flips the written bits of copy B's program
+  counter for real, in the flop. The demo runs a prime sieve twice: once
+  clean, once flipping a random pc bit every 64 composites marked. Both runs
+  execute the same instructions (the clean one writes 0), so they compare
+  exactly:
+
+| Sieve to 163,840 on the TMR core, 100 MHz | Primes | Cycles | Faults injected | Detected |
+|---|---|---|---|---|
+| Clean | 14,999 | 3,347,320 | 0 | 0 |
+| Injected | 14,999 | 3,347,320 | 1,887 | 1,887 |
+
+  Same answer, not one cycle lost: correction happens in the vote, with
+  no stall or retry. Simulation of the same SoC gives the same counts. On the
+  single-core build the writes do nothing, and the demo says so.
+
 What it costs, same RTL, same conditions:
 
 | | Single core | TMR | |
 |---|---|---|---|
-| Board LUT / FF | 1123 / 435 | 3370 / 1589 | 3.0x / 3.7x |
-| Board Fmax (100 MHz target) | 110.6 MHz | 100.6 MHz | −9.0% |
-| Core alone, out of context | 966 LUT, 120.4 MHz | 3658 LUT, 101.3 MHz | 3.8x, −15.9% |
+| Board LUT / FF | 1123 / 435 | 3446 / 1621 | 3.1x / 3.7x |
+| Board Fmax (100 MHz target) | 110.6 MHz | 101.0 MHz | −8.7% |
+| Core alone, out of context | 966 LUT, 120.4 MHz | 3690 LUT, 101.4 MHz | 3.8x, −15.8% |
+
+The TMR build includes the mismatch counter and the live injector.
 
 ## On the board
 
@@ -256,7 +275,7 @@ sits between the load and its use and forwarding covers it. Over this
 
 https://github.com/user-attachments/assets/613c0f44-95a8-44bf-8c4c-f08adaeafa4e
 
-*On the board, in PuTTY: the bootloader, then all six demos from the menu.*
+*On the board, in PuTTY: the bootloader, then the six original demos from the menu (demo 7, fault injection, came later).*
 
 The board boots a serial bootloader, so any program loads in a fraction of
 a second without rebuilding the FPGA:
@@ -266,7 +285,7 @@ make apps
 scripts/load.py sw/build/apps/demo.bin --term
 ```
 
-A menu of six demos ([`sw/demo/`](sw/demo/)), each interactive. Every one was
+A menu of seven demos ([`sw/demo/`](sw/demo/)), each interactive. Every one was
 checked in simulation against an independent Python model before it ran on
 the board. Board results, from
 [`demo_board.txt`](docs/reports/demo_board.txt):
@@ -279,6 +298,7 @@ the board. Board results, from
 | **Game of Life** | Animated; pause, step, random or glider gun; the LEDs count generations | 81,581 cycles per generation |
 | **Tower of Hanoi** | Animated, adjustable speed | 2ⁿ − 1 moves |
 | **Prime sieve** | Up to 163,840, then tests any number you type | π(10⁵) = 9592; the full sieve in 16.0 ms |
+| **TMR fault injection** | The sieve again, with a random bit of one copy's pc flipped 1,887 times while it runs (TMR build) | Same 14,999 primes, same 3,347,320 cycles, all 1,887 flips detected ([`tmr_inject_board.txt`](docs/reports/tmr_inject_board.txt)) |
 
 ## In Vivado
 
@@ -318,7 +338,8 @@ rows. The per-slice trends (what each feature cost in LUTs and MHz) are in
 | Bugs formal caught that simulation missed | 2 | [formal-properties.md](docs/formal-properties.md) |
 | Functional coverage (UVM) | 205/205 bins, 100% | [coverage-plan.md](docs/coverage-plan.md) |
 | TMR: faults injected / failures | 10,000 / **0**; 1,275 detected, all corrected and recovered | [tmr_faults.txt](docs/reports/tmr_faults.txt) |
-| TMR: area overhead / Fmax penalty (board) | 3.0x LUT, 3.7x FF / −9.0% (still meets 100 MHz) | [summary_board_tmr.txt](docs/reports/summary_board_tmr.txt) |
+| TMR: faults injected live on the board / effect | 1,887 pc flips during one sieve; all detected; answer and cycle count unchanged | [tmr_inject_board.txt](docs/reports/tmr_inject_board.txt) |
+| TMR: area overhead / Fmax penalty (board) | 3.1x LUT, 3.7x FF / −8.7% (still meets 100 MHz) | [summary_board_tmr.txt](docs/reports/summary_board_tmr.txt) |
 
 **Stage 2 — SoC.** Not started.
 
@@ -379,7 +400,7 @@ scripts in `syn/`; no project directory is ever committed.
 | Target | Does |
 |---|---|
 | `make lint` | Verilator lint of `rtl/`, zero warnings |
-| `make sim` | cocotb regression on Verilator, 306 tests |
+| `make sim` | cocotb regression on Verilator, 308 tests |
 | `make formal` | SymbiYosys properties and riscv-formal, checks and covers |
 | `make uvm` | UVM regression in XSim (`SEED`, `PROGRAMS`, `COV_MIN`) |
 | `make model-test` | The C golden model alone on rv32ui |
@@ -423,9 +444,8 @@ its reports are committed with the RTL that produced them.
 
 ## Roadmap
 
-- **Phase E — the rest.** A live fault injector on the board (flip a bit
-  in one copy from software and watch the counter), then the first ASIC
-  run: the core through LibreLane on Sky130 to GDSII.
+- **Phase E — the rest.** The first ASIC run: the core through LibreLane on
+  Sky130 to GDSII.
 - **Stage 2 — the SoC.** An INT8 systolic array (measured GOPS and PE
   utilisation, speedup over software matmul), a descriptor-based DMA, an AXI
   interconnect with formally proven interfaces, scan insertion, and a second

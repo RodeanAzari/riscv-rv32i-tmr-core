@@ -1,4 +1,4 @@
-/* The demo reel (sw/demo/): one program, a menu, six demos.
+/* The demo reel (sw/demo/): one program, a menu, seven demos.
  *
  * Loaded by the bootloader like any program (make apps, scripts/load.py
  * sw/build/apps/demo.bin --term). Each demo reads keys while it runs.
@@ -38,5 +38,6 @@ void demo_pi(void);
 void demo_life(void);
 void demo_hanoi(void);
 void demo_primes(void);
+void demo_tmr(void);
 
 #endif /* DEMO_H */

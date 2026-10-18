@@ -1,0 +1,121 @@
+TMR fault injection on the Arty A7-100T (xc7a100tcsg324-1), 2026-10-18
+make impl TMR=1 (three voted cores, 100 MHz, bootloader image), make prog; demo reel
+(sw/demo/, -Os) loaded with scripts/load.py over /dev/ttyUSB1, keys sent by script.
+Demo 7 (sw/demo/tmr.c): the sieve to 163840 twice, the second time flipping one
+random bit of copy B's pc every 64 marks (soc.sv TMR register, 0x1000_0014).
+Run twice after one reset, then demos 1 and 6 to show the core still exact.
+Output with terminal control codes removed.
+
+TMR: each flip hits a random bit of copy B's pc
+
+  clean     primes to 163840: 14999   3347320 cycles   flips 0, detected 0
+  injected  primes to 163840: 14999   3347320 cycles   flips 1887, detected 1887
+
+  answer identical, cycles identical: every flip outvoted
+  disagreements since reset: 1887
+
+[press a key]
+  ____  __     __ _____  ____   ___ 
+ |  _ \ \ \   / /|___ / |___ \ |_ _|   a 5-stage pipelined CPU
+ | |_) | \ \ / /   |_ \   __) | | |    written from scratch,
+ |  _ <   \ V /   ___) | / __/  | |    formally verified, running
+ |_| \_\   \_/   |____/ |_____||___|   on an Arty A7 at 100 MHz
+
+  1  system info and pipeline microbenchmarks
+  2  Mandelbrot: fixed point vs software floating point
+  3  digits of pi
+  4  Conway's Game of Life
+  5  Tower of Hanoi
+  6  prime sieve
+  7  TMR: inject faults while it runs
+  q  back to the bootloader
+
+TMR: each flip hits a random bit of copy B's pc
+
+  clean     primes to 163840: 14999   3347320 cycles   flips 0, detected 0
+  injected  primes to 163840: 14999   3347320 cycles   flips 1887, detected 1887
+
+  answer identical, cycles identical: every flip outvoted
+  disagreements since reset: 3774
+
+[press a key]
+  ____  __     __ _____  ____   ___ 
+ |  _ \ \ \   / /|___ / |___ \ |_ _|   a 5-stage pipelined CPU
+ | |_) | \ \ / /   |_ \   __) | | |    written from scratch,
+ |  _ <   \ V /   ___) | / __/  | |    formally verified, running
+ |_| \_\   \_/   |____/ |_____||___|   on an Arty A7 at 100 MHz
+
+  1  system info and pipeline microbenchmarks
+  2  Mandelbrot: fixed point vs software floating point
+  3  digits of pi
+  4  Conway's Game of Life
+  5  Tower of Hanoi
+  6  prime sieve
+  7  TMR: inject faults while it runs
+  q  back to the bootloader
+
+system
+  RV32I, all 40 instructions; 5-stage pipeline, full forwarding,
+  branches resolved in EX (static not-taken), every exception halts
+  core clock 100 MHz (as built; the cycle counter counts it)
+  RAM 32 KiB: bootloader 4 KiB, this program 17248 bytes + 10388 bytes of data,
+  stack from the top
+  cycles since reset 1576640033 (15766.400 ms)
+
+RAM test, 10 KiB scratch buffer, 4 patterns: pass
+
+pipeline, measured now with the cycle counter
+  ALU ops                 100 instr  100 cycles  CPI 1.00  one per cycle
+  load, used next         100 instr  150 cycles  CPI 1.50  1 stall per load
+  load, used one later    150 instr  150 cycles  CPI 1.00  forwarded, no stall
+  taken jumps              50 instr  150 cycles  CPI 3.00  2 flushed cycles each
+  taken branches           50 instr  150 cycles  CPI 3.00  2 flushed cycles each
+  branches not taken       50 instr   50 cycles  CPI 1.00  free: predicted
+
+[press a key]
+  ____  __     __ _____  ____   ___ 
+ |  _ \ \ \   / /|___ / |___ \ |_ _|   a 5-stage pipelined CPU
+ | |_) | \ \ / /   |_ \   __) | | |    written from scratch,
+ |  _ <   \ V /   ___) | / __/  | |    formally verified, running
+ |_| \_\   \_/   |____/ |_____||___|   on an Arty A7 at 100 MHz
+
+  1  system info and pipeline microbenchmarks
+  2  Mandelbrot: fixed point vs software floating point
+  3  digits of pi
+  4  Conway's Game of Life
+  5  Tower of Hanoi
+  6  prime sieve
+  7  TMR: inject faults while it runs
+  q  back to the bootloader
+
+prime sieve (Eratosthenes, odd numbers, one bit each)
+
+sieve up to [100-163840, Enter for 100000]: 163840
+
+      up to     primes
+         10          4
+        100         25
+       1000        168
+      10000       1229
+     100000       9592
+     163840      14999
+
+the largest up to 163840: 163733 163741 163753 163771 163781 163789 163811 163819
+sieve: 1603562 cycles (16.035 ms)
+
+test a number for primality (0 to go back) [0-9999999, Enter for 0]: 0
+  ____  __     __ _____  ____   ___ 
+ |  _ \ \ \   / /|___ / |___ \ |_ _|   a 5-stage pipelined CPU
+ | |_) | \ \ / /   |_ \   __) | | |    written from scratch,
+ |  _ <   \ V /   ___) | / __/  | |    formally verified, running
+ |_| \_\   \_/   |____/ |_____||___|   on an Arty A7 at 100 MHz
+
+  1  system info and pipeline microbenchmarks
+  2  Mandelbrot: fixed point vs software floating point
+  3  digits of pi
+  4  Conway's Game of Life
+  5  Tower of Hanoi
+  6  prime sieve
+  7  TMR: inject faults while it runs
+  q  back to the bootloader
+

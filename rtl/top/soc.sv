@@ -17,7 +17,8 @@
 //                            clears bits 1-3 of UART ST, ready for the next
 //   0x1000_0010  CYCLE    R: cycles since reset, mod 2^32     W: ignored
 //   0x1000_0014  TMR      R: TMR mismatches since reset (0 without TMR)
-//                            W: ignored
+//                            W: fault injection -- the word's set bits are
+//                            flipped in copy B's pc, once (ignored without TMR)
 //
 // The cycle counter is how software times itself (the core has no CSRs, so
 // rdcycle is an illegal instruction). 32 bits wrap after 43 s at 100 MHz;
@@ -86,9 +87,19 @@ module soc #(
   // values, RVFI) are left open on purpose: not needed by this top. Waived
   // here only.
   logic [31:0] tmr_mismatches;
+  logic        io_we;
 
   /* verilator lint_off PINCONNECTEMPTY */
   if (TMR) begin : g_cpu
+    // The injection, registered: a pulse a cycle after the store, so the
+    // store's decode does not reach copy B's pc in the same cycle.
+    logic [31:0] inject_q;
+
+    always_ff @(posedge clk_i) begin
+      if (rst_i) inject_q <= '0;
+      else       inject_q <= (io_we && (dmem_addr[4:2] == IO_TMR)) ? dmem_wdata : '0;
+    end
+
     riscv_core_tmr u_core (
         .clk_i               (clk_i),
         .rst_i               (rst_i),
@@ -107,6 +118,7 @@ module soc #(
         .mismatch_o          (),
         .disagree_o          (),
         .mismatch_count_o    (tmr_mismatches),
+        .inject_pc_i         (inject_q),
   `ifdef RISCV_FORMAL
         .rvfi_valid_o        (),
         .rvfi_order_o        (),
@@ -244,7 +256,7 @@ module soc #(
   );
 
   // ---- I/O writes ----
-  logic io_we, uart_ready;
+  logic uart_ready;
   assign io_we = dmem_we && io_sel && dmem_wstrb[0];
 
   always_ff @(posedge clk_i) begin

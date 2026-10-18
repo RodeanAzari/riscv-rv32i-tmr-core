@@ -25,8 +25,15 @@
 // redundancy silently disappears. docs/reports/utilization_*_tmr.rpt is the
 // evidence that three survive.
 //
-// The ports are riscv_core's, so the core's own tests run on this unchanged.
-// The debug and RVFI ports are copy A's: a view of one copy, not the vote.
+// The ports are riscv_core's plus TMR status and the injector, so the core's
+// own tests run on this unchanged (inject_pc_i left at 0). The debug and RVFI
+// ports are copy A's: a view of one copy, not the vote.
+//
+// inject_pc_i is the live fault injector (soc.sv's TMR register): its set
+// bits are flipped in copy B's pc as it loads the voted next pc, so B's pc
+// register holds a wrong value for a cycle -- a real fault in a real flop,
+// the same kind the fault campaign deposits in simulation. All zero, nothing
+// happens.
 module riscv_core_tmr #(
     parameter int unsigned XLEN   = 32,
     parameter int unsigned ADDR_W = 5
@@ -52,6 +59,7 @@ module riscv_core_tmr #(
     output logic              mismatch_o,        // the copies disagree this cycle
     output logic [2:0]        disagree_o,        // which: bit i = copy i
     output logic [31:0]       mismatch_count_o,  // disagreements begun since reset
+    input  logic [XLEN-1:0]   inject_pc_i,       // bits to flip in copy B's pc
 
 `ifdef RISCV_FORMAL
     output logic              rvfi_valid_o,
@@ -206,7 +214,8 @@ module riscv_core_tmr #(
         .dmem_rdata_i (dmem_rdata_i),
         .wb_rd_we_o (rd_we[i]), .wb_rd_addr_o (rd_addr[i]), .wb_rd_wdata_o (rd_wdata[i]),
         .halt_o (halt[i]), .halt_next_o (halt_next[i]),
-        .vote_pc_i (v_imem_addr), .vote_halt_i (v_halt_next),
+        .vote_pc_i (i == 1 ? v_imem_addr ^ inject_pc_i : v_imem_addr),
+        .vote_halt_i (v_halt_next),
         .vote_rd_we_i (v_rd_we), .vote_rd_addr_i (v_rd_addr), .vote_rd_wdata_i (v_rd_wdata),
 `ifdef RISCV_FORMAL
         .rvfi_valid_o (), .rvfi_order_o (), .rvfi_insn_o (), .rvfi_trap_o (), .rvfi_halt_o (),

@@ -334,3 +334,40 @@ async def test_primes(dut):
         assert f"{v} is {want}\r\n" in out, f"{v}: {out!r}"
     await b.send("0\r")
     await b.expect("> ", m)
+
+
+@cocotb.test()
+async def test_tmr(dut):
+    """Demo 7: the sieve twice, the second time with copy B's pc flipped
+    every 64 marks. With TMR (soc_tmr) the answer and the cycle count are
+    unchanged and the voter saw every flip; on one core the writes do nothing."""
+    b = Board(dut)
+    await b.start()
+    m = b.mark()
+    await b.send("7")
+    out = await b.expect("[press a key]", m, cycles=40_000_000)
+    n = 163840
+    odd = bytearray([1]) * (n + 1)
+    for p in range(3, int(n ** 0.5) + 1, 2):
+        if odd[p]:
+            odd[p * p::2 * p] = bytes(len(range(p * p, n + 1, 2 * p)))
+    primes = 1 + sum(odd[v] for v in range(3, n + 1, 2))
+    runs = re.findall(r"(clean|injected)\s+primes to \d+: (\d+)\s+(\d+) cycles\s+"
+                      r"flips (\d+), detected (\d+)", out)
+    assert [r[0] for r in runs] == ["clean", "injected"], f"two runs expected: {out!r}"
+    (p0, c0, f0, d0), (p1, c1, f1, d1) = [tuple(map(int, r[1:])) for r in runs]
+    assert p0 == p1 == primes, f"primes {p0}, {p1}; expected {primes}"
+    assert c0 == c1, f"cycles {c0} clean, {c1} injected: correction should cost none"
+    assert (f0, d0) == (0, 0), "the clean run flipped or detected something"
+    assert f1 > 1000, f"only {f1} flips"
+    core = dut.g_cpu.u_core
+    if hasattr(core, "mismatch_count_o"):
+        assert d1 == f1, f"{d1} of {f1} flips detected"
+        assert "answer identical, cycles identical" in out
+        since = int(re.search(r"disagreements since reset: (\d+)", out)[1])
+        assert since == int(core.mismatch_count_o.value) >= f1
+        dut._log.info(f"{f1} flips, all detected ({since} disagreements); {c1} cycles either way")
+    else:
+        assert d1 == 0 and "one core: nothing to flip" in out
+    await b.send("x")
+    await b.expect("> ", b.mark())

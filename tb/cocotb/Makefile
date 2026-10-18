@@ -80,7 +80,8 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          soc:test_demo \
          soc_tmr:test_soc \
          soc_tmr:test_coremark \
-         soc_tmr:test_boot
+         soc_tmr:test_boot \
+         soc_tmr:test_demo
 
 # The SoC runs a firmware simulation image from sw/build/, built by `make fw`
 # and `make bench` (the regression below builds both first; a TEST_ONE run of
@@ -107,6 +108,13 @@ ifdef TEST_ONE
     # The demo test runs the UART at CLK/16: its output is thousands of characters.
     ifeq ($(MODULE),test_demo)
       COMPILE_ARGS      += -GBAUD=3125000
+      # On TMR, the fault-injection demo only: the other six are the plain
+      # SoC's tests, and would add twenty minutes for nothing TMR-specific.
+      # It injects faults, so no in-RTL assertions (see test_tmr_faults below).
+      ifeq ($(TMR_SUFFIX),_tmr)
+        export COCOTB_TEST_FILTER := test_tmr
+        COMPILE_ARGS    := $(filter-out -DFORMAL --assert,$(COMPILE_ARGS))
+      endif
     endif
     COMPILE_ARGS        += -GINIT_FILE='"$(abspath $(REPO)/sw/build/$(SOC_IMAGE).hex)"'
   endif
