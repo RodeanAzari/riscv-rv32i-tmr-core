@@ -1,0 +1,33 @@
+# LibreLane RTL-to-GDSII of the bare core, Sky130 (CLAUDE.md §6.4, run #1).
+# Run with `make asic`, which supplies VERILOG_FILES (every .sv under rtl/,
+# found recursively) and runs this inside LibreLane's nix-shell.
+#
+# The core alone, hardened as a block: its memory ports are the block's pins,
+# no pads, no SRAM macros. The register file is flip-flops (1024 of them):
+# the simplest mapping, and the area it costs is part of the result.
+
+DESIGN_NAME: riscv_core
+CLOCK_PORT: clk_i
+
+# The slang frontend: Yosys 0.62's own reader rejects `parameter string`
+# (rtl/top/arty_a7_top.sv), and every .sv under rtl/ is read; slang
+# elaborates only DESIGN_NAME's hierarchy.
+USE_SLANG: true
+
+# 25 ns (40 MHz): a first target to get a clean run; the post-layout slack
+# then says how far it can be tightened. Inputs arrive and outputs must be
+# ready 20% of the period from the edge (LibreLane's default
+# IO_DELAY_CONSTRAINT): the memories sit outside the block.
+CLOCK_PERIOD: 25
+
+FP_CORE_UTIL: 40
+
+# Repair and optimize for the worst setup corner (slow, max parasitics), the
+# worst hold corner (fast, min parasitics) and typical. By default only
+# typical is optimized and the others merely checked at signoff: the first
+# run met timing at typical (+7.75 ns) but failed by 4.7 ns at max_ss, with
+# 2805 max-slew violations there.
+PNR_CORNERS:
+  - nom_tt_025C_1v80
+  - max_ss_100C_1v60
+  - min_ff_n40C_1v95

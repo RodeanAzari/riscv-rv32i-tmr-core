@@ -379,11 +379,17 @@ floorplan:
 # Each names its phase and what it is waiting on. Fail loudly, not silently.
 .PHONY: asic
 
+# LibreLane RTL-to-GDSII on Sky130 (CLAUDE.md §6.4): run #1 is the bare
+# non-TMR core (syn/asic_config.yaml), run #2 the full SoC in Phase H.
+# Runs inside LibreLane's nix-shell (a clone at LIBRELANE_DIR, tag 3.0.16);
+# the run lands in syn/build/asic/runs/asic/.
+LIBRELANE_DIR ?= $(HOME)/librelane
+
 asic:
-	@echo "make asic: LibreLane RTL-to-GDSII (CLAUDE.md §6.4). Run #1 closes" >&2
-	@echo "           Phase E on the non-TMR core, run #2 the full SoC in Phase H." >&2
-	@echo "           Needs LibreLane + Sky130 (not installed)." >&2
-	@exit 1
+	nix-shell $(LIBRELANE_DIR)/shell.nix --run "librelane --run-tag asic --overwrite \
+		--design-dir $(abspath syn/build/asic) \
+		-c VERILOG_FILES='$(abspath $(RTL))' $(abspath syn/asic_config.yaml)"
+	python3 scripts/asic_summary.py syn/build/asic/runs/asic docs/reports docs/img
 
 
 # --- housekeeping ----------------------------------------------------------
