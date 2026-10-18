@@ -35,15 +35,16 @@ the local GCC 16.
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 176/176 passing across 10 entries (core, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, soc ×2), including the 40 official `riscv-tests`, the first-light firmware and one CoreMark iteration on the whole SoC (CRCs checked, IPC counted through RVFI, ~50 s), UART decoded at 115200 |
+| `make sim` | 189/189 passing across 12 entries (core, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, uart_rx, soc ×3), including the 40 official `riscv-tests`, the first-light firmware, one CoreMark iteration on the whole SoC (CRCs checked, IPC counted through RVFI, ~50 s) and the bootloader receiving a program over the RX pin (~100 s), UART decoded at 115200 |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 46/46 checks and 46/46 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`, `causal_mem`, `liveness`, `hang`, `ill`), ~6 min (XT's BMC is ~5 of it) — see [formal-properties.md](formal-properties.md) |
-| `make impl` | board-level route + bitstream, timing met at 100 MHz (WNS +1.550 ns), ~2 min |
+| `make impl` | board-level route + bitstream, timing met at 100 MHz (WNS +0.948 ns with the UART receiver), ~2 min |
 | `make model-test` | the C golden model alone: rv32ui **40/40**; a planted SRA bug fails exactly `sra` |
 | `make uvm` | XSim, 300 random programs, ~45 s: **205/205 coverage bins (100%)** on seeds 1, 2, 3, ~45,000 retirements each compared with the model, 0 mismatches. Planted RTL faults caught: forwarding priority (in the hazard unit), LBU sign-extending, no rs2 load-use stall |
 | **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.jpg](img/fpgafirstlight.jpg) (Phase D's photo box; low-resolution, retake for the README) |
 | **CoreMark on the board** | 2026-10-17, 2000 iterations at **100 MHz** (`make prog` from WSL): **0.962 CoreMark/MHz, about 96 CoreMark**, "Correct operation validated", 2,077,692,270 cycles ([coremark_board.txt](reports/coremark_board.txt)); the 50 MHz run before the clock change gave the same cycles per iteration. **IPC 0.691** (CPI 1.447) over the timed region, counted in RTL simulation of the same SoC ([coremark_sim.txt](reports/coremark_sim.txt)); simulated cycles per iteration match the board's to 0.0013%. RV32I without M: every multiply and divide is a libgcc call |
 | **ILA on the board** | 2026-10-17, `make impl ILA=1` then `make ila` from WSL (Hardware Manager in batch through `hw_server`): 13 probes, 328 bits (pc and instruction of all four pipeline registers, EX/MEM ALU result, writeback, halt), depth 1024, core clock. First-light program: every EX→MEM→WB shift consistent, 227 stall cycles and 114 flush bubbles in the window ([ila_summary.txt](reports/ila_summary.txt), [ila_capture.csv](reports/ila_capture.csv)). ILA build (at 50 MHz, before the clock change): +2233 LUT, +3772 FF, +10 BRAM, WNS +4.162 ns ([summary_board_ila.txt](reports/summary_board_ila.txt)). CoreMark at 100 MHz with the ILA (WNS +1.066 ns), triggered on `core_state_transition`: stage shifts consistent, 881 retirements in 1023 cycles ([ila_coremark_summary.txt](reports/ila_coremark_summary.txt), [ila_coremark.csv](reports/ila_coremark.csv)) |
+| **Bootloader on the board** | 2026-10-18: `scripts/load.py sw/build/apps/echo.bin` loads 1760 bytes over the UART in about 0.2 s; the program echoes keys, returns to the bootloader on q, and `r` reruns it without resending. Changing the program needs no Vivado rebuild |
 | CI on push | green (lint + sim + formal) at `9eaa9a8`, run 39094592781 |
 
 ### Implemented, and what to know before touching it
@@ -97,6 +98,22 @@ Only the facts that are not obvious from reading it:
   procedurally. Coverage was 68.8% before this, 100% after.
 - **Firmware** (`sw/firstlight/`, `make fw`): no libgcc, so no `*`, `/`, `%`
   in C (RV32I has no M). `hello_sim.hex` has a 20-iteration delay for sim.
+- **Bootloader** (`sw/boot/`, `make boot`; the default `FW_IMAGE` since
+  2026-10-18): the first 4 KiB of RAM; programs (`sw/apps/`, `make apps`,
+  console library `sw/lib/`) link at 0x1000 and return to it. Protocol:
+  "RVLD", length, CRC-32, image (`scripts/load.py`). The last good image's
+  length and CRC sit at 0x0FF4-0x0FFF for `r` (rerun). **Opening the serial
+  port resets the Arty** (FTDI DTR reaches its reset), so a terminal or the
+  loader always lands in the bootloader; load.py waits for the banner before
+  sending, because the receiver buffers one byte and the bootloader is not
+  listening while it prints.
+- **UART RX reads have no side effect; a write acknowledges.** The core's
+  data port has no read enable, so the SoC cannot tell a load from an
+  address in passing. `UART ST` bits: 0 TX ready, 1 RX byte, 2 overrun, 3
+  framing error.
+- **Linker scripts align `.bss`.** crt0 zeroes it a word at a time, and a
+  misaligned store halts this core: the bootloader's first build did exactly
+  that (its code ended on an odd byte).
 - **Testbench:** `feed()` assumes no stall, so anything with a load-use pair
   goes through `run()`. `test_core` checks every retirement against the golden
   model (`tb/cocotb/rv32i_model.py`) through RVFI; `SEED=n` reruns a seed.
@@ -198,6 +215,7 @@ trims logic the OOC run keeps.
 | 2026-10-17 | First light: core + 32 KiB RAM + LED + UART (ran on the board at 50 MHz) | 1009 | 374 | 8 | 50 MHz | +5.920 | 71.0 |
 | 2026-10-17 | + illegal-instruction trap, + cycle counter; CoreMark image (ran on the board at 50 MHz) | 1141 | 434 | 8 | 50 MHz | +4.917 | 66.3 |
 | 2026-10-17 | Data memory accessed from EX; core clock to 100 MHz; CoreMark image (ran on the board at 100 MHz) | 1085 | 398 | 8 | 100 MHz | +1.550 | 118.3 |
+| 2026-10-18 | + UART receiver (RX register, status bits, pin A9); bootloader image (ran on the board at 100 MHz) | 1123 | 435 | 8 | 100 MHz | +0.948 | 110.5 |
 
 At 50 MHz the critical path was the one the OOC flow could not time: a block
 RAM's output (load data) through alignment, the forwarding mux and the branch
@@ -283,9 +301,11 @@ riscv-formal found on its first run (see Decisions).
 | `make sim` | cocotb regression | working |
 | `make sw` | build `sw/**/*.c` → `.elf` / `.hex` | **broken**: its glob takes riscv-tests' C sources; superseded by `make fw` |
 | `make spike` | run `.elf` on spike | untested, depends on `make sw` |
+| `make boot` | the serial bootloader → `sw/build/boot.hex`, the default bitstream image | working |
+| `make apps` | programs in `sw/apps/` → `sw/build/apps/*.bin`, for `scripts/load.py <bin> [--term]` (`--term` stays as a terminal; Ctrl-] quits) | working |
 | `make fw` | first-light firmware → `sw/build/hello.hex` (board), `hello_sim.hex` (sim) | working; local riscv32 or CI's riscv64 gcc |
 | `make bench` | CoreMark (submodule `sw/coremark`, port `sw/coremark-port/`, links libgcc) → `sw/build/coremark.hex` (board, `COREMARK_ITERATIONS`=1000), `coremark_sim.hex` (1 iteration) | working, locally and in CI (the riscv64 package's rv32i/ilp32 libgcc) |
-| `make impl` | board-level synth + route + bitstream (`syn/impl_arty.tcl`), reports `docs/reports/*_board.*`; refuses a missing RAM image, writes no bitstream if timing fails; `FW_IMAGE=` picks the RAM image (default first light); `ILA=1` adds the ILA and its `.ltx`, reports to `syn/build/board/ila_reports/` so `docs/reports/` stays ILA-free | working |
+| `make impl` | board-level synth + route + bitstream (`syn/impl_arty.tcl`), reports `docs/reports/*_board.*`; refuses a missing RAM image, writes no bitstream if timing fails; `FW_IMAGE=` picks the RAM image (default the bootloader); `ILA=1` adds the ILA and its `.ltx`, reports to `syn/build/board/ila_reports/` so `docs/reports/` stays ILA-free | working |
 | `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
 | `make prog` | Arty attached to WSL (usbipd): programs it with `openFPGALoader -b arty_a7_100t`; otherwise prints the Hardware Manager steps and the Windows path | working, both routes tried on the board |
 | `make ila` | after `make impl ILA=1`, with the Arty attached to WSL: programs it and captures the pipeline registers (`syn/ila_capture.tcl`, Vivado Hardware Manager in batch) to `syn/build/board/ila_capture.{csv,vcd}`, then checks the capture (`scripts/ila_check.py`) | working |
@@ -375,19 +395,25 @@ history, [formal-properties.md](formal-properties.md) and
 
 ## Next up
 
-> **Resume here (2026-10-17, Phases B and C done; the board runs at 100 MHz).**
-> Data memory is accessed from EX, which took the load-data path off the
-> critical path: 100 MHz closes (WNS +1.550 ns). CoreMark 0.962/MHz, about 96
-> at 100 MHz, IPC 0.691 (`make bench`, `make impl
-> FW_IMAGE=sw/build/coremark.hex`). ILA: `make impl ILA=1`, `make ila`.
-> **Next:** Phase D's last box is the photo (the first-light one is
-> low-resolution); then the PuTTY demo below; then Phase E (TMR).
+> **Resume here (2026-10-18, Phases B and C done; the board runs at 100 MHz).**
+> The UART receives as well as sends, and the board boots a serial
+> bootloader: `make impl` (default image), `make prog`, then
+> `scripts/load.py sw/build/apps/<prog>.bin --term`. Programs live in
+> `sw/apps/`. CoreMark 0.962/MHz, IPC 0.691 (`make impl
+> FW_IMAGE=sw/build/coremark.hex`); ILA: `make impl ILA=1`, `make ila`.
+> **Next:** the six interactive demos (below), then the photo (Phase D's
+> last box), then Phase E (TMR).
 
 ### User requests to carry forward
 
-- **Before Phase E, after Phase D closes:** run a few programs on the Arty
-  and show their output in PuTTY on Windows (COM port, 115200 8N1), for
-  screenshots in the README. Detach usbipd first so Windows has the COM port.
+- **Before Phase E: six interactive demos** on the bootloader, each run in
+  simulation first, for PuTTY screenshots and the board photo: a boot
+  banner/system info, Mandelbrot (fixed point vs software float, cycles
+  each), digits of pi, Conway's Life (animated, LEDs show the generation),
+  Tower of Hanoi, a prime sieve. User asked for interactive versions (the
+  UART receiver and bootloader were built first for this, 2026-10-18).
+  PuTTY on Windows needs usbipd detached; opening any terminal resets the
+  board into the bootloader, so press r there to rerun the loaded program.
 - **Vivado screenshot sets, a folder per stage under `docs/img/vivado/`,
   plus `make floorplan` (the zoomable SVGs in `docs/img/`):** device view colored by module, worst path (device + schematic), RTL
   schematic, timing summary, utilization by hierarchy, power (label it a
@@ -504,7 +530,7 @@ that changed meaningful state.
 
 ---
 
-*Last updated: 2026-10-17 — 100 MHz on the board: data memory accessed from
+*Last updated: 2026-10-18 — UART receiver and serial bootloader, on the board at 100 MHz (WNS +0.948 ns); programs load over serial with no rebuild. Before that, 2026-10-17 — 100 MHz on the board: data memory accessed from
 EX (load data registered into MEM/WB), board WNS +1.550 ns at 100 MHz, OOC
 122.7 MHz; CoreMark 0.962/MHz (about 96) validated at 100 MHz, IPC
 unchanged. XT's harness follows stores into EX. ILA on the pipeline

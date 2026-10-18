@@ -70,13 +70,16 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_hazard:test_hazard \
          riscv_branch:test_branch \
          uart_tx:test_uart_tx \
+         uart_rx:test_uart_rx \
          soc:test_soc \
-         soc:test_coremark
+         soc:test_coremark \
+         soc:test_boot
 
 # The SoC runs a firmware simulation image from sw/build/, built by `make fw`
 # and `make bench` (the regression below builds both first; a TEST_ONE run of
 # soc needs them built): first light for test_soc, CoreMark for
-# test_coremark. The image path is a compile-time parameter, so each gets its
+# test_coremark, the bootloader for test_boot (with sw/build/apps/ for the
+# programs it sends; `make boot apps`). The image path is a compile-time parameter, so each gets its
 # own build directory and results file. Read by $readmemh when the
 # simulation starts, so a rebuilt image needs no recompile.
 ifdef TEST_ONE
@@ -84,7 +87,7 @@ ifdef TEST_ONE
   MODULE                := $(word 2,$(subst :, ,$(TEST_ONE)))
   BUILD_TAG             := $(TOPLEVEL)
   ifeq ($(TOPLEVEL),soc)
-    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,hello_sim)
+    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,$(if $(filter test_boot,$(MODULE)),boot,hello_sim))
     BUILD_TAG           := soc_$(SOC_IMAGE)
     COMPILE_ARGS        += -GINIT_FILE='"$(abspath $(REPO)/sw/build/$(SOC_IMAGE).hex)"'
   endif
@@ -98,7 +101,7 @@ else
 # first.
 .PHONY: all
 all:
-	$(MAKE) --no-print-directory -C $(REPO) fw bench
+	$(MAKE) --no-print-directory -C $(REPO) fw bench boot apps
 	@rc=0; \
 	for t in $(TESTS); do \
 	  echo "=== $$t ==="; \

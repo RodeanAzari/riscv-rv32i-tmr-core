@@ -44,6 +44,7 @@ async def uart_rx(dut, out):
 @cocotb.test()
 async def test_firstlight(dut):
     cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start())
+    dut.uart_rx_i.value = 1          # idle line
     dut.rst_i.value = 1
     await ClockCycles(dut.clk_i, 5)
     await FallingEdge(dut.clk_i)

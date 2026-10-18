@@ -31,7 +31,8 @@ module arty_a7_top #(
     input  logic       clk100_i,     // CLK100MHZ, E3
     input  logic       rst_ni,       // ck_rst, the RESET button, C2
     output logic [3:0] led_o,        // led[3:0], LD4-LD7
-    output logic       uart_tx_o     // uart_rxd_out, to the USB-UART bridge
+    output logic       uart_tx_o,    // uart_rxd_out, to the USB-UART bridge
+    input  logic       uart_rx_i     // uart_txd_in, from the USB-UART bridge
 );
 
   localparam int unsigned CLK_HZ   = 100_000_000;
@@ -91,6 +92,7 @@ module arty_a7_top #(
       .rst_i                   (rst),
       .led_o                   (led_o),
       .uart_tx_o               (uart_tx_o),
+      .uart_rx_i               (uart_rx_i),
       .dbg_if_id_pc_o          (if_id_pc),
       .dbg_if_id_instr_o       (if_id_instr),
       .dbg_id_ex_pc_o          (id_ex_pc),

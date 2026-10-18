@@ -23,6 +23,7 @@ SECTIONS
   .data   : { *(.data .data.* .sdata .sdata.*) } > RAM
 
   .bss (NOLOAD) : {
+    . = ALIGN(4);             /* crt0 zeroes it a word at a time */
     __bss_start = .;
     *(.bss .bss.* .sbss .sbss.* COMMON)
     . = ALIGN(4);

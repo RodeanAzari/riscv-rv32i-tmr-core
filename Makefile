@@ -163,6 +163,40 @@ $(FW_BUILD)/coremark_sim.elf: $(BENCH_SRCS) sw/coremark-port/core_portme.h $(FW_
 	$(RISCV_PREFIX)gcc $(BENCH_CFLAGS) -DITERATIONS=1 \
 		-o $@ $(FW_DIR)/crt0.S $(BENCH_SRCS) -lgcc
 
+# The serial bootloader (sw/boot/), the default bitstream image since the
+# UART gained a receiver: it receives programs from scripts/load.py and runs
+# them, so changing the program needs no Vivado rebuild. No libgcc.
+BOOT_CFLAGS := -march=rv32i -mabi=ilp32 -Os -Wall -Wextra -ffreestanding \
+               -nostdlib -nostartfiles -static -Tsw/boot/link.ld -Isw/lib \
+               -Wl,--no-warn-rwx-segments
+
+.PHONY: boot
+boot: $(FW_BUILD)/boot.hex
+
+$(FW_BUILD)/boot.elf: sw/boot/boot.c sw/boot/crt0.S sw/boot/link.ld sw/lib/soc.h
+	@mkdir -p $(FW_BUILD)
+	$(RISCV_PREFIX)gcc $(BOOT_CFLAGS) -o $@ sw/boot/crt0.S sw/boot/boot.c
+
+# Programs for the bootloader (sw/apps/*.c), linked at 0x1000 with the
+# console library (sw/lib/) and libgcc, as flat binaries for scripts/load.py:
+#   make apps && scripts/load.py sw/build/apps/echo.bin --term
+APPS       := $(basename $(notdir $(wildcard sw/apps/*.c)))
+APP_CFLAGS := $(filter-out -T$(FW_DIR)/link.ld,$(FW_CFLAGS)) -Tsw/app/link.ld -Isw/lib
+APP_DEPS   := sw/app/crt0.S sw/app/link.ld sw/lib/io.c sw/lib/io.h sw/lib/soc.h
+
+.PHONY: apps
+apps: $(APPS:%=$(FW_BUILD)/apps/%.bin)
+
+$(FW_BUILD)/apps/%.elf: sw/apps/%.c $(APP_DEPS)
+	@mkdir -p $(@D)
+	$(RISCV_PREFIX)gcc $(APP_CFLAGS) -o $@ sw/app/crt0.S sw/lib/io.c $< -lgcc
+
+# Kept: the .elf is what objdump and an ILA trigger (make gui VIEW=ila) read.
+.PRECIOUS: $(FW_BUILD)/apps/%.elf
+
+$(FW_BUILD)/apps/%.bin: $(FW_BUILD)/apps/%.elf
+	$(RISCV_PREFIX)objcopy -O binary $< $@
+
 $(FW_BUILD)/%.hex: $(FW_BUILD)/%.elf scripts/bin2hex.py
 	$(RISCV_PREFIX)objcopy -O binary $< $(FW_BUILD)/$*.bin
 	python3 scripts/bin2hex.py $(FW_BUILD)/$*.bin $@
@@ -229,12 +263,12 @@ uvm:
 BIT := syn/build/board/arty_a7_top.bit
 
 .PHONY: impl prog ila
-# FW_IMAGE picks the program the bitstream's RAM holds: first light by
+# FW_IMAGE picks the program the bitstream's RAM holds: the bootloader by
 # default, or e.g. FW_IMAGE=sw/build/coremark.hex for the benchmark.
 # ILA=1 attaches a logic analyser to the core's pipeline registers and writes
 # its probes file beside the bitstream; its reports stay in syn/build/board/,
 # so docs/reports/ always describes the design without debug logic.
-FW_IMAGE ?= $(FW_BUILD)/hello.hex
+FW_IMAGE ?= $(FW_BUILD)/boot.hex
 ILA      ?= 0
 
 impl: $(FW_IMAGE)

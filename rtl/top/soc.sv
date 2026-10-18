@@ -1,5 +1,5 @@
 // First-light SoC: the core, one dual-port RAM, four LEDs, a UART
-// transmitter and a cycle counter. Board-independent -- clock and reset arrive ready to use --
+// (transmitter and receiver) and a cycle counter. Board-independent -- clock and reset arrive ready to use --
 // so cocotb can run it whole with the real program; arty_a7_top.sv adds the
 // clocking and the pins.
 //
@@ -9,7 +9,12 @@
 //   0x0000_0000  RAM, RAM_WORDS x 32 bits, code and data (ram_dp.sv)
 //   0x1000_0000  LED      W: bits [3:0] drive the LEDs    R: their value
 //   0x1000_0004  UART TX  W: bits [7:0] are sent           R: 0
-//   0x1000_0008  UART ST  R: bit 0 = ready for a byte      W: ignored
+//   0x1000_0008  UART ST  R: bit 0 = TX ready for a byte   W: ignored
+//                            bit 1 = RX byte waiting
+//                            bit 2 = RX overrun (a byte arrived unread; dropped)
+//                            bit 3 = RX framing error (a byte dropped)
+//   0x1000_000C  UART RX  R: bits [7:0] the waiting byte   W: acknowledge --
+//                            clears bits 1-3 of UART ST, ready for the next
 //   0x1000_0010  CYCLE    R: cycles since reset, mod 2^32     W: ignored
 //
 // The cycle counter is how software times itself (the core has no CSRs, so
@@ -17,7 +22,9 @@
 // the difference of two reads is exact for any interval shorter than that.
 //
 // A byte written to UART TX while it is not ready is dropped: software polls
-// UART ST first. Byte stores (sb) work on every register: the core puts a
+// UART ST first. Receiving is read, then acknowledge with a write: reading
+// UART RX changes nothing, because the core's data port has no read enable
+// and so the SoC cannot tell a load from an address merely passing by. Byte stores (sb) work on every register: the core puts a
 // byte in every lane and raises its strobe, and the registers read lane 0.
 //
 // The core's data port is BRAM-timed: the address is taken at the end of EX
@@ -33,6 +40,7 @@ module soc #(
     input  logic       rst_i,
     output logic [3:0] led_o,
     output logic       uart_tx_o,
+    input  logic       uart_rx_i,
 
     // The core's pipeline registers and writeback, for the board top's ILA
     // (make impl ILA=1). Left open otherwise, and then trimmed.
@@ -58,6 +66,7 @@ module soc #(
   localparam logic [2:0] IO_LED     = 3'd0;
   localparam logic [2:0] IO_UART_TX = 3'd1;
   localparam logic [2:0] IO_UART_ST = 3'd2;
+  localparam logic [2:0] IO_UART_RX = 3'd3;
   localparam logic [2:0] IO_CYCLE   = 3'd4;
 
   logic [31:0] imem_addr, imem_rdata;
@@ -175,6 +184,23 @@ module soc #(
       .tx_o    (uart_tx_o)
   );
 
+  logic [7:0] rx_data;
+  logic       rx_valid, rx_overrun, rx_frame_err;
+
+  uart_rx #(
+      .CLK_HZ (CLK_HZ),
+      .BAUD   (BAUD)
+  ) u_uart_rx (
+      .clk_i       (clk_i),
+      .rst_i       (rst_i),
+      .rx_i        (uart_rx_i),
+      .data_o      (rx_data),
+      .valid_o     (rx_valid),
+      .overrun_o   (rx_overrun),
+      .frame_err_o (rx_frame_err),
+      .ack_i       (io_we && (dmem_addr[4:2] == IO_UART_RX))
+  );
+
   // ---- cycle counter ----
   logic [31:0] cycle_q;
 
@@ -195,7 +221,8 @@ module soc #(
       io_rsel_q <= io_sel;
       case (dmem_addr[4:2])
         IO_LED:     io_rdata_q <= {28'b0, led_o};
-        IO_UART_ST: io_rdata_q <= {31'b0, uart_ready};
+        IO_UART_ST: io_rdata_q <= {28'b0, rx_frame_err, rx_overrun, rx_valid, uart_ready};
+        IO_UART_RX: io_rdata_q <= {24'b0, rx_data};
         IO_CYCLE:   io_rdata_q <= cycle_q;
         default:    io_rdata_q <= '0;
       endcase
