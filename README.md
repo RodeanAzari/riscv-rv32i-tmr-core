@@ -1,115 +1,182 @@
 # RISC-V RV32I SoC — Formally Verified, Fault-Tolerant, with an ML Accelerator
 
-An in-order 5-stage RV32I core in SystemVerilog targeting the Digilent Arty A7-100T,
-built in two stages: a formally verified, TMR'd, hardware-proven CPU, then an SoC
-adding an INT8 systolic-array accelerator, a descriptor-based DMA, and an AXI
-interconnect. The RTL is also taken through an open-source ASIC flow to GDSII.
+A 5-stage in-order RV32I CPU written from scratch in SystemVerilog, **formally
+verified, checked by a UVM environment against a golden model, and running on
+an FPGA at 100 MHz**: a Digilent Arty A7-100T, where it runs CoreMark at
+0.962 CoreMark/MHz.
 
-Full scope, phases, and definitions of done: [CLAUDE.md](CLAUDE.md).
-Current state of the work: [docs/PROGRESS.md](docs/PROGRESS.md).
+The project has two stages. Stage 1 is the CPU: verified, hardware-proven,
+then made fault-tolerant with triple modular redundancy (TMR) and taken through
+an open-source ASIC flow to GDSII. Stage 2 builds an SoC around it: an INT8
+systolic-array accelerator, a descriptor-based DMA and an AXI interconnect.
+**Stage 1 is done through Phase D; TMR (Phase E) is next.**
 
-## Status
+Every number below is transcribed from a report committed in
+[`docs/reports/`](docs/reports/), produced by a `make` target, with its
+measurement conditions stated. Dashes mean not measured yet.
 
-**Stage 1, Phase A — working core. In progress.** All five stages
-implemented, and 37 of the 40 RV32I instructions: all ALU operations, loads
-and stores, branches, JAL and JALR. Full forwarding, a one-cycle load-use
-stall, and branches resolved in EX with static not-taken prediction (taken
-costs two cycles). Both memory ports are BRAM-timed. Checked against a Python
-golden model on dense random programs with branches and jumps — every
-retirement compared field by field through the RVFI port. FENCE, ECALL and
-EBREAK still decode inert rather than half-working.
+[![Floorplan of the core on the FPGA](docs/img/floorplan_board_core.svg)](docs/img/floorplan_board_core.svg)
 
-| Stage | Phases | State |
-|---|---|---|
-| 1 — CPU | A–E | Phase A in progress |
-| 2 — SoC | F–H | Not started |
+*The core as placed and routed on the Artix-7, coloured by module: ALU
+(orange), branch unit (magenta), register file (cyan), the rest of the
+pipeline (green), the block-RAM memory (white), the UART (red), and the
+critical path in yellow. Generated from the routed design by
+`make floorplan`; click to open it full size and zoom in.*
 
-```
-make lint    # Verilator 5.050 lint, zero warnings
-make sim     # cocotb 2.1.0 regression, 116/116 passing
-make synth   # out-of-context synth + P&R, reports to docs/reports/
-```
-
-## Architecture
-
-_TODO: block diagram_
-
-## Results
-
-No result is claimed here until it is reproduced by `make` and transcribed from a
-committed report in [`docs/reports/`](docs/reports/). Dashes are honest.
-
-**Stage 1 — CPU.** Conditions travel with the number: an out-of-context Fmax models
-no clock skew and is not the same quantity as a board-level one, so the two never
-share a table. See [docs/PROGRESS.md](docs/PROGRESS.md) for the per-slice trend.
-
-| Metric | Value |
-|---|---|
-| Fmax, out-of-context (`xc7a100tcsg324-1`, 10.000 ns constraint) | 122.7 MHz |
-| Fmax, board-level (Arty A7, core + BRAM + I/O, in context) | runs at 100 MHz, WNS +1.550 ns (118.3 MHz estimate) |
-| LUT / FF / BRAM / DSP (core, out-of-context) | 964 / 467 / 0 / 0 |
-| CoreMark/MHz (on the board, 100 MHz, 2000 iterations, validated) | 0.962 (about 96 CoreMark) — RV32I without M, so multiply and divide run in software |
-| IPC / CPI (CoreMark timed region, RTL simulation of the same SoC) | 0.691 / 1.447 |
-| Formal: properties proven, proof depth | — |
-| Bugs formal caught that simulation missed | — |
-| Functional coverage | — |
-| TMR: fault detection / recovery rate | — |
-| TMR: area overhead / Fmax penalty | — |
-
-**Stage 2 — SoC.**
-
-| Metric | Value |
-|---|---|
-| GOPS (INT8) at achieved Fmax | — |
-| **Measured** PE utilization | — |
-| Speedup vs. software matmul | — |
-| DSP slices used vs. LUT-fabric MACs | — |
-| AXI outstanding depth / measured throughput | — |
-| SVA properties proven on AXI interfaces | — |
-
-**ASIC flow (LibreLane + Sky130).** Two runs: the bare core closing Phase E, the full
-SoC in Phase H. The delta between them is the result.
-
-| Metric | Run 1 (bare core) | Run 2 (full SoC) |
-|---|---|---|
-| Die area, cell count, utilization | — | — |
-| Post-layout Fmax | — | — |
-| Power estimate | — | — |
-| DRC / LVS clean | — | — |
-| Scan chains: count, coverage, area overhead | — | — |
-
-## On the chip
-
-The single (non-TMR) core as it runs on the Arty A7-100T: CoreMark image,
-100 MHz, the build whose reports are committed (WNS +1.550 ns). A new set
-follows each milestone; these are from Phase D, in
-[`docs/img/vivado/phase-d/`](docs/img/vivado/phase-d/).
-
-**Floorplan** (`make floorplan`): every placed cell at its real site, coloured
-by module, with its routed wires and the worst setup path in yellow. Drawn
-from the routed checkpoint, not a screenshot; click to open it full size and
-zoom in to individual LUTs and flip-flops.
-
-[![Floorplan of the core, cropped to the logic](docs/img/floorplan_board_core.svg)](docs/img/floorplan_board_core.svg)
-
-The [whole die](docs/img/floorplan_board.svg), for scale: the SoC uses under
-2% of the chip's LUTs, in one of eight clock regions.
-
-**Vivado** (`make gui`, `make gui VIEW=rtl`):
+## At a glance
 
 | | |
 |---|---|
-| ![Device view](docs/img/vivado/phase-d/device.png) Device view, coloured by module | ![Device view, zoomed](docs/img/vivado/phase-d/device-zoom.png) Zoomed to single slices, with routing |
-| ![Worst path on the device](docs/img/vivado/phase-d/worstpathdevice.png) The worst setup path on the die | ![Worst path schematic](docs/img/vivado/phase-d/worstpath.png) The same path: forwarding select → branch comparator (CARRY4 chain) → redirect → pc mux → block RAM address |
-| ![RTL schematic of the core](docs/img/vivado/phase-d/rtl-schematic-u_core.png) The core as elaborated RTL | ![RTL schematic of the ALU](docs/img/vivado/phase-d/rtl-schematic-alu.png) The ALU, opened up |
-| ![Timing summary](docs/img/vivado/phase-d/timing.png) Timing: met at 100 MHz, WNS +1.550 ns, WHS +0.110 ns | ![Utilization by hierarchy](docs/img/vivado/phase-d/utilization-hierarchy.png) Utilization by module |
-| ![Power estimate](docs/img/vivado/phase-d/power.png) Power: 0.26 W, Vivado's **vectorless estimate**, not a measurement; the MMCM is 65% of it | |
+| **ISA** | RV32I, all 40 instructions; every exception traps (halts) |
+| **Pipeline** | 5 stages, full forwarding, 1-cycle load-use stall, branches resolved in EX (static not-taken) |
+| **On the board** | Arty A7-100T, **100 MHz**, timing met with +1.550 ns slack (118.3 MHz estimate) |
+| **CoreMark** | **0.962 CoreMark/MHz**, about **96 CoreMark** at 100 MHz, validated, with no hardware multiply |
+| **IPC** | 0.691 on CoreMark (CPI 1.447), counted in RTL simulation of the same SoC; it matches the board's cycle count to 0.0013% |
+| **Size** | 964 LUT, 467 FF (core alone); 1085 LUT, 398 FF, 8 BRAM (whole SoC on the board): under 2% of the chip |
+| **Formal** | riscv-formal **46/46 checks**; the pipeline's hazard, forwarding, flush, reset and X-propagation properties proven by k-induction; every check shown reachable, and the consistency checks shown to fail on planted bugs |
+| **Bugs formal caught that simulation missed** | **2**, both of which would have broken the ASIC (below) |
+| **UVM** | **205/205** functional coverage bins (100%); ~45,000 retirements per run compared with a C golden model, 0 mismatches |
+| **Simulation** | 176/176 cocotb tests, including the official `riscv-tests` suite (40/42; the 2 exclusions are explained) |
+| **CI** | Lint, simulation and formal on every push |
 
-**On the board, live** (ILA, `make impl ILA=1`, `make gui VIEW=ila`): the
-pipeline registers captured on the chip while CoreMark runs, triggered as
-`core_state_transition` enters EX. Rows top to bottom: the pc in IF/ID, ID/EX,
-EX/MEM, MEM/WB, then the instruction in ID/EX. Capture:
-[`docs/reports/ila_coremark.csv`](docs/reports/ila_coremark.csv).
+## Status
+
+| Stage | Phase | State |
+|---|---|---|
+| **1 — CPU** | A — Working core | **Done** |
+| | B — Formal verification | **Done** |
+| | C — UVM environment | **Done** |
+| | D — Hardware bring-up | **Running on the board**; one box open (a better photo) |
+| | E — TMR + fault injection, ASIC run #1 | Next |
+| **2 — SoC** | F — Systolic array | Not started |
+| | G — DMA + AXI interconnect | Not started |
+| | H — Integration + DFT, ASIC run #2 | Not started |
+
+Full scope and each phase's definition of done: [docs/buildplan.md](docs/buildplan.md).
+Day-to-day state, trend tables and decisions: [docs/PROGRESS.md](docs/PROGRESS.md).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph core["riscv_core (rtl/core/)"]
+        IF["IF<br/>pc, fetch"] --> ID["ID<br/>decode, regfile read,<br/>hazard + forwarding select"]
+        ID --> EX["EX<br/>ALU, branch compare + target,<br/>data address, store issue"]
+        EX --> MEM["MEM<br/>load data aligned"]
+        MEM --> WB["WB<br/>register write"]
+        EX -. "forward EX/MEM" .-> EX
+        MEM -. "forward MEM/WB" .-> EX
+        WB -. "write-through regfile" .-> ID
+        EX -- "redirect: flush IF/ID, ID/EX" --> IF
+    end
+    IF <-->|"instruction port"| RAM["32 KiB dual-port block RAM<br/>(code + data)"]
+    EX <-->|"data port"| RAM
+    EX <--> IO["I/O: 4 LEDs, UART TX 115200,<br/>cycle counter"]
+```
+
+- **Five stages, BRAM-timed memories.** Fetch presents the next pc to the block
+  RAM so RAM and pc latch on the same edge. Data memory is accessed from EX:
+  the address comes from its own adder, and load data arrives in MEM and is
+  registered, so no forwarding path starts at a RAM output. That change took
+  the board from 50 MHz to 100 MHz.
+- **Forwarding** from EX/MEM and MEM/WB into EX, with the selects decided in ID
+  and registered; WB writes through the register file to ID. One stall cycle
+  for a load followed directly by its use.
+- **Branches and jumps resolve in EX** with static not-taken prediction:
+  taken costs two cycles, not taken none.
+- **Exceptions halt**: ECALL, EBREAK, illegal instructions (anything outside
+  the 40 RV32I encodings), misaligned accesses and misaligned taken targets.
+- **SoC** (`rtl/top/soc.sv`): the core, one 32 KiB dual-port RAM for code and
+  data, LED and UART registers and a cycle counter at `0x1000_0000`.
+  `arty_a7_top.sv` adds the MMCM (100 MHz), the reset synchroniser and the
+  pins.
+- **RVFI** trace port and the formal properties live in the RTL under
+  `ifdef`, compiled out of synthesis.
+
+## Verification
+
+Four independent layers, each catching what the others cannot.
+
+**Formal** (`make formal`, SymbiYosys and riscv-formal, about 6 minutes;
+[docs/formal-properties.md](docs/formal-properties.md)):
+
+- **riscv-formal: 46/46 checks** by bounded model checking: all 37
+  instruction checks, plus register, pc forward/backward, uniqueness, causal,
+  causal memory, liveness, hang and illegal-instruction checks. Each of the
+  46 has a cover run showing it is reachable, and each consistency check was
+  shown to fail on a deliberately planted bug.
+- **Pipeline properties proven by k-induction**, which covers every reachable
+  state, not just a bounded depth: x0 is always zero; stall correctness
+  (S1–S4); forwarding correctness (F1/F2, L1); reset commits nothing (X1);
+  branch-flush correctness (B1/B2); no register-file structural hazard (SH1);
+  nothing left over from power-up ever reaches committed state as X (XP,
+  induction; XT, bounded with an undefined register file).
+- **Two bugs found that simulation missed:**
+  1. **Yosys misreads a size cast.** `~XLEN'(2'b11)` was parsed with the `~`
+     applied to the width, so jump targets were never masked. Verilator and
+     Vivado read it correctly, so simulation and the FPGA were fine, but Yosys
+     is also the front end of the ASIC flow. Without this check, the chip's
+     jumps would have landed on unaligned addresses.
+  2. **Reset could write garbage to data memory.** The pipeline registers hold
+     their power-up values during the reset cycle, and nothing gated the store
+     port. Verilator and the FPGA both power flops up to zero, so it never
+     showed; on an ASIC, flops power up random. Now proven impossible (X1).
+
+**UVM** (`make uvm`, Vivado XSim): random programs from a constrained
+generator, a reactive memory responder, and a scoreboard that steps a C golden
+model (via DPI-C) on every RVFI retirement. **205/205 coverage bins** from
+[docs/coverage-plan.md](docs/coverage-plan.md), about 45,000 retirements per
+run, 0 mismatches. Three planted RTL bugs (wrong forwarding priority, LBU
+sign-extending, a missing load-use stall) are each caught.
+
+**Simulation** (`make sim`, cocotb on Verilator): **176/176 tests**. Unit
+tests for every module; random programs with every retirement checked against
+a Python golden model; the official **`riscv-tests` rv32ui suite, 40 of 42**
+(`fence_i` needs the Zifencei extension; `ma_data` expects misaligned
+accesses to work, and this core traps them); the first-light firmware and one
+CoreMark iteration on the whole SoC, CRCs checked.
+
+**On the hardware**: an Integrated Logic Analyzer on the pipeline registers,
+captured from the running chip and checked by script (below).
+
+## On the board
+
+[![First light on the Arty A7-100T](docs/img/fpgafirstlight.jpg)](docs/img/fpgafirstlight.jpg)
+
+**First light**: a C program compiled with GCC, printing over the UART and
+counting on the LEDs.
+
+**CoreMark**, 2000 iterations at 100 MHz, from the board's UART
+([coremark_board.txt](docs/reports/coremark_board.txt)):
+
+```
+CoreMark on rv32i, 2000 iterations
+2K performance run parameters for coremark.
+CoreMark Size    : 666
+Total ticks      : 2077692270
+Total time (secs): 20
+Iterations/Sec   : 100
+Iterations       : 2000
+Compiler version : GCC16.1.0
+Compiler flags   : -O2 -march=rv32i -mabi=ilp32
+Memory location  : STATIC
+seedcrc          : 0xe9f5
+[0]crclist       : 0xe714
+[0]crcmatrix     : 0x1fd7
+[0]crcstate      : 0x8e3a
+[0]crcfinal      : 0x4983
+Correct operation validated. See README.md for run and reporting rules.
+CoreMark/MHz: 0.962
+```
+
+RV32I has no multiply instruction, so every multiply and divide in CoreMark
+is a software routine. Ticks are core cycles from the SoC's cycle counter.
+
+**Live on the chip** (`make impl ILA=1`, `make gui VIEW=ila`): the pipeline
+registers captured while CoreMark runs, triggered as `core_state_transition`
+enters EX. Rows top to bottom: the pc in IF/ID, ID/EX, EX/MEM and MEM/WB, then
+the instruction in ID/EX. Capture:
+[`ila_coremark.csv`](docs/reports/ila_coremark.csv).
 
 ![ILA capture, samples 58-72](docs/img/vivado/phase-d/58-72.png)
 
@@ -132,55 +199,145 @@ sits between the load and its use and forwarding covers it. Over this
 1024-cycle window, 881 instructions retire (IPC 0.86 here; CoreMark overall is
 0.691).
 
-## Build
+## In Vivado
 
-Requires Verilator ≥ 5.036 (the cocotb 2.x floor) and **cocotb ≥ 2.1.0**; the repo
-expects a venv at `~/cocotb-env`, falling back to whatever `cocotb-config` is on
-`PATH`. The cocotb floor is not arbitrary — on 2.0.1, a register-file-sized array in
-the design corrupts Verilator's VPI layer and reading a top-level port segfaults. Vivado 2025.2
-is needed for `make synth` — see [docs/vivado-setup.md](docs/vivado-setup.md).
+The build whose reports are committed: CoreMark image, 100 MHz, WNS +1.550 ns
+(`make gui`, `make gui VIEW=rtl`). A new set follows each milestone; these
+are from Phase D, in [`docs/img/vivado/phase-d/`](docs/img/vivado/phase-d/).
+The [whole-die floorplan](docs/img/floorplan_board.svg) shows the SoC in one
+of the chip's eight clock regions.
 
-| Target | Does | State |
+| | |
+|---|---|
+| ![Device view](docs/img/vivado/phase-d/device.png) Device view, coloured by module | ![Device view, zoomed](docs/img/vivado/phase-d/device-zoom.png) Zoomed to single slices, with routing |
+| ![Worst path on the device](docs/img/vivado/phase-d/worstpathdevice.png) The worst setup path on the die | ![Worst path schematic](docs/img/vivado/phase-d/worstpath.png) The same path: forwarding select → branch comparator (CARRY4 chain) → redirect → pc mux → block RAM address |
+| ![RTL schematic of the core](docs/img/vivado/phase-d/rtl-schematic-u_core.png) The core as elaborated RTL | ![RTL schematic of the ALU](docs/img/vivado/phase-d/rtl-schematic-alu.png) The ALU, opened up |
+| ![Timing summary](docs/img/vivado/phase-d/timing.png) Timing: met at 100 MHz, WNS +1.550 ns, WHS +0.110 ns | ![Utilization by hierarchy](docs/img/vivado/phase-d/utilization-hierarchy.png) Utilization by module |
+| ![Power estimate](docs/img/vivado/phase-d/power.png) Power: 0.26 W, Vivado's **vectorless estimate**, not a measurement; the MMCM is 65% of it | |
+
+## Results
+
+Conditions travel with every number: an out-of-context Fmax models no clock
+skew and is not the same quantity as a board-level one, so they are separate
+rows. The per-slice trends (what each feature cost in LUTs and MHz) are in
+[docs/PROGRESS.md](docs/PROGRESS.md).
+
+**Stage 1 — CPU.** Part `xc7a100tcsg324-1`, Vivado 2025.2.
+
+| Metric | Value | Report |
 |---|---|---|
-| `make lint` | Verilator lint of `rtl/`, zero warnings | live |
-| `make sim` | cocotb regression on Verilator | live |
-| `make synth` | Out-of-context synth **and** P&R of the core, reports to `docs/reports/` | live |
-| `make sw` | Build `sw/**/*.c` to `.elf` / `.hex` | live, no sources yet |
-| `make spike` | Run the `.elf` on the spike reference model | live, no sources yet |
-| `make formal` | SymbiYosys, all properties | Phase B |
-| `make uvm` | UVM regression in XSim | Phase C |
-| `make impl` | Board-level P&R, emits bitstream | Phase D |
-| `make prog` | Program the board | Phase D |
-| `make gui` | Open the routed design in the Vivado GUI (`VIEW=rtl`: RTL schematic; `VIEW=ila`: live waveforms) | live |
-| `make floorplan` | Draw the routed design as zoomable SVGs in `docs/img/` | live |
-| `make asic` | LibreLane RTL-to-GDSII | Phase E, then H |
+| Fmax, core alone, out-of-context, post-route (10.000 ns constraint) | 122.7 MHz | [summary_ooc.txt](docs/reports/summary_ooc.txt) |
+| Fmax, on the board (core + RAM + I/O, in context, MMCM clock) | runs at **100 MHz**, WNS +1.550 ns, 118.3 MHz estimate | [summary_board.txt](docs/reports/summary_board.txt) |
+| LUT / FF / BRAM / DSP, core alone, out-of-context | 964 / 467 / 0 / 0 | [summary_ooc.txt](docs/reports/summary_ooc.txt) |
+| LUT / FF / BRAM / DSP, whole SoC on the board | 1085 / 398 / 8 / 0 | [summary_board.txt](docs/reports/summary_board.txt) |
+| CoreMark/MHz, on the board, 100 MHz, 2000 iterations, validated | **0.962** (about 96 CoreMark); RV32I without M | [coremark_board.txt](docs/reports/coremark_board.txt) |
+| IPC / CPI, CoreMark timed region, RTL simulation of the same SoC | 0.691 / 1.447 | [coremark_sim.txt](docs/reports/coremark_sim.txt) |
+| Formal | riscv-formal 46/46 (BMC); pipeline properties by k-induction (k = 1 to 7), XT by BMC to depth 10 | [formal-properties.md](docs/formal-properties.md) |
+| Bugs formal caught that simulation missed | 2 | [formal-properties.md](docs/formal-properties.md) |
+| Functional coverage (UVM) | 205/205 bins, 100% | [coverage-plan.md](docs/coverage-plan.md) |
+| TMR: fault detection / recovery rate | — (Phase E) | |
+| TMR: area overhead / Fmax penalty | — (Phase E) | |
 
-Targets whose phase has not arrived print which phase they belong to and what they are
-waiting on, rather than failing with `No rule to make target`.
+**Stage 2 — SoC.** Not started.
 
-`make synth` runs through place & route rather than stopping at synthesis, because
-post-synthesis timing is an estimate and post-route timing is measured.
+| Metric | Value |
+|---|---|
+| GOPS (INT8) at achieved Fmax | — |
+| **Measured** PE utilization | — |
+| Speedup vs. software matmul | — |
+| DSP slices used vs. LUT-fabric MACs | — |
+| AXI outstanding depth / measured throughput | — |
+| SVA properties proven on AXI interfaces | — |
+
+**ASIC flow (LibreLane + Sky130).** Two runs: the bare core closing Phase E, the full
+SoC in Phase H. The delta between them is the result.
+
+| Metric | Run 1 (bare core) | Run 2 (full SoC) |
+|---|---|---|
+| Die area, cell count, utilization | — | — |
+| Post-layout Fmax | — | — |
+| Power estimate | — | — |
+| DRC / LVS clean | — | — |
+| Scan chains: count, coverage, area overhead | — | — |
+
+## Limitations
+
+Stated plainly, because they are real:
+
+- **RV32I only.** No multiply/divide (M), no floating point, no compressed
+  instructions, no CSRs (the cycle counter is memory-mapped), no interrupts or
+  privilege modes. Every exception halts the core rather than trapping to a
+  handler. These are scope choices ([docs/buildplan.md](docs/buildplan.md) §7),
+  and CoreMark is reported with that in mind.
+- **32 KiB of memory**, code and data together, in block RAM. No caches and no
+  DDR.
+- **Static not-taken branches**: every taken branch or jump costs two
+  cycles. Branch prediction is deferred until after TMR, and then only with a
+  measured IPC gain.
+- **The out-of-context Fmax is optimistic**: it leaves the core's ports
+  untimed. The board-level number is the one that counts, and it is the one
+  quoted first.
+- **Power is an estimate.** Vivado's vectorless analysis, not a measurement.
+- **Not yet fault-tolerant.** TMR is Phase E.
+
+## Build and reproduce
+
+Requires Verilator ≥ 5.036 and **cocotb ≥ 2.1.0** (2.0.1 segfaults reading a
+port once a register-file-sized array exists), a venv at `~/cocotb-env`, the
+RISC-V GNU toolchain, and OSS CAD Suite for formal. Vivado 2025.2 (free ML
+Standard edition) for synthesis, UVM and the board:
+[docs/vivado-setup.md](docs/vivado-setup.md). Vivado runs in batch from Tcl
+scripts in `syn/`; no project directory is ever committed.
+
+| Target | Does |
+|---|---|
+| `make lint` | Verilator lint of `rtl/`, zero warnings |
+| `make sim` | cocotb regression on Verilator, 176 tests |
+| `make formal` | SymbiYosys properties and riscv-formal, checks and covers |
+| `make uvm` | UVM regression in XSim (`SEED`, `PROGRAMS`, `COV_MIN`) |
+| `make model-test` | The C golden model alone on rv32ui |
+| `make synth` | Out-of-context synth **and** place & route of the core, reports to `docs/reports/` |
+| `make fw` / `make bench` | First-light firmware / CoreMark images |
+| `make impl` | Board-level place & route and bitstream (`FW_IMAGE=`, `ILA=1`), reports to `docs/reports/` |
+| `make prog` | Program the Arty (from WSL via usbipd, or prints the Windows steps) |
+| `make ila` | Capture the pipeline registers from the running board and check them |
+| `make gui` | Open the routed design in the Vivado GUI (`VIEW=rtl`: RTL schematic; `VIEW=ila`: live waveforms) |
+| `make floorplan` | Draw the routed design as zoomable SVGs in `docs/img/` |
+| `make asic` | LibreLane RTL-to-GDSII (Phase E, then H; prints what it is waiting on) |
+
+`make synth` routes rather than stopping at synthesis: post-synthesis timing is
+an estimate, post-route timing is measured. CI runs lint, simulation and
+formal; Vivado is too large for a hosted runner, so synthesis runs locally and
+its reports are committed with the RTL that produced them.
 
 ## Repository layout
 
-Directories are created when they have something to hold, so this is the target shape
-rather than the current one — build scripts walk `rtl/` recursively and error on an
-empty match, so a new subdirectory needs no build change.
-
 | Path | Contents |
 |---|---|
-| `rtl/core/` | Pipeline stages, regfile, ALU, hazard unit |
-| `rtl/tmr/` | Triplicated wrapper + voter |
-| `rtl/accel/` | Systolic array (Stage 2) |
-| `rtl/bus/` | AXI interconnect, DMA (Stage 2) |
-| `rtl/periph/` | UART, timer |
-| `tb/cocotb/` | Python testbenches |
-| `tb/uvm/` | SystemVerilog UVM environment |
-| `tb/formal/` | SVA property files, SymbiYosys configs |
-| `sw/tests/` | C and assembly test programs |
-| `sw/model/` | Python/C++ golden reference models |
-| `sim/` | Simulation scripts, waveform configs |
-| `syn/` | Vivado Tcl scripts |
-| `constr/` | XDC timing/pin constraints |
-| `docs/` | Design docs, coverage plans, committed reports |
-| `scripts/` | Build automation |
+| `rtl/core/` | The pipeline: `riscv_core`, decoder, ALU, branch unit, hazard unit, load/store alignment, register file |
+| `rtl/periph/` | UART transmitter |
+| `rtl/top/` | The SoC (`soc.sv`), its RAM, and the Arty A7 top (clocking, reset, pins, optional ILA) |
+| `tb/cocotb/` | Python testbenches and the Python golden model |
+| `tb/uvm/` | UVM environment (XSim), DPI-C bridge to the C model |
+| `tb/formal/` | SymbiYosys jobs, harnesses, riscv-formal config (submodule) |
+| `sw/model/` | C golden model (ISS) |
+| `sw/firstlight/`, `sw/coremark-port/` | Bare-metal firmware and the CoreMark port (CoreMark itself is a submodule) |
+| `sw/riscv-tests-env/` | Our environment for the official `riscv-tests` (the suite is a submodule, `sw/riscv-tests/`) |
+| `syn/` | Vivado Tcl: OOC synth, board impl, ILA capture, GUI views, floorplan export |
+| `constr/` | Arty A7 pin constraints |
+| `scripts/` | Build automation, the ILA checker, the floorplan renderer |
+| `docs/` | Build plan, progress log, formal and coverage plans, committed reports, images |
+
+## Roadmap
+
+- **Phase E — TMR and fault injection.** Triplicate the core with majority
+  voters, inject faults, measure detection and recovery rates and the area
+  and Fmax cost. Then the first ASIC run: the core through LibreLane on
+  Sky130 to GDSII.
+- **Stage 2 — the SoC.** An INT8 systolic array (measured GOPS and PE
+  utilisation, speedup over software matmul), a descriptor-based DMA, an AXI
+  interconnect with formally proven interfaces, scan insertion, and a second
+  ASIC run of the whole SoC.
+- **After everything else: Doom.** Once Stage 2 ships, build what the SoC lacks
+  to play Doom on the Arty: DDR3 with a cache, the game data from flash, a VGA
+  framebuffer, and the M extension, measured in frames per second.

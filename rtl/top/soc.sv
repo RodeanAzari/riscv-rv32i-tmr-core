@@ -20,8 +20,8 @@
 // UART ST first. Byte stores (sb) work on every register: the core puts a
 // byte in every lane and raises its strobe, and the registers read lane 0.
 //
-// The core's data port is BRAM-timed: the address is taken at the end of MEM
-// and the load data is expected during WB. The I/O read path matches it with
+// The core's data port is BRAM-timed: the address is taken at the end of EX
+// and the load data is expected during MEM. The I/O read path matches it with
 // one register, so a load from I/O lands exactly like a load from RAM.
 module soc #(
     parameter int unsigned CLK_HZ    = 50_000_000,
