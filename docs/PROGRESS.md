@@ -403,15 +403,14 @@ move together with the local install) and runs `make formal`. Not cached.
 rebuilds Verilator (~8 min); that is not a broken cache key. Bumping
 `VERILATOR_VERSION` also forces a rebuild.
 
-**Watch: `ubuntu-latest` becomes Ubuntu 26 from 2026-10-19.** The apt riscv64
-toolchain changes, and the cache key names only `runner.os`, so a Verilator
-built on 24.04 would be restored onto 26.04. If the first run after the switch
-fails, suspect this before the RTL; fix by pinning `runs-on: ubuntu-24.04` or
-adding the image version to the key. **Checked 2026-10-18 (the .debs unpacked
-locally): 26.04's `gcc-riscv64-unknown-elf` 15.3 ships no `stdint.h`** (it
+**Both jobs are pinned to `runs-on: ubuntu-24.04`** (2026-10-18), ahead of
+`ubuntu-latest` becoming 26.04 on 2026-10-19. Checked with the .debs unpacked
+locally: **26.04's `gcc-riscv64-unknown-elf` 15.3 ships no `stdint.h`** (it
 recommends `picolibc-riscv64-unknown-elf`, which `--no-install-recommends`
 leaves out), so every C build would fail there, and its assembler (binutils
-2.45.50) rejected `-march=rv32i` in that check. Pinning 24.04 avoids both.
+2.45.50) rejected `-march=rv32i` in that check. Moving to 26.04 later means
+fixing both, and the Verilator cache key (`runner.os` only) must then name the
+image too, or a 24.04 build is restored onto 26.04.
 
 **Not in CI:** synthesis (Vivado is too large for a hosted runner).
 

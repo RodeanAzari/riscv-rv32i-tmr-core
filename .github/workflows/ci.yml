@@ -15,7 +15,7 @@ env:
 
 jobs:
   verilate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # The official test suite is a submodule pinned to one commit.
       - uses: actions/checkout@v4
@@ -78,7 +78,7 @@ jobs:
   # a minute on a hosted runner, unlike Vivado -- see CLAUDE.md section 4 for
   # why synthesis stays local with committed reports.
   formal:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # riscv-formal is a submodule pinned to one commit.
       - uses: actions/checkout@v4
