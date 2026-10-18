@@ -23,15 +23,28 @@ import sys
 U = 10                                   # pixels per tile-grid unit
 
 # Leaf cells by hierarchy, most specific first (as in syn/gui_view.tcl).
-MODULES = [
-    ("u_soc/u_core/u_alu/",     "#ff8000", "ALU"),
-    ("u_soc/u_core/u_branch/",  "#ff00ff", "branch compare + target"),
-    ("u_soc/u_core/u_regfile/", "#00c8ff", "register file (LUTRAM)"),
-    ("u_soc/u_core/",           "#00e000", "rest of core: decode, hazards, pipeline registers"),
-    ("u_soc/u_ram/",            "#f0f0f0", "32 KiB RAM (block RAM) + I/O registers"),
+# A single core is coloured by pipeline module; a TMR build (make impl
+# TMR=1) by copy, so the three copies and the voter show where they landed.
+CORE = "u_soc/g_cpu.u_core/"
+SOC_REST = [
+    ("u_soc/u_ram/",            "#f0f0f0", "32 KiB RAM (block RAM)"),
     ("u_soc/u_uart_tx/",        "#ff3030", "UART transmitter"),
-    ("",                        "#a0a0a0", "board top: clocking, reset, pins"),
+    ("u_soc/u_uart_rx/",        "#ff9090", "UART receiver"),
+    ("",                        "#a0a0a0", "SoC glue and board top: I/O registers, clocking, reset"),
 ]
+MODULES_CORE = [
+    (CORE + "u_alu/",     "#ff8000", "ALU"),
+    (CORE + "u_branch/",  "#ff00ff", "branch compare + target"),
+    (CORE + "u_regfile/", "#00c8ff", "register file (LUTRAM)"),
+    (CORE,                "#00e000", "rest of core: decode, hazards, pipeline registers"),
+] + SOC_REST
+MODULES_TMR = [
+    (CORE + "u_core_a/",           "#ff8000", "core copy A"),
+    (CORE + "g_other[1].u_core/",  "#00e000", "core copy B"),
+    (CORE + "g_other[2].u_core/",  "#00c8ff", "core copy C"),
+    (CORE,                         "#ff00ff", "voter + mismatch counter"),
+] + SOC_REST
+MODULES = MODULES_CORE
 WORST = "#ffe000"
 
 # Background by tile type: (pattern, fill, rows tall).
@@ -63,6 +76,9 @@ def main():
     tiles = {r["name"]: (int(r["x"]), int(r["y"]), r["type"])
              for r in read(f"{d}/tiles.tsv")}
     cells = read(f"{d}/cells.tsv")
+    global MODULES
+    tmr = any(c["name"].startswith(CORE + "u_core_a/") for c in cells)
+    MODULES = MODULES_TMR if tmr else MODULES_CORE
     nets = read(f"{d}/nets.tsv")
     worst = read(f"{d}/worst_path.tsv")
     slack = next(r["name"] for r in worst if r["kind"] == "slack")
@@ -70,7 +86,7 @@ def main():
     worst_nets = {r["name"] for r in worst if r["kind"] == "net"}
     w = (max(t[0] for t in tiles.values()) + 1) * U
     h = (max(t[1] for t in tiles.values()) + 1) * U
-    head = 90                            # title and legend band
+    head = 110                           # title, three legend rows, caption
     svg = []
     add = svg.append
 
@@ -151,7 +167,8 @@ def main():
     def legend(x0, y0, scale):
         g = [f'<g font-family="sans-serif" font-size="{14*scale:.1f}" fill="#d8dde3">',
              f'<text x="{x0}" y="{y0+16*scale}" font-size="{18*scale:.1f}" font-weight="bold">'
-             f'RV32I core on the Arty A7-100T (xc7a100tcsg324-1): placed and routed, '
+             f'RV32I {"TMR core (three voted copies)" if MODULES is MODULES_TMR else "core"} '
+             f'on the Arty A7-100T (xc7a100tcsg324-1): placed and routed, '
              f'100 MHz, worst slack +{float(slack):.3f} ns</text>']
         items = [(c, f"{l} ({n})") for (_, c, l), n in zip(MODULES, counts)] + \
                 [(WORST, "worst setup path")]
@@ -160,7 +177,8 @@ def main():
             ly = y0 + (36 + (k // 4) * 20) * scale
             g.append(f'<rect x="{lx}" y="{ly}" width="{12*scale}" height="{12*scale}" fill="{colour}"/>'
                      f'<text x="{lx+18*scale}" y="{ly+11*scale}">{html.escape(label)}</text>')
-        g.append(f'<text x="{x0}" y="{y0+90*scale}" fill="#8a939d" font-size="{11*scale:.1f}">'
+        rows = (len(items) + 3) // 4
+        g.append(f'<text x="{x0}" y="{y0+(36+rows*20+14)*scale}" fill="#8a939d" font-size="{11*scale:.1f}">'
                  'Generated from post_route.dcp (syn/floorplan_export.tcl, scripts/floorplan.py). '
                  'Cell counts are placed leaf cells. Wires drawn tile to tile; clock and power nets omitted.'
                  '</text></g>')

@@ -1,6 +1,6 @@
 # Board-level synthesis, implementation and bitstream for the Arty A7-100T.
 #
-#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila]
+#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila] [tmr]
 #
 # Top: rtl/top/arty_a7_top.sv, pins in constr/arty_a7.xdc, the RAM loaded
 # from <hex> (sw/build/hello.hex, from `make fw`). Unlike synth_ooc.tcl this
@@ -20,6 +20,10 @@
 set part [lindex $argv 0]
 set hex  [lindex $argv 1]
 set ila  [expr {[lindex $argv 2] eq "1"}]
+# tmr = 1: three voted copies of the core (rtl/tmr/riscv_core_tmr.sv), with
+# reports named *_board_tmr.* so the single core's stay beside them.
+set tmr  [expr {[lindex $argv 3] eq "1"}]
+set sfx  [expr {$tmr ? "_board_tmr" : "_board"}]
 if {$part eq ""} { set part xc7a100tcsg324-1 }
 
 set top     arty_a7_top
@@ -56,7 +60,8 @@ if {[llength $sv] == 0} {
 read_verilog -sv $sv
 read_xdc [file join $repo constr arty_a7.xdc]
 
-synth_design -top $top -part $part -generic "INIT_FILE=\"$hex\"" -generic "ILA=$ila"
+synth_design -top $top -part $part -generic "INIT_FILE=\"$hex\"" -generic "ILA=$ila" \
+    -generic "TMR=$tmr"
 
 set bb [get_cells -hier -quiet -filter {IS_BLACKBOX == 1}]
 if {[llength $bb] > 0} {
@@ -101,8 +106,8 @@ place_design
 route_design
 write_checkpoint -force [file join $rundir post_route.dcp]
 
-report_utilization    -file [file join $reports utilization_board.rpt]
-report_timing_summary -file [file join $reports timing_board.rpt]
+report_utilization    -file [file join $reports utilization$sfx.rpt]
+report_timing_summary -file [file join $reports timing$sfx.rpt]
 
 # --- headline numbers -------------------------------------------------------
 # The core runs on the MMCM's CLKOUT0. Its slack against that clock's period
@@ -131,10 +136,10 @@ foreach {label group total} [list \
     dict set util $label [list $used $total]
 }
 
-set fh [open [file join $reports summary_board.txt] w]
+set fh [open [file join $reports summary$sfx.txt] w]
 foreach out [list stdout $fh] {
     puts $out ""
-    puts $out "=== arty_a7_top (core + 32 KiB RAM + LED + UART[expr {$ila ? " + ILA" : ""}]), board-level, post-route ==="
+    puts $out "=== arty_a7_top ([expr {$tmr ? "TMR core" : "core"}] + 32 KiB RAM + LED + UART[expr {$ila ? " + ILA" : ""}]), board-level, post-route ==="
     puts $out [format "part            %s" $part]
     puts $out [format "core clock      %s, %.3f ns (%.1f MHz), MMCM from 100 MHz" \
                [get_property NAME $clk] $period [expr {1000.0/$period}]]

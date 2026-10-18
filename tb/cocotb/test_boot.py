@@ -14,7 +14,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge
 
-from test_soc import CLK_PERIOD_NS, CLKS_PER_BIT, uart_rx
+from test_soc import CLK_PERIOD_NS, CLKS_PER_BIT, assert_no_tmr_mismatch, uart_rx
 
 REPO = Path(__file__).resolve().parents[2]
 ECHO = (REPO / "sw/build/apps/echo.bin").read_bytes()
@@ -89,6 +89,7 @@ async def test_bad_crc_then_noise_then_load_and_run(dut):
     await send(dut, b"q")
     out = await expect(dut, got, BANNER_SAVED, frames=160)
     assert "echo: bye after " in out, "the program did not finish"
+    assert_no_tmr_mismatch(dut)
 
 
 @cocotb.test()
@@ -100,3 +101,4 @@ async def test_reset_and_rerun(dut):
     await expect(dut, got, "OK\r\necho: type, q to quit\r\n")
     await send(dut, b"ok")
     await expect(dut, got, "OK\r\necho: type, q to quit\r\nOK")
+    assert_no_tmr_mismatch(dut)

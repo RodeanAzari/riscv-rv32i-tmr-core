@@ -29,7 +29,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge
 
-from test_soc import CLK_PERIOD_NS, uart_rx
+from test_soc import CLK_PERIOD_NS, assert_no_tmr_mismatch, uart_rx
 
 DONE = re.compile(r"CoreMark/MHz: \d+\.\d{3}\r\n")
 TOO_SHORT = "ERROR! Must execute for at least 10 secs for a valid result!"
@@ -42,7 +42,7 @@ CYCLE_ADDR = 0x1000_0010
 
 async def count_retirements(dut, marks):
     """Count RVFI retirements; append the count at each load of CYCLE."""
-    core = dut.u_core
+    core = dut.g_cpu.u_core
     n = 0
     while True:
         await FallingEdge(dut.clk_i)
@@ -98,3 +98,4 @@ async def test_coremark(dut):
     with open(os.path.join("sim_build", "coremark_sim.txt"), "w") as f:
         f.write(report)
     assert 0 < ipc <= 1, f"IPC {ipc}"
+    assert_no_tmr_mismatch(dut)

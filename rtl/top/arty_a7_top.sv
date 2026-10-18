@@ -26,7 +26,8 @@
 // not this module.
 module arty_a7_top #(
     parameter string INIT_FILE = "",
-    parameter bit    ILA       = 1'b0
+    parameter bit    ILA       = 1'b0,
+    parameter bit    TMR       = 1'b0     // three voted cores: soc.sv, make impl TMR=1
 ) (
     input  logic       clk100_i,     // CLK100MHZ, E3
     input  logic       rst_ni,       // ck_rst, the RESET button, C2
@@ -86,7 +87,8 @@ module arty_a7_top #(
 
   soc #(
       .CLK_HZ    (CLK_HZ),
-      .INIT_FILE (INIT_FILE)
+      .INIT_FILE (INIT_FILE),
+      .TMR       (TMR)
   ) u_soc (
       .clk_i                   (clk),
       .rst_i                   (rst),

@@ -61,8 +61,11 @@ COMPILE_ARGS += -DRISCV_FORMAL -DFORMAL --assert
 # expose. Each entry elaborates separately, so each needs its own build
 # directory and results file or they overwrite each other. Several modules
 # against one toplevel share an entry, comma-separated: test_riscv_tests runs
-# the official suite on the same core build as test_core.
+# the official suite on the same core build as test_core. riscv_core_tmr
+# runs both again on the triplicated core, which has the core's ports.
 TESTS ?= riscv_core:test_core,test_riscv_tests \
+         riscv_core_tmr:test_core,test_riscv_tests \
+         riscv_core_tmr:test_tmr_faults \
          riscv_alu:test_alu \
          riscv_regfile:test_regfile \
          riscv_decoder:test_decoder \
@@ -74,7 +77,10 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          soc:test_soc \
          soc:test_coremark \
          soc:test_boot \
-         soc:test_demo
+         soc:test_demo \
+         soc_tmr:test_soc \
+         soc_tmr:test_coremark \
+         soc_tmr:test_boot
 
 # The SoC runs a firmware simulation image from sw/build/, built by `make fw`
 # and `make bench` (the regression below builds both first; a TEST_ONE run of
@@ -87,14 +93,29 @@ ifdef TEST_ONE
   TOPLEVEL              := $(word 1,$(subst :, ,$(TEST_ONE)))
   MODULE                := $(word 2,$(subst :, ,$(TEST_ONE)))
   BUILD_TAG             := $(TOPLEVEL)
+  # soc_tmr: the same SoC built with TMR = 1 (three voted cores); the tests
+  # then also require the mismatch counter to stay at zero.
+  TMR_SUFFIX            :=
+  ifeq ($(TOPLEVEL),soc_tmr)
+    TOPLEVEL            := soc
+    TMR_SUFFIX          := _tmr
+    COMPILE_ARGS        += -GTMR=1
+  endif
   ifeq ($(TOPLEVEL),soc)
     SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,hello_sim)))
-    BUILD_TAG           := soc_$(SOC_IMAGE)
+    BUILD_TAG           := soc_$(SOC_IMAGE)$(TMR_SUFFIX)
     # The demo test runs the UART at CLK/16: its output is thousands of characters.
     ifeq ($(MODULE),test_demo)
       COMPILE_ARGS      += -GBAUD=3125000
     endif
     COMPILE_ARGS        += -GINIT_FILE='"$(abspath $(REPO)/sw/build/$(SOC_IMAGE).hex)"'
+  endif
+  # The fault campaign breaks the pipeline's invariants on purpose, so the
+  # core's in-RTL properties (FORMAL, --assert) would stop it at the first
+  # flip: its build leaves them out, and has a build directory of its own.
+  ifeq ($(MODULE),test_tmr_faults)
+    COMPILE_ARGS        := $(filter-out -DFORMAL --assert,$(COMPILE_ARGS))
+    BUILD_TAG           := $(TOPLEVEL)_faults
   endif
   SIM_BUILD             := sim_build/$(BUILD_TAG)
   COCOTB_RESULTS_FILE   := results_$(BUILD_TAG).xml

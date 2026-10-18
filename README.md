@@ -3,26 +3,30 @@
 A 5-stage in-order RV32I CPU written from scratch in SystemVerilog, **formally
 verified, checked by a UVM environment against a golden model, and running on
 an FPGA at 100 MHz**: a Digilent Arty A7-100T, where it runs CoreMark at
-0.962 CoreMark/MHz.
+0.962 CoreMark/MHz. It can also run as **three voted copies (triple modular
+redundancy)**, still at 100 MHz: in 10,000 injected single-bit faults, none
+changed its output.
 
 The project has two stages. Stage 1 is the CPU: verified, hardware-proven,
 then made fault-tolerant with triple modular redundancy (TMR) and taken through
 an open-source ASIC flow to GDSII. Stage 2 builds an SoC around it: an INT8
 systolic-array accelerator, a descriptor-based DMA and an AXI interconnect.
-**Stage 1 is done through Phase D; TMR (Phase E) is in progress.**
+**Stage 1 is done through Phase D; Phase E (TMR) is built and measured, with
+its ASIC run still to come.**
 
 Every number below is transcribed from a report committed in
 [`docs/reports/`](docs/reports/), produced by a `make` target, with its
 measurement conditions stated. Dashes mean not measured yet.
 
-[![Floorplan of the core on the FPGA](docs/img/floorplan_board_core.svg)](docs/img/floorplan_board_core.svg)
+[![Floorplan of the TMR core on the FPGA](docs/img/floorplan_board_core.svg)](docs/img/floorplan_board_core.svg)
 
-*The core as placed and routed on the Artix-7, coloured by module: ALU
-(orange), branch unit (magenta), register file (cyan), the rest of the
-pipeline (green), the block-RAM memory (white), the UART (red), and the
-critical path in yellow. Generated from the routed design by
-`make floorplan`. Click to open it, or download it and open it in a browser
-to zoom in to individual LUTs and flip-flops.*
+*The fault-tolerant core as placed and routed on the Artix-7: three copies of
+the CPU (orange, green, cyan) and the voter between them (magenta), beside
+the block-RAM memory (white) and the UART (red), with the critical path in
+yellow. Generated from the routed design by `make floorplan`. Click to open
+it, or download it and open it in a browser to zoom in to individual LUTs
+and flip-flops. The single core's floorplan, from Phase D, is
+[here](docs/img/vivado/phase-d/floorplan_board_core.svg).*
 
 ## At a glance
 
@@ -30,14 +34,15 @@ to zoom in to individual LUTs and flip-flops.*
 |---|---|
 | **ISA** | RV32I, all 40 instructions; every exception traps (halts) |
 | **Pipeline** | 5 stages, full forwarding, 1-cycle load-use stall, branches resolved in EX (static not-taken) |
-| **On the board** | Arty A7-100T, **100 MHz**, timing met with +0.948 ns slack (110.5 MHz estimate) |
+| **On the board** | Arty A7-100T, **100 MHz**, timing met with +0.955 ns slack (110.6 MHz estimate); the TMR core also meets 100 MHz (+0.062 ns) |
 | **CoreMark** | **0.962 CoreMark/MHz**, about **96 CoreMark** at 100 MHz, validated, with no hardware multiply |
 | **IPC** | 0.691 on CoreMark (CPI 1.447), counted in RTL simulation of the same SoC; it matches the board's cycle count to 0.0013% |
-| **Size** | 964 LUT, 467 FF (core alone); 1123 LUT, 435 FF, 8 BRAM (whole SoC on the board): under 2% of the chip |
+| **Size** | 966 LUT, 467 FF (core alone); 1123 LUT, 435 FF, 8 BRAM (whole SoC on the board): under 2% of the chip. TMR: 3370 LUT, 1589 FF on the board |
+| **Fault tolerance** | Three voted copies with feedback; voter formally proven; **10,000 random single-bit faults, 0 failures**, every detected fault corrected and the copies back in step |
 | **Formal** | riscv-formal **46/46 checks**; the pipeline's hazard, forwarding, flush, reset and X-propagation properties proven by k-induction; every check shown reachable, and the consistency checks shown to fail on planted bugs |
 | **Bugs formal caught that simulation missed** | **2**, both of which would have broken the ASIC (below) |
 | **UVM** | **205/205** functional coverage bins (100%); ~45,000 retirements per run compared with a C golden model, 0 mismatches |
-| **Simulation** | 195/195 cocotb tests, including the official `riscv-tests` suite (40/42; the 2 exclusions are explained) |
+| **Simulation** | 306/306 cocotb tests, including the official `riscv-tests` suite (40/42; the 2 exclusions are explained) |
 | **Interactive** | A serial bootloader: programs load over the UART in a fraction of a second, no FPGA rebuild; six interactive demos |
 | **CI** | Lint, simulation and formal on every push |
 
@@ -49,7 +54,7 @@ to zoom in to individual LUTs and flip-flops.*
 | | B — Formal verification | **Done** |
 | | C — UVM environment | **Done** |
 | | D — Hardware bring-up | **Done** |
-| | E — TMR + fault injection, ASIC run #1 | **In progress** |
+| | E — TMR + fault injection, ASIC run #1 | **TMR done and measured**; ASIC run #1 next |
 | **2 — SoC** | F — Systolic array | Not started |
 | | G — DMA + AXI interconnect | Not started |
 | | H — Integration + DFT, ASIC run #2 | Not started |
@@ -133,17 +138,59 @@ model (via DPI-C) on every RVFI retirement. **205/205 coverage bins** from
 run, 0 mismatches. Three planted RTL bugs (wrong forwarding priority, LBU
 sign-extending, a missing load-use stall) are each caught.
 
-**Simulation** (`make sim`, cocotb on Verilator): **195/195 tests**. Unit
+**Simulation** (`make sim`, cocotb on Verilator): **306/306 tests**. Unit
 tests for every module; random programs with every retirement checked against
 a Python golden model; the official **`riscv-tests` rv32ui suite, 40 of 42**
 (`fence_i` needs the Zifencei extension; `ma_data` expects misaligned
 accesses to work, and this core traps them); the first-light firmware and one
 CoreMark iteration on the whole SoC, CRCs checked; the bootloader receiving a
 program bit by bit on the RX pin; and each of the six demos below, its output
-checked against an independent Python model.
+checked against an independent Python model. The core's tests and the SoC's
+first-light, CoreMark and bootloader tests run again on the TMR core, which
+must also report zero mismatches, and 1,000 injected faults must change
+nothing.
 
 **On the hardware**: an Integrated Logic Analyzer on the pipeline registers,
 captured from the running chip and checked by script (below).
+
+## Fault tolerance (TMR)
+
+Three copies of the core run in lockstep, and a 2-of-3 voter
+([`rtl/tmr/`](rtl/tmr/)) decides everything that leaves them: the fetch
+address, every memory access, every register write and the halt. The voted
+values also go **back into all three copies** (their pc, halt flags and
+register files), so a copy that a fault knocks off course is outvoted on the
+cycle it diverges and then pulled back into step. A mismatch counter, readable
+by software at `0x1000_0014`, counts disagreements.
+
+- **The voter is formally proven** for every input: any two agreeing inputs
+  produce that output, and the mismatch and which-copy flags are exact.
+- **Three copies survive synthesis**: `DONT_TOUCH` and `KEEP_HIERARCHY` stop
+  Vivado merging them, and the build fails if any copy is missing (1601
+  cells each, [`summary_ooc_tmr.txt`](docs/reports/summary_ooc_tmr.txt)).
+- **Fault injection** (`make faults`): 10,000 trials, each a fresh random
+  program with one random bit flipped in one copy, in any pipeline register
+  or the register file, at a random cycle, judged against the golden model
+  ([`tmr_faults.txt`](docs/reports/tmr_faults.txt)):
+
+| 10,000 single-bit faults | Count | |
+|---|---|---|
+| Output wrong (failure) | **0** | |
+| Detected (copies disagreed) | 1,275 | all corrected; all three copies identical again afterwards |
+| Masked (the bit was never used) | 8,725 | 5,777 of them still sitting in registers the programs never touch |
+| Disagreement length | median 1 cycle | 90th percentile 4, max 30 |
+
+The latent ones are the honest limit of voting: a flipped bit in a register
+the program never writes again stays in that copy, outvoted whenever it is
+read, until software rewrites the register.
+
+What it costs, same RTL, same conditions:
+
+| | Single core | TMR | |
+|---|---|---|---|
+| Board LUT / FF | 1123 / 435 | 3370 / 1589 | 3.0x / 3.7x |
+| Board Fmax (100 MHz target) | 110.6 MHz | 100.6 MHz | −9.0% |
+| Core alone, out of context | 966 LUT, 120.4 MHz | 3658 LUT, 101.3 MHz | 3.8x, −15.9% |
 
 ## On the board
 
@@ -239,7 +286,7 @@ The CoreMark build of 2026-10-17: 100 MHz, WNS +1.550 ns, before the UART
 receiver (+38 LUT, +37 FF) joined (`make gui`, `make gui VIEW=rtl`). The
 floorplan at the top is from the same build. A new set follows each milestone; these
 are from Phase D, in [`docs/img/vivado/phase-d/`](docs/img/vivado/phase-d/).
-The [whole-die floorplan](docs/img/floorplan_board.svg) shows the SoC in one
+The [whole-die floorplan](docs/img/vivado/phase-d/floorplan_board.svg) shows the SoC in one
 of the chip's eight clock regions.
 
 | | |
@@ -261,17 +308,17 @@ rows. The per-slice trends (what each feature cost in LUTs and MHz) are in
 
 | Metric | Value | Report |
 |---|---|---|
-| Fmax, core alone, out-of-context, post-route (10.000 ns constraint) | 122.7 MHz | [summary_ooc.txt](docs/reports/summary_ooc.txt) |
-| Fmax, on the board (core + RAM + I/O, in context, MMCM clock) | runs at **100 MHz**, WNS +0.948 ns, 110.5 MHz estimate | [summary_board.txt](docs/reports/summary_board.txt) |
-| LUT / FF / BRAM / DSP, core alone, out-of-context | 964 / 467 / 0 / 0 | [summary_ooc.txt](docs/reports/summary_ooc.txt) |
+| Fmax, core alone, out-of-context, post-route (10.000 ns constraint) | 120.4 MHz | [summary_ooc.txt](docs/reports/summary_ooc.txt) |
+| Fmax, on the board (core + RAM + I/O, in context, MMCM clock) | runs at **100 MHz**, WNS +0.955 ns, 110.6 MHz estimate | [summary_board.txt](docs/reports/summary_board.txt) |
+| LUT / FF / BRAM / DSP, core alone, out-of-context | 966 / 467 / 0 / 0 | [summary_ooc.txt](docs/reports/summary_ooc.txt) |
 | LUT / FF / BRAM / DSP, whole SoC on the board | 1123 / 435 / 8 / 0 | [summary_board.txt](docs/reports/summary_board.txt) |
 | CoreMark/MHz, on the board, 100 MHz, 2000 iterations, validated | **0.962** (about 96 CoreMark); RV32I without M | [coremark_board.txt](docs/reports/coremark_board.txt) |
 | IPC / CPI, CoreMark timed region, RTL simulation of the same SoC | 0.691 / 1.447 | [coremark_sim.txt](docs/reports/coremark_sim.txt) |
 | Formal | riscv-formal 46/46 (BMC); pipeline properties by k-induction (k = 1 to 7), XT by BMC to depth 10 | [formal-properties.md](docs/formal-properties.md) |
 | Bugs formal caught that simulation missed | 2 | [formal-properties.md](docs/formal-properties.md) |
 | Functional coverage (UVM) | 205/205 bins, 100% | [coverage-plan.md](docs/coverage-plan.md) |
-| TMR: fault detection / recovery rate | — (Phase E) | |
-| TMR: area overhead / Fmax penalty | — (Phase E) | |
+| TMR: faults injected / failures | 10,000 / **0**; 1,275 detected, all corrected and recovered | [tmr_faults.txt](docs/reports/tmr_faults.txt) |
+| TMR: area overhead / Fmax penalty (board) | 3.0x LUT, 3.7x FF / −9.0% (still meets 100 MHz) | [summary_board_tmr.txt](docs/reports/summary_board_tmr.txt) |
 
 **Stage 2 — SoC.** Not started.
 
@@ -315,7 +362,10 @@ Stated plainly, because they are real:
   untimed. The board-level number is the one that counts, and it is the one
   quoted first.
 - **Power is an estimate.** Vivado's vectorless analysis, not a measurement.
-- **Not yet fault-tolerant.** TMR is Phase E.
+- **TMR guards the core, not the memory.** The RAM, the I/O and the voter
+  itself are single; protecting memory (ECC) is out of scope. Register-file
+  faults in unused registers stay latent until rewritten (see Fault
+  tolerance).
 
 ## Build and reproduce
 
@@ -329,11 +379,12 @@ scripts in `syn/`; no project directory is ever committed.
 | Target | Does |
 |---|---|
 | `make lint` | Verilator lint of `rtl/`, zero warnings |
-| `make sim` | cocotb regression on Verilator, 195 tests |
+| `make sim` | cocotb regression on Verilator, 306 tests |
 | `make formal` | SymbiYosys properties and riscv-formal, checks and covers |
 | `make uvm` | UVM regression in XSim (`SEED`, `PROGRAMS`, `COV_MIN`) |
 | `make model-test` | The C golden model alone on rv32ui |
-| `make synth` | Out-of-context synth **and** place & route of the core, reports to `docs/reports/` |
+| `make synth` | Out-of-context synth **and** place & route of the core and of the TMR core, reports to `docs/reports/` |
+| `make faults` | The TMR fault-injection campaign (10,000 trials) |
 | `make fw` / `make bench` | First-light firmware / CoreMark images |
 | `make boot` / `make apps` | The serial bootloader (the default bitstream image) / programs and the demo reel for it |
 | `scripts/load.py <bin> [--term]` | Send a program to the board and, with `--term`, talk to it |
@@ -354,6 +405,7 @@ its reports are committed with the RTL that produced them.
 | Path | Contents |
 |---|---|
 | `rtl/core/` | The pipeline: `riscv_core`, decoder, ALU, branch unit, hazard unit, load/store alignment, register file |
+| `rtl/tmr/` | The 2-of-3 voter and the triplicated core |
 | `rtl/periph/` | UART transmitter and receiver |
 | `rtl/top/` | The SoC (`soc.sv`), its RAM, and the Arty A7 top (clocking, reset, pins, optional ILA) |
 | `tb/cocotb/` | Python testbenches and the Python golden model |
@@ -371,10 +423,9 @@ its reports are committed with the RTL that produced them.
 
 ## Roadmap
 
-- **Phase E — TMR and fault injection.** Triplicate the core with majority
-  voters, inject faults, measure detection and recovery rates and the area
-  and Fmax cost. Then the first ASIC run: the core through LibreLane on
-  Sky130 to GDSII.
+- **Phase E — the rest.** A live fault injector on the board (flip a bit
+  in one copy from software and watch the counter), then the first ASIC
+  run: the core through LibreLane on Sky130 to GDSII.
 - **Stage 2 — the SoC.** An INT8 systolic array (measured GOPS and PE
   utilisation, speedup over software matmul), a descriptor-based DMA, an AXI
   interconnect with formally proven interfaces, scan insertion, and a second

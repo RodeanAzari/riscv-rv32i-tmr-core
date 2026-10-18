@@ -31,7 +31,14 @@
 // stall is unchanged: one cycle.
 module riscv_core #(
     parameter int unsigned XLEN   = 32,
-    parameter int unsigned ADDR_W = 5
+    parameter int unsigned ADDR_W = 5,
+    // TMR feedback (rtl/tmr/riscv_core_tmr.sv). With VOTED = 1 the pc, the two
+    // halt flags and the register file load the vote_* inputs -- the next
+    // values the three copies voted on -- instead of this core's own, so a
+    // copy a fault has knocked off course is pulled back into step. With
+    // VOTED = 0, the default and every other use of the core, the vote_*
+    // inputs are ignored and nothing changes.
+    parameter bit          VOTED  = 1'b0
 ) (
     input  logic            clk_i,
     input  logic            rst_i,
@@ -52,12 +59,15 @@ module riscv_core #(
     // Data memory port (synchronous read, 1-cycle latency, byte strobes).
     // The address is word-aligned: the low two bits select lanes via
     // dmem_wstrb_o on stores, and inside the core on loads. dmem_wstrb_o is
-    // zero whenever dmem_we_o is low. There is no read enable -- a BRAM can
-    // read every cycle, and a load simply uses the cycle's result.
+    // zero whenever dmem_we_o is low. A BRAM can read every cycle and a load
+    // simply uses the cycle's result, so the memory needs no read enable;
+    // dmem_re_o says when the address is a load's, for anything that cares
+    // which addresses matter (the TMR voter votes on it only then).
     output logic [XLEN-1:0] dmem_addr_o,
     output logic [XLEN-1:0] dmem_wdata_o,
     output logic [3:0]      dmem_wstrb_o,
     output logic            dmem_we_o,
+    output logic            dmem_re_o,
     input  logic [XLEN-1:0] dmem_rdata_i,
 
     // The register file write WB performs this cycle. Outputs, for observation:
@@ -70,6 +80,16 @@ module riscv_core #(
     // target) has retired, and with it everything older: architectural state
     // is final. Sticky until reset.
     output logic              halt_o,
+
+    // TMR feedback: see VOTED. The core's own next values are imem_addr_o
+    // (the next pc), halt_next_o and wb_rd_*_o; the voted versions come back
+    // on vote_*_i.
+    output logic [1:0]        halt_next_o,      // {halt_o, halted} next cycle
+    input  logic [XLEN-1:0]   vote_pc_i,
+    input  logic [1:0]        vote_halt_i,
+    input  logic              vote_rd_we_i,
+    input  logic [ADDR_W-1:0] vote_rd_addr_i,
+    input  logic [XLEN-1:0]   vote_rd_wdata_i,
 
 `ifdef RISCV_FORMAL
     // RISC-V Formal Interface (CLAUDE.md 5.4, docs/rvfi-plan.md): one record
@@ -163,8 +183,9 @@ module riscv_core #(
   assign imem_addr_o = rst_i ? RESET_VECTOR : pc_next;
 
   always_ff @(posedge clk_i) begin
-    if (rst_i) pc <= RESET_VECTOR;
-    else       pc <= pc_next;
+    if      (rst_i) pc <= RESET_VECTOR;
+    else if (VOTED) pc <= vote_pc_i;      // the voted imem_addr_o: pc_next
+    else            pc <= pc_next;
   end
 
   // IF/ID. Reset injects a NOP so ID never sees X on the first cycle. A stall
@@ -254,9 +275,9 @@ module riscv_core #(
       .rs1_rdata_o (rf_rs1_rdata),
       .rs2_addr_i  (dec_rs2_addr),
       .rs2_rdata_o (rf_rs2_rdata),
-      .rd_we_i     (wb_rd_we_o),
-      .rd_addr_i   (wb_rd_addr_o),
-      .rd_wdata_i  (wb_rd_wdata)
+      .rd_we_i     (VOTED ? vote_rd_we_i    : wb_rd_we_o),
+      .rd_addr_i   (VOTED ? vote_rd_addr_i  : wb_rd_addr_o),
+      .rd_wdata_i  (VOTED ? vote_rd_wdata_i : wb_rd_wdata)
   );
 
   // ID/EX. Resets to a NOP's decode: x0 sources and destination, zero data, so
@@ -532,9 +553,12 @@ module riscv_core #(
 
   assign ex_trap = mem_misaligned || (redirect && target_sum[1]);
 
+  // Next-state form, so TMR can vote on it (halt_next_o, below).
+  logic halted_d, halt_d;
+  assign halted_d = !rst_i && (halted_q || id_ex_halt || ex_trap);
+
   always_ff @(posedge clk_i) begin
-    if      (rst_i)                 halted_q <= 1'b0;
-    else if (id_ex_halt || ex_trap) halted_q <= 1'b1;
+    halted_q <= VOTED ? vote_halt_i[0] : halted_d;
   end
 
   assign freeze = id_ex_halt || mem_misaligned || halted_q;
@@ -578,6 +602,7 @@ module riscv_core #(
   assign dmem_addr_o  = {mem_addr[XLEN-1:2], 2'b00};
   assign dmem_wdata_o = st_wdata;
   assign dmem_we_o    = mem_store;
+  assign dmem_re_o    = id_ex_mem_read && !mem_misaligned && !rst_i;
   // Gated so a non-store never shows strobes. The memory ignores them while
   // dmem_we_o is low, but rvfi_mem_wmask must read zero for anything that is
   // not a store, and it is tapped here.
@@ -651,9 +676,11 @@ module riscv_core #(
   // it is seen nothing older is still in flight. The halt bit rides the
   // pipeline to get here, rather than halted_q being delayed by hand, so the
   // retirement and the halt are visibly the same instruction -- RVFI marks it.
+  assign halt_d      = !rst_i && (halt_o || mem_wb_halt);
+  assign halt_next_o = {halt_d, halted_d};
+
   always_ff @(posedge clk_i) begin
-    if      (rst_i)       halt_o <= 1'b0;
-    else if (mem_wb_halt) halt_o <= 1'b1;
+    halt_o <= VOTED ? vote_halt_i[1] : halt_d;
   end
 
 `ifdef RISCV_FORMAL

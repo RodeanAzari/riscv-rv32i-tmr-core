@@ -302,11 +302,11 @@ A phase is done when **every** box is checked. No partial credit.
 - [x] Photo/video of the board running
 
 ### Phase E — TMR + fault injection
-- [ ] Three copies + voter; `DONT_TOUCH` verified in synthesis report
-- [ ] Fault-injection harness with randomized bit flips
-- [ ] Voter formally verified
-- [ ] Fault detection rate, recovery rate measured over a documented campaign size
-- [ ] Area overhead and Fmax penalty vs. baseline recorded
+- [x] Three copies + voter; `DONT_TOUCH` verified in synthesis report
+- [x] Fault-injection harness with randomized bit flips
+- [x] Voter formally verified
+- [x] Fault detection rate, recovery rate measured over a documented campaign size
+- [x] Area overhead and Fmax penalty vs. baseline recorded
 - [ ] **LibreLane run #1** on the non-TMR core: area, post-layout Fmax, power, DRC/LVS clean, layout screenshot (§6.4)
 
 **→ Stage 1 complete. Update README with all results before starting Phase F.**

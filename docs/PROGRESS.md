@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D (hardware) **done** 2026-10-18: 100 MHz on the Arty A7, CoreMark 0.962 CoreMark/MHz, IPC 0.691, serial bootloader and six interactive demos. E (TMR) in progress. Phase A **done** 2026-10-08, CI run 37817380686
+**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D (hardware) **done** 2026-10-18: 100 MHz on the Arty A7, CoreMark 0.962 CoreMark/MHz, IPC 0.691, serial bootloader and six interactive demos. E (TMR) in progress: three voted copies with feedback, voter proven, 10,000-fault campaign with 0 failures, 100 MHz on the board; LibreLane run #1 to go. Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -35,9 +35,9 @@ the local GCC 16.
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 195/195 passing across 13 entries (core, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, uart_rx, soc ×4), including the 40 official `riscv-tests`, the first-light firmware, one CoreMark iteration on the whole SoC (CRCs checked, IPC counted through RVFI, ~50 s) the bootloader receiving a program over the RX pin (~100 s), and the six demos each checked against a Python model (~20 min, 9 of it one software-float Mandelbrot frame, which CI skips), UART decoded at 115200 |
+| `make sim` | 306/306 passing across 18 entries (core, TMR core ×2, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, uart_rx, soc ×4, TMR soc ×3), including the 40 official `riscv-tests`, the first-light firmware, one CoreMark iteration on the whole SoC (CRCs checked, IPC counted through RVFI, ~50 s) the bootloader receiving a program over the RX pin (~100 s), the six demos each checked against a Python model (~20 min, 9 of it one software-float Mandelbrot frame, which CI skips), and on the TMR core: the core's 105 tests, a 1000-fault campaign (0 failures required, pipeline faults must recover), first light, CoreMark and the bootloader with zero mismatches; UART decoded at 115200 |
 | `make synth` | routes clean, 0 errors, ~40 s |
-| `make formal` | x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 46/46 checks and 46/46 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`, `causal_mem`, `liveness`, `hang`, `ill`), ~6 min (XT's BMC is ~5 of it) — see [formal-properties.md](formal-properties.md) |
+| `make formal` | the TMR voter (V1-V4, every input) and x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 46/46 checks and 46/46 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`, `causal_mem`, `liveness`, `hang`, `ill`), ~6 min (XT's BMC is ~5 of it) — see [formal-properties.md](formal-properties.md) |
 | `make impl` | board-level route + bitstream, timing met at 100 MHz (WNS +0.948 ns with the UART receiver), ~2 min |
 | `make model-test` | the C golden model alone: rv32ui **40/40**; a planted SRA bug fails exactly `sra` |
 | `make uvm` | XSim, 300 random programs, ~45 s: **205/205 coverage bins (100%)** on seeds 1, 2, 3, ~45,000 retirements each compared with the model, 0 mismatches. Planted RTL faults caught: forwarding priority (in the hazard unit), LBU sign-extending, no rs2 load-use stall |
@@ -46,6 +46,7 @@ the local GCC 16.
 | **ILA on the board** | 2026-10-17, `make impl ILA=1` then `make ila` from WSL (Hardware Manager in batch through `hw_server`): 13 probes, 328 bits (pc and instruction of all four pipeline registers, EX/MEM ALU result, writeback, halt), depth 1024, core clock. First-light program: every EX→MEM→WB shift consistent, 227 stall cycles and 114 flush bubbles in the window ([ila_summary.txt](reports/ila_summary.txt), [ila_capture.csv](reports/ila_capture.csv)). ILA build (at 50 MHz, before the clock change): +2233 LUT, +3772 FF, +10 BRAM, WNS +4.162 ns ([summary_board_ila.txt](reports/summary_board_ila.txt)). CoreMark at 100 MHz with the ILA (WNS +1.066 ns), triggered on `core_state_transition`: stage shifts consistent, 881 retirements in 1023 cycles ([ila_coremark_summary.txt](reports/ila_coremark_summary.txt), [ila_coremark.csv](reports/ila_coremark.csv)) |
 | **Bootloader on the board** | 2026-10-18: `scripts/load.py sw/build/apps/echo.bin` loads 1760 bytes over the UART in about 0.2 s; the program echoes keys, returns to the bootloader on q, and `r` reruns it without resending. Changing the program needs no Vivado rebuild |
 | **Demo reel on the board** | 2026-10-18, `sw/demo/` loaded over serial ([demo_board.txt](reports/demo_board.txt)): microbenchmarks measure exactly 1 cycle per ALU op, +1 per load-use, +2 per taken branch or jump, 0 for not taken; Mandelbrot frame 12,849,963 cycles fixed point vs 49,110,978 software float (3.8x; simulation gives the same counts, and both pictures match a bit-exact model, IEEE single included); 750 digits of pi in 4.95 s; Life 81,581 cycles a generation; sieve to 163840 in 16.0 ms |
+| **TMR** (Phase E) | 2026-10-18: `rtl/tmr/riscv_core_tmr.sv`, three copies with `DONT_TOUCH`/`KEEP_HIERARCHY` (three survive: 1601 cells each, `summary_ooc_tmr.txt`), voted feedback into each copy's pc, halt flags and register file. The voter is proven (`tmr_voter.sby`). The core's 105 tests and the SoC's first light, CoreMark and bootloader tests pass on it with zero mismatches. **Fault campaign, 10,000 single-bit flips** ([tmr_faults.txt](reports/tmr_faults.txt)): 0 failures; 1,275 detected, all corrected and all three copies identical again; median disagreement 1 cycle, max 30; 5,777 register-file flips latent in registers the programs never use. Board: 100 MHz met, WNS +0.062 ns, 3.0x LUT, Fmax −9.0% |
 | CI on push | green (lint + sim + formal, 195/195 in one regression) at `6950a09`, run 39101890658 |
 
 ### Implemented, and what to know before touching it
@@ -118,6 +119,21 @@ Only the facts that are not obvious from reading it:
 - **Demo reel** (`sw/demo/`, built `-Os`: at -O2 it does not fit with its
   10 KiB scratch buffer). Simulation runs its image preloaded
   (`scripts/mkimage.py`, `boot_demo_sim.hex`) with the UART at CLK/16.
+- **TMR** (`rtl/tmr/`, `soc.sv` `TMR = 1`): the core's `VOTED` parameter makes
+  it load the voted next pc, halt flags and register-file write (`vote_*_i`)
+  instead of its own; with 0 (every other use) they are ignored. The voter
+  sees each copy's 143-bit bundle of what it would commit, with store data,
+  write data and the data address masked unless used (`dmem_re_o` exists
+  for this): unmasked, a copy reading a flipped but irrelevant register
+  counted as a mismatch. The core sits at `g_cpu.u_core` in the SoC either
+  way (generate block); floorplan and GUI scripts colour a TMR build by
+  copy. Vivado reads the copies' names (`g_other[1]`) as globs in a
+  `get_cells` filter: match them as plain strings.
+- **The fault campaign's build has no assertions** (`-DFORMAL --assert` off
+  for `test_tmr_faults`): an injected fault breaks the very invariants the
+  in-RTL properties check. Mismatch is sampled just before each edge: the pc
+  vote can correct a flip at the next edge, leaving no mismatch to see after
+  it. The register file is cleared per trial (it has no reset).
 - **UART RX reads have no side effect; a write acknowledges.** The core's
   data port has no read enable, so the SoC cannot tell a load from an
   address in passing. `UART ST` bits: 0 TX ready, 1 RX byte, 2 overrun, 3
@@ -172,6 +188,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-16 | `f_regs_o` port for the X-propagation proof, under `FORMAL` (not synthesized) | 1117 | 501 | 47 | +0.317 | 103.3 | 0.0 |
 | 2026-10-17 | Illegal instructions trap (legality decode in ID) | 1130 | 501 | 47 | +0.382 | 104.0 | +0.7 |
 | 2026-10-17 | Data memory accessed from EX; load data registered in MEM/WB | 964 | 467 | 55 | +1.850 | 122.7 | +18.7 |
+| 2026-10-18 | TMR feedback ports (VOTED = 0 here), `dmem_re_o`, halt flags in next-state form | 966 | 467 | 55 | +1.697 | 120.4 | −2.3 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -227,6 +244,8 @@ trims logic the OOC run keeps.
 | 2026-10-17 | + illegal-instruction trap, + cycle counter; CoreMark image (ran on the board at 50 MHz) | 1141 | 434 | 8 | 50 MHz | +4.917 | 66.3 |
 | 2026-10-17 | Data memory accessed from EX; core clock to 100 MHz; CoreMark image (ran on the board at 100 MHz) | 1085 | 398 | 8 | 100 MHz | +1.550 | 118.3 |
 | 2026-10-18 | + UART receiver (RX register, status bits, pin A9); bootloader image (ran on the board at 100 MHz) | 1123 | 435 | 8 | 100 MHz | +0.948 | 110.5 |
+| 2026-10-18 | Core with TMR feedback ports (unused), `dmem_re_o`; the single-core baseline for TMR | 1123 | 435 | 8 | 100 MHz | +0.955 | 110.6 |
+| 2026-10-18 | **TMR**: three voted copies, mismatch counter (`make impl TMR=1`, `*_board_tmr.*`) | 3370 | 1589 | 8 | 100 MHz | +0.062 | 100.6 |
 
 At 50 MHz the critical path was the one the OOC flow could not time: a block
 RAM's output (load data) through alignment, the forwarding mux and the branch
@@ -238,6 +257,27 @@ build's hold slack is history; that is a measured slice of its own. Hold slack i
 +0.064 ns (MEM/WB rd address → regfile LUTRAM write address): positive, thin.
 
 ---
+
+## TMR cost (Phase E)
+
+Same RTL, same conditions, single core against three voted copies.
+`make synth` (OOC, 10.000 ns) builds both; `make impl` and `make impl TMR=1`
+the board. Reports: `summary_ooc{,_tmr}.txt`, `summary_board{,_tmr}.txt`;
+the three copies' cell counts are in `summary_ooc_tmr.txt` and
+`utilization_ooc_tmr_hier.rpt`.
+
+| Date | Conditions | Single LUT / FF | TMR LUT / FF | LUT × | FF × | Single Fmax | TMR Fmax | Fmax penalty |
+|---|---|---|---|---|---|---|---|---|
+| 2026-10-18 | out of context, core alone | 966 / 467 | 3658 / 1450 | 3.79 | 3.10 | 120.4 MHz | 101.3 MHz | −15.9% |
+| 2026-10-18 | board, whole SoC, 100 MHz | 1123 / 435 | 3370 / 1589 | 3.00 | 3.65 | 110.6 MHz | 100.6 MHz | −9.0% |
+
+LUT and FF here are cell counts, as in the trend tables. By the hierarchical
+report (slice LUTs, `utilization_ooc_tmr_hier.rpt`), the three copies are
+891 each and the voter 599: a 2-of-3 vote and a compare over each copy's
+143-bit bundle of next state. The TMR
+critical path is copy → mismatch compare → its register: the compare tree
+is deep. Counting from mismatch_o directly made the counter's enable the
+critical path (OOC −0.386 ns); registering it first gave +0.126.
 
 ## Benchmark trend (CoreMark)
 
@@ -316,12 +356,13 @@ riscv-formal found on its first run (see Decisions).
 | `make apps` | programs in `sw/apps/` and the demo reel (`sw/demo/`) → `sw/build/apps/*.bin`, for `scripts/load.py <bin> [--term]` (`--term` stays as a terminal; Ctrl-] quits); also `boot_demo_sim.hex` for test_demo | working |
 | `make fw` | first-light firmware → `sw/build/hello.hex` (board), `hello_sim.hex` (sim) | working; local riscv32 or CI's riscv64 gcc |
 | `make bench` | CoreMark (submodule `sw/coremark`, port `sw/coremark-port/`, links libgcc) → `sw/build/coremark.hex` (board, `COREMARK_ITERATIONS`=1000), `coremark_sim.hex` (1 iteration) | working, locally and in CI (the riscv64 package's rv32i/ilp32 libgcc) |
-| `make impl` | board-level synth + route + bitstream (`syn/impl_arty.tcl`), reports `docs/reports/*_board.*`; refuses a missing RAM image, writes no bitstream if timing fails; `FW_IMAGE=` picks the RAM image (default the bootloader); `ILA=1` adds the ILA and its `.ltx`, reports to `syn/build/board/ila_reports/` so `docs/reports/` stays ILA-free | working |
-| `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
+| `make impl` | board-level synth + route + bitstream (`syn/impl_arty.tcl`), reports `docs/reports/*_board.*`; refuses a missing RAM image, writes no bitstream if timing fails; `FW_IMAGE=` picks the RAM image (default the bootloader); `ILA=1` adds the ILA and its `.ltx`, reports to `syn/build/board/ila_reports/` so `docs/reports/` stays ILA-free; `TMR=1` builds three voted cores, reports `*_board_tmr.*` | working |
+| `make synth` | OOC synth + impl of the core, then of the TMR core (`*_ooc_tmr.*`, with the three-copy check), reports to `docs/reports/` | working |
 | `make prog` | Arty attached to WSL (usbipd): programs it with `openFPGALoader -b arty_a7_100t`; otherwise prints the Hardware Manager steps and the Windows path | working, both routes tried on the board |
 | `make ila` | after `make impl ILA=1`, with the Arty attached to WSL: programs it and captures the pipeline registers (`syn/ila_capture.tcl`, Vivado Hardware Manager in batch) to `syn/build/board/ila_capture.{csv,vcd}`, then checks the capture (`scripts/ila_check.py`) | working |
 | `make gui` | opens the last `make impl`'s routed design in the Vivado GUI (`syn/gui_view.tcl`): device view colored by module, worst path + its schematic, timing, utilization, power tabs. `VIEW=rtl`: elaborated RTL schematic. `VIEW=ila`: programs an ILA build, triggers on `ILA_TRIGGER` (default `core_state_transition`; must be a function the code calls, GCC inlines some) and shows waveforms | working |
 | `make floorplan` | exports placement + routing from the routed checkpoint (`syn/floorplan_export.tcl`) and draws `docs/img/floorplan_board{,_core}.svg` (`scripts/floorplan.py`); refuses an ILA build | working |
+| `make faults` | the documented TMR fault campaign, `FAULTS` (10000) trials, `SEED`; summary to `docs/reports/tmr_faults.txt`. The regression runs 1000 | working |
 | `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks, then `scripts/riscv-formal.sh` (checks + covers, verdicts read from status files); appends OSS CAD Suite's `bin/` to PATH itself; `FORMAL_JOBS=n` | working |
 | `make model-test` | C golden model on rv32ui (host cc + RISC-V gcc) | working |
 | `make uvm` | UVM regression in XSim (`tb/uvm/run.sh`): `SEED`, `PROGRAMS` (300), `COV_MIN` (95); fails on any UVM error or coverage below `COV_MIN` | working; local only (Vivado), like `make synth` |
@@ -406,15 +447,13 @@ history, [formal-properties.md](formal-properties.md) and
 
 ## Next up
 
-> **Resume here (2026-10-18, Phases B and C done; the board runs at 100 MHz).**
-> The UART receives as well as sends, and the board boots a serial
-> bootloader: `make impl` (default image), `make prog`, then
-> `scripts/load.py sw/build/apps/<prog>.bin --term`. Programs live in
-> `sw/apps/`. CoreMark 0.962/MHz, IPC 0.691 (`make impl
-> FW_IMAGE=sw/build/coremark.hex`); ILA: `make impl ILA=1`, `make ila`.
-> The demo reel is done: `scripts/load.py sw/build/apps/demo.bin --term`;
-> its video is in the README. **Phase D is done (2026-10-18). Next: Phase E
-> (TMR + fault injection, then LibreLane run #1).**
+> **Resume here (2026-10-18, Phase E in progress).** TMR is built and
+> measured: `rtl/tmr/`, `make synth` (core and TMR), `make impl TMR=1`,
+> `make faults`. Voter proven; 10,000 faults, 0 failures; 100 MHz on the
+> board (WNS +0.062 ns). **Next:** the live fault injector the user asked
+> for (a register that flips a bit in copy B; the demo shows the counter),
+> then LibreLane run #1 on the non-TMR core (not installed yet), then the
+> Phase E README update and the Vivado/floorplan screenshot set for TMR.
 
 ### User requests to carry forward
 
@@ -542,7 +581,7 @@ that changed meaningful state.
 
 ---
 
-*Last updated: 2026-10-18 — Phase D done (demo video in the README); six interactive demos (sw/demo/) checked in simulation and run on the board; UART receiver and serial bootloader, on the board at 100 MHz (WNS +0.948 ns); programs load over serial with no rebuild. Before that, 2026-10-17 — 100 MHz on the board: data memory accessed from
+*Last updated: 2026-10-18 — Phase E: TMR built, voter proven, 10,000-fault campaign 0 failures, 100 MHz on the board. Before that: Phase D done (demo video in the README); six interactive demos (sw/demo/) checked in simulation and run on the board; UART receiver and serial bootloader, on the board at 100 MHz (WNS +0.948 ns); programs load over serial with no rebuild. Before that, 2026-10-17 — 100 MHz on the board: data memory accessed from
 EX (load data registered into MEM/WB), board WNS +1.550 ns at 100 MHz, OOC
 122.7 MHz; CoreMark 0.962/MHz (about 96) validated at 100 MHz, IPC
 unchanged. XT's harness follows stores into EX. ILA on the pipeline

@@ -54,6 +54,8 @@ lint:
 	verilator --lint-only -Wall --top-module $(TOP) -DRISCV_FORMAL -DFORMAL $(RTL)
 	verilator --lint-only -Wall --top-module arty_a7_top $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall --top-module arty_a7_top -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
+	verilator --lint-only -Wall --top-module riscv_core_tmr $(RTL)
+	verilator --lint-only -Wall --top-module riscv_core_tmr -DRISCV_FORMAL -DFORMAL $(RTL)
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim
@@ -258,6 +260,20 @@ VIVADO := scripts/setup-vivado-env.sh vivado
 synth:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART)
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_core_tmr
+
+# --- TMR fault injection ---------------------------------------------------
+# The documented campaign (CLAUDE.md 5.7): FAULTS random single-bit flips into
+# the TMR core, each in a fresh random program, judged against the golden
+# model (tb/cocotb/test_tmr_faults.py). The regression runs 1000; this runs
+# the full count and commits the summary.
+FAULTS ?= 10000
+
+.PHONY: faults
+faults:
+	FAULTS=$(FAULTS) SEED=$(SEED) $(MAKE) -C tb/cocotb TEST_ONE=riscv_core_tmr:test_tmr_faults
+	cp tb/cocotb/sim_build/tmr_faults.txt docs/reports/tmr_faults.txt
 
 # --- UVM -------------------------------------------------------------------
 # The Phase C regression in XSim (tb/uvm/, docs/coverage-plan.md): random
@@ -284,13 +300,15 @@ BIT := syn/build/board/arty_a7_top.bit
 # default, or e.g. FW_IMAGE=sw/build/coremark.hex for the benchmark.
 # ILA=1 attaches a logic analyser to the core's pipeline registers and writes
 # its probes file beside the bitstream; its reports stay in syn/build/board/,
-# so docs/reports/ always describes the design without debug logic.
+# so docs/reports/ always describes the design without debug logic. TMR=1
+# builds the three-copy core, reports to docs/reports/*_board_tmr.*.
 FW_IMAGE ?= $(FW_BUILD)/boot.hex
 ILA      ?= 0
+TMR      ?= 0
 
 impl: $(FW_IMAGE)
 	$(VIVADO) -mode batch -nojournal -notrace \
-		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA)
+		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA) $(TMR)
 
 # Two routes, picked per session (docs/vivado-setup.md section 6). If the Arty
 # is attached to WSL with usbipd-win (FTDI 0403:6010 visible here), program it

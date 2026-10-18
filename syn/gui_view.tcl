@@ -74,21 +74,39 @@ set dcp [file join $repo syn build board post_route.dcp]
 if {![file exists $dcp]} { error "$dcp not found -- run make impl first" }
 open_checkpoint $dcp
 
-# Leaf cells per module, most specific first; a cell takes the first match.
-set modules {
-    u_soc/u_core/u_alu      {255 128   0}  ALU
-    u_soc/u_core/u_branch   {255   0 255}  "branch compare + target"
-    u_soc/u_core/u_regfile  {  0 200 255}  "register file (LUTRAM)"
-    u_soc/u_core            {  0 255   0}  "rest of core: decode, hazards, pipeline regs"
-    u_soc/u_ram             {255 255 255}  "32 KiB RAM (block RAM) + I/O"
-    u_soc/u_uart_tx         {255   0   0}  "UART transmitter"
+# Leaf cells per module, most specific first; a cell takes the first module
+# whose name is a prefix of its own. Compared as plain strings: the copies'
+# names (g_other[1]) hold brackets, which a get_cells filter reads as a glob.
+# A TMR build (make impl TMR=1) is coloured by copy instead.
+set core u_soc/g_cpu.u_core
+if {[llength [get_cells -quiet $core/u_core_a]]} {
+    set modules [list \
+        $core/u_core_a           {255 128   0}  "core copy A" \
+        "$core/g_other\[1\].u_core" {  0 255   0}  "core copy B" \
+        "$core/g_other\[2\].u_core" {  0 200 255}  "core copy C" \
+        $core                    {255   0 255}  "voter + mismatch counter"]
+} else {
+    set modules [list \
+        $core/u_alu      {255 128   0}  ALU \
+        $core/u_branch   {255   0 255}  "branch compare + target" \
+        $core/u_regfile  {  0 200 255}  "register file (LUTRAM)" \
+        $core            {  0 255   0}  "rest of core: decode, hazards, pipeline regs"]
 }
+lappend modules \
+    u_soc/u_ram      {255 255 255}  "32 KiB RAM (block RAM)" \
+    u_soc/u_uart_tx  {255   0   0}  "UART transmitter" \
+    u_soc/u_uart_rx  {255 144 144}  "UART receiver"
 array set taken {}
+set leaves [get_cells -hier -filter {IS_PRIMITIVE}]
 puts "\n--- Device view colors ---"
 foreach {hier rgb label} $modules {
     set cells {}
-    foreach c [get_cells -quiet -hier -filter "IS_PRIMITIVE && NAME =~ $hier/*"] {
-        if {![info exists taken($c)]} { set taken($c) 1; lappend cells $c }
+    set p "$hier/"
+    foreach c $leaves {
+        if {![info exists taken($c)] && [string equal -length [string length $p] $p $c]} {
+            set taken($c) 1
+            lappend cells $c
+        }
     }
     if {[llength $cells]} { highlight_objects -rgb $rgb [get_cells $cells] }
     puts [format "  %-14s %5d cells  %s" "rgb($rgb)" [llength $cells] $label]

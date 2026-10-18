@@ -42,12 +42,20 @@ module rvfi_wrapper (
       .dmem_wdata_o     (dmem_wdata),
       .dmem_wstrb_o     (dmem_wstrb),
       .dmem_we_o        (dmem_we),
+      .dmem_re_o        (),
       .dmem_rdata_i     (dmem_rdata),
 
       .wb_rd_we_o       (),
       .wb_rd_addr_o     (),
       .wb_rd_wdata_o    (),
       .halt_o           (halt),
+      // Not voted: VOTED = 0, so the vote inputs are ignored.
+      .halt_next_o      (),
+      .vote_pc_i        ('0),
+      .vote_halt_i      ('0),
+      .vote_rd_we_i     (1'b0),
+      .vote_rd_addr_i   ('0),
+      .vote_rd_wdata_i  ('0),
 
       .rvfi_valid_o     (rvfi_valid),
       .rvfi_order_o     (rvfi_order),

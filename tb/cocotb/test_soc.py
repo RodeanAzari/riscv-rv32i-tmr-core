@@ -19,6 +19,15 @@ GREETING = "\r\nhello from rv32i\r\nsum 1..100 = 5050\r\n"
 COUNTS = 4
 
 
+def assert_no_tmr_mismatch(dut):
+    """On a TMR build (soc_tmr in the Makefile), no fault was injected, so the
+    three copies must never have disagreed. A plain build has no counter."""
+    core = dut.g_cpu.u_core
+    if hasattr(core, "mismatch_count_o"):
+        assert int(core.mismatch_count_o.value) == 0, \
+            f"{int(core.mismatch_count_o.value)} TMR mismatches with no fault injected"
+
+
 async def uart_rx(dut, out):
     """Decode 8N1 bytes from uart_tx_o forever, appending (char, LEDs) to out.
 
@@ -73,3 +82,4 @@ async def test_firstlight(dut):
         leds = {led for _, led in got[pos:pos + len(line)]}
         assert leds == {n & 0xF}, f"LEDs {leds} while printing {line!r}"
         pos += len(line)
+    assert_no_tmr_mismatch(dut)

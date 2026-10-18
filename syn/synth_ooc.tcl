@@ -1,6 +1,12 @@
-# Out-of-context synthesis and implementation of riscv_core on its own.
+# Out-of-context synthesis and implementation of riscv_core on its own, or of
+# the TMR core (three voted copies, rtl/tmr/riscv_core_tmr.sv).
 #
-#   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part>
+#   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> [riscv_core_tmr]
+#
+# Reports: docs/reports/*_ooc.* for the core, *_ooc_tmr.* for the TMR core,
+# which also gets a per-hierarchy utilization report and a check that three
+# copies survived synthesis (CLAUDE.md 5.7: Vivado merges identical logic
+# unless told not to).
 #
 # Why out-of-context: the core's ports (imem_*, if_id_*) are internal signals
 # that will connect to BRAM and downstream stages, not package pins. In-context
@@ -16,9 +22,12 @@
 set part [lindex $argv 0]
 if {$part eq ""} { set part xc7a100tcsg324-1 }
 
-set top     riscv_core
+set top     [lindex $argv 1]
+if {$top eq ""} { set top riscv_core }
+set tmr     [expr {$top eq "riscv_core_tmr"}]
+set sfx     [expr {$tmr ? "_ooc_tmr" : "_ooc"}]
 set repo    [file normalize [file join [file dirname [info script]] ..]]
-set rundir  [file join $repo syn build]
+set rundir  [file join $repo syn build [expr {$tmr ? "tmr" : ""}]]
 set reports [file join $repo docs reports]
 
 file mkdir $rundir $reports
@@ -60,8 +69,21 @@ place_design
 route_design
 write_checkpoint -force [file join $rundir post_route.dcp]
 
-report_utilization    -file [file join $reports utilization_ooc.rpt]
-report_timing_summary -file [file join $reports timing_ooc.rpt]
+report_utilization    -file [file join $reports utilization$sfx.rpt]
+report_timing_summary -file [file join $reports timing$sfx.rpt]
+
+# --- TMR: did three copies survive? ------------------------------------------
+# Each copy must still be its own hierarchy with a core's worth of cells. A
+# merged design would show one populated copy and two empty or missing ones.
+set copies {}
+if {$tmr} {
+    report_utilization -hierarchical -file [file join $reports utilization_ooc_tmr_hier.rpt]
+    foreach c {u_core_a g_other[1].u_core g_other[2].u_core} {
+        set n [llength [get_cells -quiet -hier -filter "IS_PRIMITIVE && NAME =~ $c/*"]]
+        lappend copies $c $n
+        if {$n < 500} { error "TMR copy $c has $n cells: merged or trimmed" }
+    }
+}
 
 # --- derive the headline numbers -------------------------------------------
 # Fmax is computed, not asserted: slack against a known period tells us what
@@ -97,10 +119,10 @@ foreach {label group total} [list \
     dict set util $label [list $used $total]
 }
 
-set fh [open [file join $reports summary_ooc.txt] w]
+set fh [open [file join $reports summary$sfx.txt] w]
 foreach out [list stdout $fh] {
     puts $out ""
-    puts $out "=== riscv_core, out-of-context, post-route ==="
+    puts $out "=== $top, out-of-context, post-route ==="
     puts $out [format "part            %s" $part]
     puts $out [format "constraint      %.3f ns (%.1f MHz)" $period [expr {1000.0/$period}]]
     puts $out [format "WNS             %.3f ns" $wns]
@@ -120,6 +142,11 @@ foreach out [list stdout $fh] {
         } else {
             puts $out [format "%-5s %8d %19s" $label $used "(no device total)"]
         }
+    }
+    if {$tmr} {
+        puts $out ""
+        puts $out "TMR copies (leaf cells each; DONT_TOUCH + KEEP_HIERARCHY):"
+        foreach {c n} $copies { puts $out [format "  %-22s %5d" $c $n] }
     }
     puts $out ""
 }

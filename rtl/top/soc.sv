@@ -16,6 +16,8 @@
 //   0x1000_000C  UART RX  R: bits [7:0] the waiting byte   W: acknowledge --
 //                            clears bits 1-3 of UART ST, ready for the next
 //   0x1000_0010  CYCLE    R: cycles since reset, mod 2^32     W: ignored
+//   0x1000_0014  TMR      R: TMR mismatches since reset (0 without TMR)
+//                            W: ignored
 //
 // The cycle counter is how software times itself (the core has no CSRs, so
 // rdcycle is an illegal instruction). 32 bits wrap after 43 s at 100 MHz;
@@ -24,8 +26,9 @@
 // A byte written to UART TX while it is not ready is dropped: software polls
 // UART ST first. Receiving is read, then acknowledge with a write: reading
 // UART RX changes nothing, because the core's data port has no read enable
-// and so the SoC cannot tell a load from an address merely passing by. Byte stores (sb) work on every register: the core puts a
-// byte in every lane and raises its strobe, and the registers read lane 0.
+// and so the SoC cannot tell a load from an address merely passing by. Byte
+// stores (sb) work on every register: the core puts a byte in every lane and
+// raises its strobe, and the registers read lane 0.
 //
 // The core's data port is BRAM-timed: the address is taken at the end of EX
 // and the load data is expected during MEM. The I/O read path matches it with
@@ -34,7 +37,11 @@ module soc #(
     parameter int unsigned CLK_HZ    = 50_000_000,
     parameter int unsigned BAUD      = 115_200,
     parameter int unsigned RAM_WORDS = 8192,
-    parameter string       INIT_FILE = ""
+    parameter string       INIT_FILE = "",
+    // Triple modular redundancy: three voted copies of the core
+    // (rtl/tmr/riscv_core_tmr.sv) instead of one. Either way the core is at
+    // g_cpu.u_core.
+    parameter bit          TMR       = 1'b0
 ) (
     input  logic       clk_i,
     input  logic       rst_i,
@@ -68,71 +75,144 @@ module soc #(
   localparam logic [2:0] IO_UART_ST = 3'd2;
   localparam logic [2:0] IO_UART_RX = 3'd3;
   localparam logic [2:0] IO_CYCLE   = 3'd4;
+  localparam logic [2:0] IO_TMR     = 3'd5;
 
   logic [31:0] imem_addr, imem_rdata;
   logic [31:0] dmem_addr, dmem_wdata, dmem_rdata;
   logic [3:0]  dmem_wstrb;
   logic        dmem_we;
 
-  // The core's remaining debug outputs (operand values, RVFI) are left open
-  // on purpose: not needed by this top. Waived here only.
+  // The core, single or triplicated. Its remaining debug outputs (operand
+  // values, RVFI) are left open on purpose: not needed by this top. Waived
+  // here only.
+  logic [31:0] tmr_mismatches;
+
   /* verilator lint_off PINCONNECTEMPTY */
-  riscv_core u_core (
-      .clk_i               (clk_i),
-      .rst_i               (rst_i),
-`ifdef FORMAL
-      .f_regs_o            (),
-`endif
-      .imem_addr_o         (imem_addr),
-      .imem_rdata_i        (imem_rdata),
-      .dmem_addr_o         (dmem_addr),
-      .dmem_wdata_o        (dmem_wdata),
-      .dmem_wstrb_o        (dmem_wstrb),
-      .dmem_we_o           (dmem_we),
-      .dmem_rdata_i        (dmem_rdata),
-      .wb_rd_we_o          (dbg_wb_rd_we_o),
-      .wb_rd_addr_o        (dbg_wb_rd_addr_o),
-      .wb_rd_wdata_o       (dbg_wb_rd_wdata_o),
-      .halt_o              (dbg_halt_o),
-`ifdef RISCV_FORMAL
-      .rvfi_valid_o        (),
-      .rvfi_order_o        (),
-      .rvfi_insn_o         (),
-      .rvfi_trap_o         (),
-      .rvfi_halt_o         (),
-      .rvfi_intr_o         (),
-      .rvfi_rs1_addr_o     (),
-      .rvfi_rs2_addr_o     (),
-      .rvfi_rs1_rdata_o    (),
-      .rvfi_rs2_rdata_o    (),
-      .rvfi_rd_addr_o      (),
-      .rvfi_rd_wdata_o     (),
-      .rvfi_pc_rdata_o     (),
-      .rvfi_pc_wdata_o     (),
-      .rvfi_mem_addr_o     (),
-      .rvfi_mem_rmask_o    (),
-      .rvfi_mem_wmask_o    (),
-      .rvfi_mem_rdata_o    (),
-      .rvfi_mem_wdata_o    (),
-`endif
-      .if_id_pc_o          (dbg_if_id_pc_o),
-      .if_id_instr_o       (dbg_if_id_instr_o),
-      .id_ex_pc_o          (dbg_id_ex_pc_o),
-      .id_ex_instr_o       (dbg_id_ex_instr_o),
-      .id_ex_rs1_addr_o    (),
-      .id_ex_rs2_addr_o    (),
-      .id_ex_rs1_rdata_o   (),
-      .id_ex_rs2_rdata_o   (),
-      .id_ex_imm_o         (),
-      .id_ex_rd_addr_o     (),
-      .ex_mem_pc_o         (dbg_ex_mem_pc_o),
-      .ex_mem_instr_o      (dbg_ex_mem_instr_o),
-      .ex_mem_alu_result_o (dbg_ex_mem_alu_result_o),
-      .ex_mem_rd_addr_o    (),
-      .ex_mem_rd_we_o      (),
-      .mem_wb_pc_o         (dbg_mem_wb_pc_o),
-      .mem_wb_instr_o      (dbg_mem_wb_instr_o)
-  );
+  if (TMR) begin : g_cpu
+    riscv_core_tmr u_core (
+        .clk_i               (clk_i),
+        .rst_i               (rst_i),
+        .imem_addr_o         (imem_addr),
+        .imem_rdata_i        (imem_rdata),
+        .dmem_addr_o         (dmem_addr),
+        .dmem_wdata_o        (dmem_wdata),
+        .dmem_wstrb_o        (dmem_wstrb),
+        .dmem_we_o           (dmem_we),
+        .dmem_re_o           (),
+        .dmem_rdata_i        (dmem_rdata),
+        .wb_rd_we_o          (dbg_wb_rd_we_o),
+        .wb_rd_addr_o        (dbg_wb_rd_addr_o),
+        .wb_rd_wdata_o       (dbg_wb_rd_wdata_o),
+        .halt_o              (dbg_halt_o),
+        .mismatch_o          (),
+        .disagree_o          (),
+        .mismatch_count_o    (tmr_mismatches),
+  `ifdef RISCV_FORMAL
+        .rvfi_valid_o        (),
+        .rvfi_order_o        (),
+        .rvfi_insn_o         (),
+        .rvfi_trap_o         (),
+        .rvfi_halt_o         (),
+        .rvfi_intr_o         (),
+        .rvfi_rs1_addr_o     (),
+        .rvfi_rs2_addr_o     (),
+        .rvfi_rs1_rdata_o    (),
+        .rvfi_rs2_rdata_o    (),
+        .rvfi_rd_addr_o      (),
+        .rvfi_rd_wdata_o     (),
+        .rvfi_pc_rdata_o     (),
+        .rvfi_pc_wdata_o     (),
+        .rvfi_mem_addr_o     (),
+        .rvfi_mem_rmask_o    (),
+        .rvfi_mem_wmask_o    (),
+        .rvfi_mem_rdata_o    (),
+        .rvfi_mem_wdata_o    (),
+  `endif
+        .if_id_pc_o          (dbg_if_id_pc_o),
+        .if_id_instr_o       (dbg_if_id_instr_o),
+        .id_ex_pc_o          (dbg_id_ex_pc_o),
+        .id_ex_instr_o       (dbg_id_ex_instr_o),
+        .id_ex_rs1_addr_o    (),
+        .id_ex_rs2_addr_o    (),
+        .id_ex_rs1_rdata_o   (),
+        .id_ex_rs2_rdata_o   (),
+        .id_ex_imm_o         (),
+        .id_ex_rd_addr_o     (),
+        .ex_mem_pc_o         (dbg_ex_mem_pc_o),
+        .ex_mem_instr_o      (dbg_ex_mem_instr_o),
+        .ex_mem_alu_result_o (dbg_ex_mem_alu_result_o),
+        .ex_mem_rd_addr_o    (),
+        .ex_mem_rd_we_o      (),
+        .mem_wb_pc_o         (dbg_mem_wb_pc_o),
+        .mem_wb_instr_o      (dbg_mem_wb_instr_o)
+    );
+  end else begin : g_cpu
+    riscv_core u_core (
+        .clk_i               (clk_i),
+        .rst_i               (rst_i),
+  `ifdef FORMAL
+        .f_regs_o            (),
+  `endif
+        .imem_addr_o         (imem_addr),
+        .imem_rdata_i        (imem_rdata),
+        .dmem_addr_o         (dmem_addr),
+        .dmem_wdata_o        (dmem_wdata),
+        .dmem_wstrb_o        (dmem_wstrb),
+        .dmem_we_o           (dmem_we),
+        .dmem_re_o           (),
+        .dmem_rdata_i        (dmem_rdata),
+        .wb_rd_we_o          (dbg_wb_rd_we_o),
+        .wb_rd_addr_o        (dbg_wb_rd_addr_o),
+        .wb_rd_wdata_o       (dbg_wb_rd_wdata_o),
+        .halt_o              (dbg_halt_o),
+        // Not voted: VOTED = 0, so the vote inputs are ignored.
+        .halt_next_o         (),
+        .vote_pc_i           ('0),
+        .vote_halt_i         ('0),
+        .vote_rd_we_i        (1'b0),
+        .vote_rd_addr_i      ('0),
+        .vote_rd_wdata_i     ('0),
+  `ifdef RISCV_FORMAL
+        .rvfi_valid_o        (),
+        .rvfi_order_o        (),
+        .rvfi_insn_o         (),
+        .rvfi_trap_o         (),
+        .rvfi_halt_o         (),
+        .rvfi_intr_o         (),
+        .rvfi_rs1_addr_o     (),
+        .rvfi_rs2_addr_o     (),
+        .rvfi_rs1_rdata_o    (),
+        .rvfi_rs2_rdata_o    (),
+        .rvfi_rd_addr_o      (),
+        .rvfi_rd_wdata_o     (),
+        .rvfi_pc_rdata_o     (),
+        .rvfi_pc_wdata_o     (),
+        .rvfi_mem_addr_o     (),
+        .rvfi_mem_rmask_o    (),
+        .rvfi_mem_wmask_o    (),
+        .rvfi_mem_rdata_o    (),
+        .rvfi_mem_wdata_o    (),
+  `endif
+        .if_id_pc_o          (dbg_if_id_pc_o),
+        .if_id_instr_o       (dbg_if_id_instr_o),
+        .id_ex_pc_o          (dbg_id_ex_pc_o),
+        .id_ex_instr_o       (dbg_id_ex_instr_o),
+        .id_ex_rs1_addr_o    (),
+        .id_ex_rs2_addr_o    (),
+        .id_ex_rs1_rdata_o   (),
+        .id_ex_rs2_rdata_o   (),
+        .id_ex_imm_o         (),
+        .id_ex_rd_addr_o     (),
+        .ex_mem_pc_o         (dbg_ex_mem_pc_o),
+        .ex_mem_instr_o      (dbg_ex_mem_instr_o),
+        .ex_mem_alu_result_o (dbg_ex_mem_alu_result_o),
+        .ex_mem_rd_addr_o    (),
+        .ex_mem_rd_we_o      (),
+        .mem_wb_pc_o         (dbg_mem_wb_pc_o),
+        .mem_wb_instr_o      (dbg_mem_wb_instr_o)
+    );
+    assign tmr_mismatches = '0;
+  end
   /* verilator lint_on PINCONNECTEMPTY */
 
   // ---- decode ----
@@ -224,6 +304,7 @@ module soc #(
         IO_UART_ST: io_rdata_q <= {28'b0, rx_frame_err, rx_overrun, rx_valid, uart_ready};
         IO_UART_RX: io_rdata_q <= {24'b0, rx_data};
         IO_CYCLE:   io_rdata_q <= cycle_q;
+        IO_TMR:     io_rdata_q <= tmr_mismatches;
         default:    io_rdata_q <= '0;
       endcase
     end
