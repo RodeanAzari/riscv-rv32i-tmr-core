@@ -43,7 +43,7 @@ the local GCC 16.
 | `make uvm` | XSim, 300 random programs, ~45 s: **205/205 coverage bins (100%)** on seeds 1, 2, 3, ~45,000 retirements each compared with the model, 0 mismatches. Planted RTL faults caught: forwarding priority (in the hazard unit), LBU sign-extending, no rs2 load-use stall |
 | **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.jpg](img/fpgafirstlight.jpg) (Phase D's photo box; low-resolution, retake for the README) |
 | **CoreMark on the board** | 2026-10-17, 2000 iterations at **100 MHz** (`make prog` from WSL): **0.962 CoreMark/MHz, about 96 CoreMark**, "Correct operation validated", 2,077,692,270 cycles ([coremark_board.txt](reports/coremark_board.txt)); the 50 MHz run before the clock change gave the same cycles per iteration. **IPC 0.691** (CPI 1.447) over the timed region, counted in RTL simulation of the same SoC ([coremark_sim.txt](reports/coremark_sim.txt)); simulated cycles per iteration match the board's to 0.0013%. RV32I without M: every multiply and divide is a libgcc call |
-| **ILA on the board** | 2026-10-17, `make impl ILA=1` then `make ila` from WSL (Hardware Manager in batch through `hw_server`): 13 probes, 328 bits (pc and instruction of all four pipeline registers, EX/MEM ALU result, writeback, halt), depth 1024, core clock. First-light program: every EX→MEM→WB shift consistent, 227 stall cycles and 114 flush bubbles in the window ([ila_summary.txt](reports/ila_summary.txt), [ila_capture.csv](reports/ila_capture.csv)). ILA build (at 50 MHz, before the clock change): +2233 LUT, +3772 FF, +10 BRAM, WNS +4.162 ns ([summary_board_ila.txt](reports/summary_board_ila.txt)) |
+| **ILA on the board** | 2026-10-17, `make impl ILA=1` then `make ila` from WSL (Hardware Manager in batch through `hw_server`): 13 probes, 328 bits (pc and instruction of all four pipeline registers, EX/MEM ALU result, writeback, halt), depth 1024, core clock. First-light program: every EX→MEM→WB shift consistent, 227 stall cycles and 114 flush bubbles in the window ([ila_summary.txt](reports/ila_summary.txt), [ila_capture.csv](reports/ila_capture.csv)). ILA build (at 50 MHz, before the clock change): +2233 LUT, +3772 FF, +10 BRAM, WNS +4.162 ns ([summary_board_ila.txt](reports/summary_board_ila.txt)). CoreMark at 100 MHz with the ILA (WNS +1.066 ns), triggered on `core_state_transition`: stage shifts consistent, 881 retirements in 1023 cycles ([ila_coremark_summary.txt](reports/ila_coremark_summary.txt), [ila_coremark.csv](reports/ila_coremark.csv)) |
 | CI on push | green (lint + sim + formal) at `c3f468a`, run 39070114296 |
 
 ### Implemented, and what to know before touching it
@@ -289,6 +289,8 @@ riscv-formal found on its first run (see Decisions).
 | `make synth` | OOC synth + impl of the core, reports to `docs/reports/` | working |
 | `make prog` | Arty attached to WSL (usbipd): programs it with `openFPGALoader -b arty_a7_100t`; otherwise prints the Hardware Manager steps and the Windows path | working, both routes tried on the board |
 | `make ila` | after `make impl ILA=1`, with the Arty attached to WSL: programs it and captures the pipeline registers (`syn/ila_capture.tcl`, Vivado Hardware Manager in batch) to `syn/build/board/ila_capture.{csv,vcd}`, then checks the capture (`scripts/ila_check.py`) | working |
+| `make gui` | opens the last `make impl`'s routed design in the Vivado GUI (`syn/gui_view.tcl`): device view colored by module, worst path + its schematic, timing, utilization, power tabs. `VIEW=rtl`: elaborated RTL schematic. `VIEW=ila`: programs an ILA build, triggers on `ILA_TRIGGER` (default `core_state_transition`; must be a function the code calls, GCC inlines some) and shows waveforms | working |
+| `make floorplan` | exports placement + routing from the routed checkpoint (`syn/floorplan_export.tcl`) and draws `docs/img/floorplan_board{,_core}.svg` (`scripts/floorplan.py`); refuses an ILA build | working |
 | `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks, then `scripts/riscv-formal.sh` (checks + covers, verdicts read from status files); appends OSS CAD Suite's `bin/` to PATH itself; `FORMAL_JOBS=n` | working |
 | `make model-test` | C golden model on rv32ui (host cc + RISC-V gcc) | working |
 | `make uvm` | UVM regression in XSim (`tb/uvm/run.sh`): `SEED`, `PROGRAMS` (300), `COV_MIN` (95); fails on any UVM error or coverage below `COV_MIN` | working; local only (Vivado), like `make synth` |
@@ -379,7 +381,24 @@ history, [formal-properties.md](formal-properties.md) and
 > at 100 MHz, IPC 0.691 (`make bench`, `make impl
 > FW_IMAGE=sw/build/coremark.hex`). ILA: `make impl ILA=1`, `make ila`.
 > **Next:** Phase D's last box is the photo (the first-light one is
-> low-resolution); then Phase E (TMR).
+> low-resolution); then the PuTTY demo below; then Phase E (TMR).
+
+### User requests to carry forward
+
+- **Before Phase E, after Phase D closes:** run a few programs on the Arty
+  and show their output in PuTTY on Windows (COM port, 115200 8N1), for
+  screenshots in the README. Detach usbipd first so Windows has the COM port.
+- **Vivado screenshot sets, a folder per stage under `docs/img/vivado/`,
+  plus `make floorplan` (the zoomable SVGs in `docs/img/`):** device view colored by module, worst path (device + schematic), RTL
+  schematic, timing summary, utilization by hierarchy, power (label it a
+  vectorless estimate), ILA waveforms. `make gui`, `make gui VIEW=rtl`,
+  `make gui VIEW=ila`. The Phase D set is done (2026-10-17, single core; in the README's "On the chip"). **Remind
+  the user to take a new set after Phase E** (TMR: three copies visible,
+  before/after comparison) **and at Stage 2 milestones** (systolic array,
+  DMA + interconnect, integration). Shots must come from the build whose
+  reports are committed: rebuild without ILA before the non-ILA shots.
+  `make floorplan` overwrites `docs/img/floorplan_board*.svg`: move the
+  previous pair into that stage's folder first, for the before/after.
 
 ### 1. Timing: IF/ID flush via the valid bit
 

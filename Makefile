@@ -275,6 +275,37 @@ ila:
 		-source syn/ila_capture.tcl -tclargs $(abspath $(BIT)) $(abspath $(LTX)) $(abspath syn/build/board)
 	python3 scripts/ila_check.py syn/build/board/ila_capture.csv syn/build/board/ila_summary.txt
 
+# Open the last make impl's routed design in the Vivado GUI (syn/gui_view.tcl):
+# device view colored by module, worst path, schematic, timing, utilization,
+# power. VIEW=rtl opens the elaborated RTL schematic instead. VIEW=ila
+# programs an ILA build (make impl ILA=1) and shows a capture as waveforms,
+# triggered when the function ILA_TRIGGER of ILA_ELF enters EX (one the code
+# calls: GCC inlines some, e.g. core_list_find, leaving a dead copy); the Arty must
+# be attached to WSL. Looking only.
+VIEW        ?= routed
+ILA_ELF     ?= $(FW_BUILD)/coremark.elf
+ILA_TRIGGER ?= core_state_transition
+
+.PHONY: gui
+gui:
+	$(VIVADO) -mode gui -nojournal -nolog -source syn/gui_view.tcl -tclargs $(VIEW) $(PART) \
+		$(if $(filter ila,$(VIEW)),$(abspath $(BIT)) $(abspath $(LTX)) \
+		$$($(RISCV_PREFIX)nm $(ILA_ELF) | awk '$$3 == "$(ILA_TRIGGER)" {print $$1}'))
+
+# Draw the last make impl's placement and routing as zoomable SVGs
+# (syn/floorplan_export.tcl, scripts/floorplan.py): the whole die, and the
+# same drawing cropped to the SoC. Refuses an ILA build, so the committed
+# drawing is of the design the committed reports describe.
+FLOORPLAN_DIR := syn/build/board/floorplan
+
+.PHONY: floorplan
+floorplan:
+	@test -f syn/build/board/post_route.dcp || { echo "no routed design: run make impl first" >&2; exit 1; }
+	@test ! -f $(LTX) || { echo "the routed design is an ILA build: run make impl without ILA=1 first" >&2; exit 1; }
+	$(VIVADO) -mode batch -nojournal -notrace -source syn/floorplan_export.tcl \
+		-tclargs syn/build/board/post_route.dcp $(FLOORPLAN_DIR)
+	python3 scripts/floorplan.py $(FLOORPLAN_DIR) docs/img/floorplan_board.svg docs/img/floorplan_board_core.svg
+
 # --- not yet built ---------------------------------------------------------
 # Each names its phase and what it is waiting on. Fail loudly, not silently.
 .PHONY: asic
