@@ -43,6 +43,7 @@ Tools: OSS CAD Suite **2026-10-07** — Yosys 0.69+208, SymbiYosys 0.69, Yices
 | 10 | B1/B2 branch flush correctness (§5.5): a bubble in any stage can do nothing; valid instructions retire in control-flow order, each at its predecessor's `pc_wdata` | `riscv_core` | same | k-induction, holds from k = 7, run at 10; no helper invariant | **proven** | 4 / 4 |
 | 11 | SH1 no structural hazard on the register file ports (§5.5): a read of the register WB is writing returns WB's data, on each port | `riscv_core` | `tb/formal/core.sby` | k-induction; alone holds at k = 1 (combinational), run at 10 with the rest | **proven** | 2 / 2 |
 | 12 | XP/XT no X into committed state, general case (§5.5): nothing left over from power-up is ever X in a register write, store, retirement or halt after reset | `riscv_core`, X-encoded by Yosys `xprop` | `tb/formal/xprop.sby` | XP: k-induction, holds from k = 7, run at 10, needs invariant XR. XT: BMC, depth 10 | **XP proven; XT pass (bounded)** | 5 / 5 |
+| 13 | TMR voter (§5.7): any two agreeing inputs produce that output (V1); mismatch is exactly "not all equal" (V2); with two agreeing, the disagree flags name exactly the odd one out (V3); every output bit comes from some input (V4) | `tmr_voter` (W = 32) | `tb/formal/tmr_voter.sby` | combinational, so k = 1 is complete: every input combination | **proven** | 5 / 5 (all agree; each of A, B, C outvoted; all differ). Planted bugs caught: a missing majority term (V1), mismatch comparing two inputs (V2), swapped flags (V3) |
 
 ### 1. x0 invariance (register file)
 

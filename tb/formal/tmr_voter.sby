@@ -1,0 +1,26 @@
+# The TMR voter -- see tmr_voter_formal.sv.
+#
+#   prove  the voter is combinational, so k = 1 is the whole proof: every
+#          assertion holds for every input combination.
+#   cover  reachability: each guarded case arises.
+
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+cover: mode cover
+depth 1
+
+[engines]
+smtbmc yices
+
+[script]
+read_verilog -sv -formal tmr_voter.sv
+read_verilog -sv -formal tmr_voter_formal.sv
+prep -top tmr_voter_formal
+
+[files]
+../../rtl/tmr/tmr_voter.sv
+tmr_voter_formal.sv
