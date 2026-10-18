@@ -21,7 +21,8 @@ measurement conditions stated. Dashes mean not measured yet.
 (orange), branch unit (magenta), register file (cyan), the rest of the
 pipeline (green), the block-RAM memory (white), the UART (red), and the
 critical path in yellow. Generated from the routed design by
-`make floorplan`; click to open it full size and zoom in.*
+`make floorplan`. Click to open it, or download it and open it in a browser
+to zoom in to individual LUTs and flip-flops.*
 
 ## At a glance
 
