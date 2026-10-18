@@ -30,14 +30,15 @@ to zoom in to individual LUTs and flip-flops.*
 |---|---|
 | **ISA** | RV32I, all 40 instructions; every exception traps (halts) |
 | **Pipeline** | 5 stages, full forwarding, 1-cycle load-use stall, branches resolved in EX (static not-taken) |
-| **On the board** | Arty A7-100T, **100 MHz**, timing met with +1.550 ns slack (118.3 MHz estimate) |
+| **On the board** | Arty A7-100T, **100 MHz**, timing met with +0.948 ns slack (110.5 MHz estimate) |
 | **CoreMark** | **0.962 CoreMark/MHz**, about **96 CoreMark** at 100 MHz, validated, with no hardware multiply |
 | **IPC** | 0.691 on CoreMark (CPI 1.447), counted in RTL simulation of the same SoC; it matches the board's cycle count to 0.0013% |
-| **Size** | 964 LUT, 467 FF (core alone); 1085 LUT, 398 FF, 8 BRAM (whole SoC on the board): under 2% of the chip |
+| **Size** | 964 LUT, 467 FF (core alone); 1123 LUT, 435 FF, 8 BRAM (whole SoC on the board): under 2% of the chip |
 | **Formal** | riscv-formal **46/46 checks**; the pipeline's hazard, forwarding, flush, reset and X-propagation properties proven by k-induction; every check shown reachable, and the consistency checks shown to fail on planted bugs |
 | **Bugs formal caught that simulation missed** | **2**, both of which would have broken the ASIC (below) |
 | **UVM** | **205/205** functional coverage bins (100%); ~45,000 retirements per run compared with a C golden model, 0 mismatches |
-| **Simulation** | 176/176 cocotb tests, including the official `riscv-tests` suite (40/42; the 2 exclusions are explained) |
+| **Simulation** | 195/195 cocotb tests, including the official `riscv-tests` suite (40/42; the 2 exclusions are explained) |
+| **Interactive** | A serial bootloader: programs load over the UART in a fraction of a second, no FPGA rebuild; six interactive demos |
 | **CI** | Lint, simulation and formal on every push |
 
 ## Status
@@ -88,7 +89,9 @@ flowchart LR
 - **Exceptions halt**: ECALL, EBREAK, illegal instructions (anything outside
   the 40 RV32I encodings), misaligned accesses and misaligned taken targets.
 - **SoC** (`rtl/top/soc.sv`): the core, one 32 KiB dual-port RAM for code and
-  data, LED and UART registers and a cycle counter at `0x1000_0000`.
+  data, LED and UART (transmit and receive) registers and a cycle counter at
+  `0x1000_0000`. The RAM boots a serial bootloader (`sw/boot/`) that receives
+  programs from `scripts/load.py` and runs them.
   `arty_a7_top.sv` adds the MMCM (100 MHz), the reset synchroniser and the
   pins.
 - **RVFI** trace port and the formal properties live in the RTL under
@@ -130,12 +133,14 @@ model (via DPI-C) on every RVFI retirement. **205/205 coverage bins** from
 run, 0 mismatches. Three planted RTL bugs (wrong forwarding priority, LBU
 sign-extending, a missing load-use stall) are each caught.
 
-**Simulation** (`make sim`, cocotb on Verilator): **176/176 tests**. Unit
+**Simulation** (`make sim`, cocotb on Verilator): **195/195 tests**. Unit
 tests for every module; random programs with every retirement checked against
 a Python golden model; the official **`riscv-tests` rv32ui suite, 40 of 42**
 (`fence_i` needs the Zifencei extension; `ma_data` expects misaligned
 accesses to work, and this core traps them); the first-light firmware and one
-CoreMark iteration on the whole SoC, CRCs checked.
+CoreMark iteration on the whole SoC, CRCs checked; the bootloader receiving a
+program bit by bit on the RX pin; and each of the six demos below, its output
+checked against an independent Python model.
 
 **On the hardware**: an Integrated Logic Analyzer on the pipeline registers,
 captured from the running chip and checked by script (below).
@@ -200,10 +205,35 @@ sits between the load and its use and forwarding covers it. Over this
 1024-cycle window, 881 instructions retire (IPC 0.86 here; CoreMark overall is
 0.691).
 
+## Interactive demos
+
+The board boots a serial bootloader, so any program loads in a fraction of
+a second without rebuilding the FPGA:
+
+```
+make apps
+scripts/load.py sw/build/apps/demo.bin --term
+```
+
+A menu of six demos ([`sw/demo/`](sw/demo/)), each interactive. Every one was
+checked in simulation against an independent Python model before it ran on
+the board. Board results, from
+[`demo_board.txt`](docs/reports/demo_board.txt):
+
+| Demo | What it shows | On the board at 100 MHz |
+|---|---|---|
+| **System info** | A RAM test, and the pipeline's costs **measured live** by timing blocks of instructions with the cycle counter | 1 cycle per ALU op; +1 per load used by the next instruction; 0 when one instruction sits between (forwarding); +2 per taken branch or jump; 0 for a branch not taken. Exactly as designed |
+| **Mandelbrot** | Pan and zoom; the same frame in integer fixed point and in **software floating point** (no FPU) | 128 ms fixed point, 491 ms float: **3.8x**. Both pictures match a bit-exact model, IEEE single precision included |
+| **Digits of π** | A spigot algorithm, streamed digit by digit; every step divides, in software | 750 digits in 4.95 s, all correct |
+| **Game of Life** | Animated; pause, step, random or glider gun; the LEDs count generations | 81,581 cycles per generation |
+| **Tower of Hanoi** | Animated, adjustable speed | 2ⁿ − 1 moves |
+| **Prime sieve** | Up to 163,840, then tests any number you type | π(10⁵) = 9592; the full sieve in 16.0 ms |
+
 ## In Vivado
 
-The build whose reports are committed: CoreMark image, 100 MHz, WNS +1.550 ns
-(`make gui`, `make gui VIEW=rtl`). A new set follows each milestone; these
+The CoreMark build of 2026-10-17: 100 MHz, WNS +1.550 ns, before the UART
+receiver (+38 LUT, +37 FF) joined (`make gui`, `make gui VIEW=rtl`). The
+floorplan at the top is from the same build. A new set follows each milestone; these
 are from Phase D, in [`docs/img/vivado/phase-d/`](docs/img/vivado/phase-d/).
 The [whole-die floorplan](docs/img/floorplan_board.svg) shows the SoC in one
 of the chip's eight clock regions.
@@ -228,9 +258,9 @@ rows. The per-slice trends (what each feature cost in LUTs and MHz) are in
 | Metric | Value | Report |
 |---|---|---|
 | Fmax, core alone, out-of-context, post-route (10.000 ns constraint) | 122.7 MHz | [summary_ooc.txt](docs/reports/summary_ooc.txt) |
-| Fmax, on the board (core + RAM + I/O, in context, MMCM clock) | runs at **100 MHz**, WNS +1.550 ns, 118.3 MHz estimate | [summary_board.txt](docs/reports/summary_board.txt) |
+| Fmax, on the board (core + RAM + I/O, in context, MMCM clock) | runs at **100 MHz**, WNS +0.948 ns, 110.5 MHz estimate | [summary_board.txt](docs/reports/summary_board.txt) |
 | LUT / FF / BRAM / DSP, core alone, out-of-context | 964 / 467 / 0 / 0 | [summary_ooc.txt](docs/reports/summary_ooc.txt) |
-| LUT / FF / BRAM / DSP, whole SoC on the board | 1085 / 398 / 8 / 0 | [summary_board.txt](docs/reports/summary_board.txt) |
+| LUT / FF / BRAM / DSP, whole SoC on the board | 1123 / 435 / 8 / 0 | [summary_board.txt](docs/reports/summary_board.txt) |
 | CoreMark/MHz, on the board, 100 MHz, 2000 iterations, validated | **0.962** (about 96 CoreMark); RV32I without M | [coremark_board.txt](docs/reports/coremark_board.txt) |
 | IPC / CPI, CoreMark timed region, RTL simulation of the same SoC | 0.691 / 1.447 | [coremark_sim.txt](docs/reports/coremark_sim.txt) |
 | Formal | riscv-formal 46/46 (BMC); pipeline properties by k-induction (k = 1 to 7), XT by BMC to depth 10 | [formal-properties.md](docs/formal-properties.md) |
@@ -271,7 +301,9 @@ Stated plainly, because they are real:
   handler. These are scope choices ([docs/buildplan.md](docs/buildplan.md) §7),
   and CoreMark is reported with that in mind.
 - **32 KiB of memory**, code and data together, in block RAM. No caches and no
-  DDR.
+  DDR. Programs get 28 KiB after the bootloader.
+- **The UART receiver buffers one byte.** Typing is fine; text pasted while a
+  program is busy printing can lose characters.
 - **Static not-taken branches**: every taken branch or jump costs two
   cycles. Branch prediction is deferred until after TMR, and then only with a
   measured IPC gain.
@@ -293,12 +325,14 @@ scripts in `syn/`; no project directory is ever committed.
 | Target | Does |
 |---|---|
 | `make lint` | Verilator lint of `rtl/`, zero warnings |
-| `make sim` | cocotb regression on Verilator, 176 tests |
+| `make sim` | cocotb regression on Verilator, 195 tests |
 | `make formal` | SymbiYosys properties and riscv-formal, checks and covers |
 | `make uvm` | UVM regression in XSim (`SEED`, `PROGRAMS`, `COV_MIN`) |
 | `make model-test` | The C golden model alone on rv32ui |
 | `make synth` | Out-of-context synth **and** place & route of the core, reports to `docs/reports/` |
 | `make fw` / `make bench` | First-light firmware / CoreMark images |
+| `make boot` / `make apps` | The serial bootloader (the default bitstream image) / programs and the demo reel for it |
+| `scripts/load.py <bin> [--term]` | Send a program to the board and, with `--term`, talk to it |
 | `make impl` | Board-level place & route and bitstream (`FW_IMAGE=`, `ILA=1`), reports to `docs/reports/` |
 | `make prog` | Program the Arty (from WSL via usbipd, or prints the Windows steps) |
 | `make ila` | Capture the pipeline registers from the running board and check them |
@@ -316,12 +350,14 @@ its reports are committed with the RTL that produced them.
 | Path | Contents |
 |---|---|
 | `rtl/core/` | The pipeline: `riscv_core`, decoder, ALU, branch unit, hazard unit, load/store alignment, register file |
-| `rtl/periph/` | UART transmitter |
+| `rtl/periph/` | UART transmitter and receiver |
 | `rtl/top/` | The SoC (`soc.sv`), its RAM, and the Arty A7 top (clocking, reset, pins, optional ILA) |
 | `tb/cocotb/` | Python testbenches and the Python golden model |
 | `tb/uvm/` | UVM environment (XSim), DPI-C bridge to the C model |
 | `tb/formal/` | SymbiYosys jobs, harnesses, riscv-formal config (submodule) |
 | `sw/model/` | C golden model (ISS) |
+| `sw/boot/`, `sw/app/`, `sw/lib/` | The serial bootloader; startup and linker script for the programs it loads; their console library |
+| `sw/demo/`, `sw/apps/` | The demo reel; small programs (e.g. `echo`) |
 | `sw/firstlight/`, `sw/coremark-port/` | Bare-metal firmware and the CoreMark port (CoreMark itself is a submodule) |
 | `sw/riscv-tests-env/` | Our environment for the official `riscv-tests` (the suite is a submodule, `sw/riscv-tests/`) |
 | `syn/` | Vivado Tcl: OOC synth, board impl, ILA capture, GUI views, floorplan export |

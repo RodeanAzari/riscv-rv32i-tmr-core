@@ -191,6 +191,23 @@ $(FW_BUILD)/apps/%.elf: sw/apps/%.c $(APP_DEPS)
 	@mkdir -p $(@D)
 	$(RISCV_PREFIX)gcc $(APP_CFLAGS) -o $@ sw/app/crt0.S sw/lib/io.c $< -lgcc
 
+# The demo reel (sw/demo/): one program of several files, so its own rule.
+# -Os: at -O2 its code and the 12 KiB scratch buffer overflow the 28 KiB
+# program area. The microbenchmarks are assembly, unaffected; the other
+# demos' cycle counts are for -Os code.
+DEMO_SRCS := $(wildcard sw/demo/*.c)
+
+$(FW_BUILD)/apps/demo.elf: $(DEMO_SRCS) sw/demo/demo.h $(APP_DEPS)
+	@mkdir -p $(@D)
+	$(RISCV_PREFIX)gcc $(filter-out -O2,$(APP_CFLAGS)) -Os -Isw/demo -o $@ sw/app/crt0.S sw/lib/io.c $(DEMO_SRCS) -lgcc
+
+apps: $(FW_BUILD)/apps/demo.bin $(FW_BUILD)/boot_demo_sim.hex
+
+# For simulation (tb/cocotb/test_demo.py): the bootloader with the demo reel
+# already loaded and saved, so the test reaches it with one key, r.
+$(FW_BUILD)/boot_demo_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/demo.bin scripts/mkimage.py
+	python3 scripts/mkimage.py $(FW_BUILD)/boot.bin $(FW_BUILD)/apps/demo.bin $@
+
 # Kept: the .elf is what objdump and an ILA trigger (make gui VIEW=ila) read.
 .PRECIOUS: $(FW_BUILD)/apps/%.elf
 

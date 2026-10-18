@@ -73,7 +73,8 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          uart_rx:test_uart_rx \
          soc:test_soc \
          soc:test_coremark \
-         soc:test_boot
+         soc:test_boot \
+         soc:test_demo
 
 # The SoC runs a firmware simulation image from sw/build/, built by `make fw`
 # and `make bench` (the regression below builds both first; a TEST_ONE run of
@@ -87,8 +88,12 @@ ifdef TEST_ONE
   MODULE                := $(word 2,$(subst :, ,$(TEST_ONE)))
   BUILD_TAG             := $(TOPLEVEL)
   ifeq ($(TOPLEVEL),soc)
-    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,$(if $(filter test_boot,$(MODULE)),boot,hello_sim))
+    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,hello_sim)))
     BUILD_TAG           := soc_$(SOC_IMAGE)
+    # The demo test runs the UART at CLK/16: its output is thousands of characters.
+    ifeq ($(MODULE),test_demo)
+      COMPILE_ARGS      += -GBAUD=3125000
+    endif
     COMPILE_ARGS        += -GINIT_FILE='"$(abspath $(REPO)/sw/build/$(SOC_IMAGE).hex)"'
   endif
   SIM_BUILD             := sim_build/$(BUILD_TAG)
