@@ -331,7 +331,7 @@ RTL simulation of the same SoC, one iteration. `-O2 -march=rv32i
 | ↳ Yosys | 0.69+208 (`7b1913f4c`) | from the suite. Also the ASIC flow's synthesis step (§6.4) |
 | ↳ SymbiYosys (`sby`) | 0.69 | from the suite, with `yosys-smtbmc` |
 | ↳ solvers | Yices 2.7.0, Boolector 3.2.4, Bitwuzla 0.9.1, Z3 4.15.5 | from the suite |
-| **LibreLane + Sky130** | — | **not installed** — needed closing Phase E (CLAUDE.md §6.4 run #1) |
+| **LibreLane + Sky130** | 3.0.16 (tag; Yosys 0.62 inside) | `~/librelane`, run inside `nix-shell ~/librelane/shell.nix` (Nix 2.35.3, FOSSi binary cache in `/etc/nix/nix.custom.conf`); sky130 PDK `8afc834` fetched by ciel to `~/.ciel` (2.2 GB). `librelane --smoke-test` passed 2026-10-18. Nix's own tools: `/nix/store`, 5.2 GB |
 | **riscv-formal** | `c992aa6` (2026-07-16) | git submodule `tb/formal/riscv-formal`; never written to — `scripts/riscv-formal.sh` builds a symlink tree in `tb/formal/build/rvf/` instead |
 | **riscv-tests** | `bcffa2b` (2026-09-25) | git submodule `sw/riscv-tests`; its own nested `env` submodule is deliberately not initialised — we use our env |
 
@@ -473,7 +473,7 @@ history, [formal-properties.md](formal-properties.md) and
 > measured: `rtl/tmr/`, `make synth` (core and TMR), `make impl TMR=1`,
 > `make faults`. Voter proven; 10,000 faults, 0 failures; 100 MHz on the
 > board (WNS +0.095 ns); live injector on the board (demo 7). **Next:**
-> LibreLane run #1 on the non-TMR core (not installed yet), then the
+> LibreLane run #1 on the non-TMR core (installed, smoke test passed), then the
 > Phase E README update and the Vivado/floorplan screenshot set for TMR
 > (the committed floorplan SVGs are the TMR build before the injector).
 
