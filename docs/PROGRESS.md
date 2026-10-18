@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D (hardware) **done** 2026-10-18: 100 MHz on the Arty A7, CoreMark 0.962 CoreMark/MHz, IPC 0.691, serial bootloader and six interactive demos. E (TMR) in progress: three voted copies with feedback, voter proven, 10,000-fault campaign with 0 failures, 100 MHz on the board, live fault injector on the board (1,887 flips, same answer, same cycles); LibreLane run #1 to go. Phase A **done** 2026-10-08, CI run 37817380686
+**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D (hardware) **done** 2026-10-18: 100 MHz on the Arty A7, CoreMark 0.962 CoreMark/MHz, IPC 0.691, serial bootloader and six interactive demos. E (TMR) in progress: three voted copies with feedback, voter proven, 10,000-fault campaign with 0 failures, 100 MHz on the board, live fault injector on the board (250,971 flips over 133 runs, same answer, same cycles); LibreLane run #1 to go. Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -35,7 +35,7 @@ the local GCC 16.
 | Check | Result |
 |---|---|
 | `make lint` | clean, Verilator 5.050 |
-| `make sim` | 308/308 passing across 19 entries (core, TMR core ×2, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, uart_rx, soc ×4, TMR soc ×4), including the 40 official `riscv-tests`, the first-light firmware, one CoreMark iteration on the whole SoC (CRCs checked, IPC counted through RVFI, ~50 s) the bootloader receiving a program over the RX pin (~100 s), the six demos each checked against a Python model (~20 min, 9 of it one software-float Mandelbrot frame, which CI skips), the fault-injection demo (on TMR: 1,887 flips, all detected, answer and cycles unchanged), and on the TMR core: the core's 105 tests, a 1000-fault campaign (0 failures required, pipeline faults must recover), first light, CoreMark and the bootloader with zero mismatches; UART decoded at 115200 |
+| `make sim` | 308/308 passing across 19 entries (core, TMR core ×2, alu, regfile, decoder, mem_align, hazard, branch, uart_tx, uart_rx, soc ×4, TMR soc ×4), including the 40 official `riscv-tests`, the first-light firmware, one CoreMark iteration on the whole SoC (CRCs checked, IPC counted through RVFI, ~50 s) the bootloader receiving a program over the RX pin (~100 s), the six demos each checked against a Python model (~20 min, 9 of it one software-float Mandelbrot frame, which CI skips), the fault-injection demo, stopped after 3 passes (on TMR: 5,661 flips, all detected, answer and cycles unchanged every pass), and on the TMR core: the core's 105 tests, a 1000-fault campaign (0 failures required, pipeline faults must recover), first light, CoreMark and the bootloader with zero mismatches; UART decoded at 115200 |
 | `make synth` | routes clean, 0 errors, ~40 s |
 | `make formal` | the TMR voter (V1-V4, every input) and x0 invariance, stall correctness (S1–S4), forwarding (F1/F2/L1), reset-commits-nothing (X1), branch-flush correctness (B1/B2), no regfile structural hazard (SH1) and no X into committed state (XP) proven by k-induction, XT by BMC to depth 10; **riscv-formal 46/46 checks and 46/46 cover runs** (37 `insn`, `reg`, `pc_fwd`, `pc_bwd`, `unique`, `causal`, `causal_mem`, `liveness`, `hang`, `ill`), ~6 min (XT's BMC is ~5 of it) — see [formal-properties.md](formal-properties.md) |
 | `make impl` | board-level route + bitstream, timing met at 100 MHz (WNS +0.948 ns with the UART receiver), ~2 min |
@@ -46,7 +46,7 @@ the local GCC 16.
 | **ILA on the board** | 2026-10-17, `make impl ILA=1` then `make ila` from WSL (Hardware Manager in batch through `hw_server`): 13 probes, 328 bits (pc and instruction of all four pipeline registers, EX/MEM ALU result, writeback, halt), depth 1024, core clock. First-light program: every EX→MEM→WB shift consistent, 227 stall cycles and 114 flush bubbles in the window ([ila_summary.txt](reports/ila_summary.txt), [ila_capture.csv](reports/ila_capture.csv)). ILA build (at 50 MHz, before the clock change): +2233 LUT, +3772 FF, +10 BRAM, WNS +4.162 ns ([summary_board_ila.txt](reports/summary_board_ila.txt)). CoreMark at 100 MHz with the ILA (WNS +1.066 ns), triggered on `core_state_transition`: stage shifts consistent, 881 retirements in 1023 cycles ([ila_coremark_summary.txt](reports/ila_coremark_summary.txt), [ila_coremark.csv](reports/ila_coremark.csv)) |
 | **Bootloader on the board** | 2026-10-18: `scripts/load.py sw/build/apps/echo.bin` loads 1760 bytes over the UART in about 0.2 s; the program echoes keys, returns to the bootloader on q, and `r` reruns it without resending. Changing the program needs no Vivado rebuild |
 | **Demo reel on the board** | 2026-10-18, `sw/demo/` loaded over serial ([demo_board.txt](reports/demo_board.txt)): microbenchmarks measure exactly 1 cycle per ALU op, +1 per load-use, +2 per taken branch or jump, 0 for not taken; Mandelbrot frame 12,849,963 cycles fixed point vs 49,110,978 software float (3.8x; simulation gives the same counts, and both pictures match a bit-exact model, IEEE single included); 750 digits of pi in 4.95 s; Life 81,581 cycles a generation; sieve to 163840 in 16.0 ms |
-| **TMR** (Phase E) | 2026-10-18: `rtl/tmr/riscv_core_tmr.sv`, three copies with `DONT_TOUCH`/`KEEP_HIERARCHY` (three survive: 1601 cells each, `summary_ooc_tmr.txt`), voted feedback into each copy's pc, halt flags and register file. The voter is proven (`tmr_voter.sby`). The core's 105 tests and the SoC's first light, CoreMark and bootloader tests pass on it with zero mismatches. **Fault campaign, 10,000 single-bit flips** ([tmr_faults.txt](reports/tmr_faults.txt)): 0 failures; 1,275 detected, all corrected and all three copies identical again; median disagreement 1 cycle, max 30; 5,777 register-file flips latent in registers the programs never use. Board: 100 MHz met, WNS +0.095 ns, 3.1x LUT, Fmax −8.7%. **Live injector on the board** (2026-10-18, [tmr_inject_board.txt](reports/tmr_inject_board.txt)): demo 7 flips a random bit of copy B's pc 1,887 times during a sieve to 163840: 14,999 primes and 3,352,978 cycles, exactly as the clean run; all 1,887 detected; the same counts in simulation (`soc_tmr:test_demo`). The plain demos still exact on the TMR bitstream |
+| **TMR** (Phase E) | 2026-10-18: `rtl/tmr/riscv_core_tmr.sv`, three copies with `DONT_TOUCH`/`KEEP_HIERARCHY` (three survive: 1601 cells each, `summary_ooc_tmr.txt`), voted feedback into each copy's pc, halt flags and register file. The voter is proven (`tmr_voter.sby`). The core's 105 tests and the SoC's first light, CoreMark and bootloader tests pass on it with zero mismatches. **Fault campaign, 10,000 single-bit flips** ([tmr_faults.txt](reports/tmr_faults.txt)): 0 failures; 1,275 detected, all corrected and all three copies identical again; median disagreement 1 cycle, max 30; 5,777 register-file flips latent in registers the programs never use. Board: 100 MHz met, WNS +0.095 ns, 3.1x LUT, Fmax −8.7%. **Live injector on the board** (2026-10-18, [tmr_inject_board.txt](reports/tmr_inject_board.txt)): demo 7 repeats a sieve to 163840 until a key, flipping a random bit of copy B's pc 1,887 times a pass: 133 passes, each 14,999 primes and 3,354,864 cycles, exactly as the clean run; all 250,971 flips detected; the same counts in simulation (`soc_tmr:test_demo`). Totals on screen, disagreements / 4096 on the LEDs. The plain demos still exact on the TMR bitstream |
 | CI on push | green (lint + sim + formal, 308/308 in one regression) at `1bdbf8f`, run 39151751507 (main fast-forwarded to it 2026-10-18) |
 
 ### Implemented, and what to know before touching it
@@ -140,8 +140,8 @@ Only the facts that are not obvious from reading it:
   `soc_tmr:test_demo` runs only `test_tmr` and, injecting, has no assertions.
 - **Programs get 1 KiB of stack** (`sw/app/link.ld`, was 2 KiB): the demo
   reel's deepest chain (Hanoi, 8 levels, then printf) is about 660 bytes by
-  `-fstack-usage`, GCC 13 and 16 alike. With demo 7, 1252 bytes are left
-  under GCC 16 and **1148 under CI's GCC 13**, whose code is ~100 bytes
+  `-fstack-usage`, GCC 13 and 16 alike. With demo 7 (repeating, 2026-10-18), 1160 bytes are
+  left under GCC 16 and **1060 under CI's GCC 13**, whose code is ~100 bytes
   larger (its first push failed here). Ubuntu 24.04's package unpacks
   without root (`apt` .debs, `dpkg -x`) to check a size before pushing.
   More demo code means shrinking the scratch buffer.
@@ -407,7 +407,11 @@ rebuilds Verilator (~8 min); that is not a broken cache key. Bumping
 toolchain changes, and the cache key names only `runner.os`, so a Verilator
 built on 24.04 would be restored onto 26.04. If the first run after the switch
 fails, suspect this before the RTL; fix by pinning `runs-on: ubuntu-24.04` or
-adding the image version to the key.
+adding the image version to the key. **Checked 2026-10-18 (the .debs unpacked
+locally): 26.04's `gcc-riscv64-unknown-elf` 15.3 ships no `stdint.h`** (it
+recommends `picolibc-riscv64-unknown-elf`, which `--no-install-recommends`
+leaves out), so every C build would fail there, and its assembler (binutils
+2.45.50) rejected `-march=rv32i` in that check. Pinning 24.04 avoids both.
 
 **Not in CI:** synthesis (Vivado is too large for a hosted runner).
 

@@ -1,21 +1,158 @@
 TMR fault injection on the Arty A7-100T (xc7a100tcsg324-1), 2026-10-18
 make impl TMR=1 (three voted cores, 100 MHz, bootloader image), make prog; demo reel
 (sw/demo/, -Os) loaded with scripts/load.py over /dev/ttyUSB1, keys sent by script.
-Demo 7 (sw/demo/tmr.c): the sieve to 163840 twice, the second time flipping one
-random bit of copy B's pc every 64 marks (soc.sv TMR register, 0x1000_0014).
+Demo 7 (sw/demo/tmr.c): the sieve to 163840 once clean, then repeatedly until a key,
+each pass flipping one random bit of copy B's pc every 64 marks (soc.sv TMR register,
+0x1000_0014). The injected row is rewritten in place after each pass (a carriage
+return); here each rewrite is on its own line, so every pass is listed. Flips and
+detected are totals over the passes.
 Built with GCC 16.1.0; cycle counts depend on the compiler (CI's GCC 13 differs).
-Run twice after one reset, then demos 1 and 6 to show the core still exact.
+After one reset: demo 7 stopped after about 5 s (133 passes), demo 7 again stopped
+after 5 passes, then demo 6 to show the core still exact.
 Output with terminal control codes removed.
 
-TMR: each flip hits a random bit of copy B's pc
+TMR: each flip hits a random bit of copy B's pc; any key stops
 
-  clean     primes to 163840: 14999   3352978 cycles   flips 0, detected 0
-  injected  primes to 163840: 14999   3352978 cycles   flips 1887, detected 1887
+              primes   cycles    flips detected
+  clean        14999  3354864        0        0
+  injected     14999  3354864     1887     1887   pass 1
+  injected     14999  3354864     3774     3774   pass 2
+  injected     14999  3354864     5661     5661   pass 3
+  injected     14999  3354864     7548     7548   pass 4
+  injected     14999  3354864     9435     9435   pass 5
+  injected     14999  3354864    11322    11322   pass 6
+  injected     14999  3354864    13209    13209   pass 7
+  injected     14999  3354864    15096    15096   pass 8
+  injected     14999  3354864    16983    16983   pass 9
+  injected     14999  3354864    18870    18870   pass 10
+  injected     14999  3354864    20757    20757   pass 11
+  injected     14999  3354864    22644    22644   pass 12
+  injected     14999  3354864    24531    24531   pass 13
+  injected     14999  3354864    26418    26418   pass 14
+  injected     14999  3354864    28305    28305   pass 15
+  injected     14999  3354864    30192    30192   pass 16
+  injected     14999  3354864    32079    32079   pass 17
+  injected     14999  3354864    33966    33966   pass 18
+  injected     14999  3354864    35853    35853   pass 19
+  injected     14999  3354864    37740    37740   pass 20
+  injected     14999  3354864    39627    39627   pass 21
+  injected     14999  3354864    41514    41514   pass 22
+  injected     14999  3354864    43401    43401   pass 23
+  injected     14999  3354864    45288    45288   pass 24
+  injected     14999  3354864    47175    47175   pass 25
+  injected     14999  3354864    49062    49062   pass 26
+  injected     14999  3354864    50949    50949   pass 27
+  injected     14999  3354864    52836    52836   pass 28
+  injected     14999  3354864    54723    54723   pass 29
+  injected     14999  3354864    56610    56610   pass 30
+  injected     14999  3354864    58497    58497   pass 31
+  injected     14999  3354864    60384    60384   pass 32
+  injected     14999  3354864    62271    62271   pass 33
+  injected     14999  3354864    64158    64158   pass 34
+  injected     14999  3354864    66045    66045   pass 35
+  injected     14999  3354864    67932    67932   pass 36
+  injected     14999  3354864    69819    69819   pass 37
+  injected     14999  3354864    71706    71706   pass 38
+  injected     14999  3354864    73593    73593   pass 39
+  injected     14999  3354864    75480    75480   pass 40
+  injected     14999  3354864    77367    77367   pass 41
+  injected     14999  3354864    79254    79254   pass 42
+  injected     14999  3354864    81141    81141   pass 43
+  injected     14999  3354864    83028    83028   pass 44
+  injected     14999  3354864    84915    84915   pass 45
+  injected     14999  3354864    86802    86802   pass 46
+  injected     14999  3354864    88689    88689   pass 47
+  injected     14999  3354864    90576    90576   pass 48
+  injected     14999  3354864    92463    92463   pass 49
+  injected     14999  3354864    94350    94350   pass 50
+  injected     14999  3354864    96237    96237   pass 51
+  injected     14999  3354864    98124    98124   pass 52
+  injected     14999  3354864   100011   100011   pass 53
+  injected     14999  3354864   101898   101898   pass 54
+  injected     14999  3354864   103785   103785   pass 55
+  injected     14999  3354864   105672   105672   pass 56
+  injected     14999  3354864   107559   107559   pass 57
+  injected     14999  3354864   109446   109446   pass 58
+  injected     14999  3354864   111333   111333   pass 59
+  injected     14999  3354864   113220   113220   pass 60
+  injected     14999  3354864   115107   115107   pass 61
+  injected     14999  3354864   116994   116994   pass 62
+  injected     14999  3354864   118881   118881   pass 63
+  injected     14999  3354864   120768   120768   pass 64
+  injected     14999  3354864   122655   122655   pass 65
+  injected     14999  3354864   124542   124542   pass 66
+  injected     14999  3354864   126429   126429   pass 67
+  injected     14999  3354864   128316   128316   pass 68
+  injected     14999  3354864   130203   130203   pass 69
+  injected     14999  3354864   132090   132090   pass 70
+  injected     14999  3354864   133977   133977   pass 71
+  injected     14999  3354864   135864   135864   pass 72
+  injected     14999  3354864   137751   137751   pass 73
+  injected     14999  3354864   139638   139638   pass 74
+  injected     14999  3354864   141525   141525   pass 75
+  injected     14999  3354864   143412   143412   pass 76
+  injected     14999  3354864   145299   145299   pass 77
+  injected     14999  3354864   147186   147186   pass 78
+  injected     14999  3354864   149073   149073   pass 79
+  injected     14999  3354864   150960   150960   pass 80
+  injected     14999  3354864   152847   152847   pass 81
+  injected     14999  3354864   154734   154734   pass 82
+  injected     14999  3354864   156621   156621   pass 83
+  injected     14999  3354864   158508   158508   pass 84
+  injected     14999  3354864   160395   160395   pass 85
+  injected     14999  3354864   162282   162282   pass 86
+  injected     14999  3354864   164169   164169   pass 87
+  injected     14999  3354864   166056   166056   pass 88
+  injected     14999  3354864   167943   167943   pass 89
+  injected     14999  3354864   169830   169830   pass 90
+  injected     14999  3354864   171717   171717   pass 91
+  injected     14999  3354864   173604   173604   pass 92
+  injected     14999  3354864   175491   175491   pass 93
+  injected     14999  3354864   177378   177378   pass 94
+  injected     14999  3354864   179265   179265   pass 95
+  injected     14999  3354864   181152   181152   pass 96
+  injected     14999  3354864   183039   183039   pass 97
+  injected     14999  3354864   184926   184926   pass 98
+  injected     14999  3354864   186813   186813   pass 99
+  injected     14999  3354864   188700   188700   pass 100
+  injected     14999  3354864   190587   190587   pass 101
+  injected     14999  3354864   192474   192474   pass 102
+  injected     14999  3354864   194361   194361   pass 103
+  injected     14999  3354864   196248   196248   pass 104
+  injected     14999  3354864   198135   198135   pass 105
+  injected     14999  3354864   200022   200022   pass 106
+  injected     14999  3354864   201909   201909   pass 107
+  injected     14999  3354864   203796   203796   pass 108
+  injected     14999  3354864   205683   205683   pass 109
+  injected     14999  3354864   207570   207570   pass 110
+  injected     14999  3354864   209457   209457   pass 111
+  injected     14999  3354864   211344   211344   pass 112
+  injected     14999  3354864   213231   213231   pass 113
+  injected     14999  3354864   215118   215118   pass 114
+  injected     14999  3354864   217005   217005   pass 115
+  injected     14999  3354864   218892   218892   pass 116
+  injected     14999  3354864   220779   220779   pass 117
+  injected     14999  3354864   222666   222666   pass 118
+  injected     14999  3354864   224553   224553   pass 119
+  injected     14999  3354864   226440   226440   pass 120
+  injected     14999  3354864   228327   228327   pass 121
+  injected     14999  3354864   230214   230214   pass 122
+  injected     14999  3354864   232101   232101   pass 123
+  injected     14999  3354864   233988   233988   pass 124
+  injected     14999  3354864   235875   235875   pass 125
+  injected     14999  3354864   237762   237762   pass 126
+  injected     14999  3354864   239649   239649   pass 127
+  injected     14999  3354864   241536   241536   pass 128
+  injected     14999  3354864   243423   243423   pass 129
+  injected     14999  3354864   245310   245310   pass 130
+  injected     14999  3354864   247197   247197   pass 131
+  injected     14999  3354864   249084   249084   pass 132
+  injected     14999  3354864   250971   250971   pass 133
 
-  disagreements since reset: 1887
+  disagreements since reset: 250971
 
 [press a key]
-  ____  __     __ _____  ____   ___ 
+  ____  __     __ _____  ____   ___
  |  _ \ \ \   / /|___ / |___ \ |_ _|   a 5-stage pipelined CPU
  | |_) | \ \ / /   |_ \   __) | | |    written from scratch,
  |  _ <   \ V /   ___) | / __/  | |    formally verified, running
@@ -30,15 +167,21 @@ TMR: each flip hits a random bit of copy B's pc
   7  TMR: inject faults while it runs
   q  back to the bootloader
 
-TMR: each flip hits a random bit of copy B's pc
+>
+TMR: each flip hits a random bit of copy B's pc; any key stops
 
-  clean     primes to 163840: 14999   3352978 cycles   flips 0, detected 0
-  injected  primes to 163840: 14999   3352978 cycles   flips 1887, detected 1887
+              primes   cycles    flips detected
+  clean        14999  3354864        0        0
+  injected     14999  3354864     1887     1887   pass 1
+  injected     14999  3354864     3774     3774   pass 2
+  injected     14999  3354864     5661     5661   pass 3
+  injected     14999  3354864     7548     7548   pass 4
+  injected     14999  3354864     9435     9435   pass 5
 
-  disagreements since reset: 3774
+  disagreements since reset: 260406
 
 [press a key]
-  ____  __     __ _____  ____   ___ 
+  ____  __     __ _____  ____   ___
  |  _ \ \ \   / /|___ / |___ \ |_ _|   a 5-stage pipelined CPU
  | |_) | \ \ / /   |_ \   __) | | |    written from scratch,
  |  _ <   \ V /   ___) | / __/  | |    formally verified, running
@@ -53,40 +196,7 @@ TMR: each flip hits a random bit of copy B's pc
   7  TMR: inject faults while it runs
   q  back to the bootloader
 
-system
-  RV32I, all 40 instructions; 5-stage pipeline, full forwarding,
-  branches resolved in EX (static not-taken), every exception halts
-  core clock 100 MHz (as built; the cycle counter counts it)
-  RAM 32 KiB: bootloader 4 KiB, this program 17032 bytes + 10388 bytes of data,
-  stack from the top
-  cycles since reset 1575072053 (15750.720 ms)
-
-RAM test, 10 KiB scratch buffer, 4 patterns: pass
-
-pipeline, measured now with the cycle counter
-  ALU ops                 100 instr  100 cycles  CPI 1.00  one per cycle
-  load, used next         100 instr  150 cycles  CPI 1.50  1 stall per load
-  load, used one later    150 instr  150 cycles  CPI 1.00  forwarded, no stall
-  taken jumps              50 instr  150 cycles  CPI 3.00  2 flushed cycles each
-  taken branches           50 instr  150 cycles  CPI 3.00  2 flushed cycles each
-  branches not taken       50 instr   50 cycles  CPI 1.00  free: predicted
-
-[press a key]
-  ____  __     __ _____  ____   ___ 
- |  _ \ \ \   / /|___ / |___ \ |_ _|   a 5-stage pipelined CPU
- | |_) | \ \ / /   |_ \   __) | | |    written from scratch,
- |  _ <   \ V /   ___) | / __/  | |    formally verified, running
- |_| \_\   \_/   |____/ |_____||___|   on an Arty A7 at 100 MHz
-
-  1  system info and pipeline microbenchmarks
-  2  Mandelbrot: fixed point vs software floating point
-  3  digits of pi
-  4  Conway's Game of Life
-  5  Tower of Hanoi
-  6  prime sieve
-  7  TMR: inject faults while it runs
-  q  back to the bootloader
-
+>
 prime sieve (Eratosthenes, odd numbers, one bit each)
 
 sieve up to [100-163840, Enter for 100000]: 163840
@@ -103,7 +213,8 @@ the largest up to 163840: 163733 163741 163753 163771 163781 163789 163811 16381
 sieve: 1603562 cycles (16.035 ms)
 
 test a number for primality (0 to go back) [0-9999999, Enter for 0]: 0
-  ____  __     __ _____  ____   ___ 
+
+  ____  __     __ _____  ____   ___
  |  _ \ \ \   / /|___ / |___ \ |_ _|   a 5-stage pipelined CPU
  | |_) | \ \ / /   |_ \   __) | | |    written from scratch,
  |  _ <   \ V /   ___) | / __/  | |    formally verified, running
@@ -118,3 +229,4 @@ test a number for primality (0 to go back) [0-9999999, Enter for 0]: 0
   7  TMR: inject faults while it runs
   q  back to the bootloader
 
+>

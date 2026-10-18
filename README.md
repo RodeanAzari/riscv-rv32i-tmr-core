@@ -39,7 +39,7 @@ and flip-flops. The single core's floorplan, from Phase D, is
 | **CoreMark** | **0.962 CoreMark/MHz**, about **96 CoreMark** at 100 MHz, validated, with no hardware multiply |
 | **IPC** | 0.691 on CoreMark (CPI 1.447), counted in RTL simulation of the same SoC; it matches the board's cycle count to 0.0013% |
 | **Size** | 966 LUT, 467 FF (core alone); 1123 LUT, 435 FF, 8 BRAM (whole SoC on the board): under 2% of the chip. TMR: 3446 LUT, 1621 FF on the board |
-| **Fault tolerance** | Three voted copies with feedback; voter formally proven; **10,000 random single-bit faults, 0 failures**, every detected fault corrected and the copies back in step; **live on the board**, 1,887 faults injected during one computation, all outvoted, same answer, same cycle count |
+| **Fault tolerance** | Three voted copies with feedback; voter formally proven; **10,000 random single-bit faults, 0 failures**, every detected fault corrected and the copies back in step; **live on the board**, 250,971 faults injected over 133 runs of one computation, all outvoted, every run the same answer and the same cycle count |
 | **Formal** | riscv-formal **46/46 checks**; the pipeline's hazard, forwarding, flush, reset and X-propagation properties proven by k-induction; every check shown reachable, and the consistency checks shown to fail on planted bugs |
 | **Bugs formal caught that simulation missed** | **2**, both of which would have broken the ASIC (below) |
 | **UVM** | **205/205** functional coverage bins (100%); ~45,000 retirements per run compared with a C golden model, 0 mismatches |
@@ -187,15 +187,16 @@ read, until software rewrites the register.
 
 - **Live, on the board** (demo 7, [`tmr_inject_board.txt`](docs/reports/tmr_inject_board.txt)):
   a write to `0x1000_0014` flips the written bits of copy B's program
-  counter for real, in the flop. The demo runs a prime sieve twice: once
-  clean, once flipping a random pc bit every 64 composites marked. Both runs
-  execute the same instructions (the clean one writes 0), so they compare
-  exactly:
+  counter for real, in the flop. The demo runs a prime sieve once clean,
+  then again and again until a key, each pass flipping a random pc bit every
+  64 composites marked (1,887 flips a pass), with the totals on screen and
+  on the LEDs. Every pass executes the same instructions (the clean one
+  writes 0), so they compare exactly:
 
-| Sieve to 163,840 on the TMR core, 100 MHz | Primes | Cycles | Faults injected | Detected |
-|---|---|---|---|---|
-| Clean | 14,999 | 3,352,978 | 0 | 0 |
-| Injected | 14,999 | 3,352,978 | 1,887 | 1,887 |
+| Sieve to 163,840 on the TMR core, 100 MHz | Passes | Primes | Cycles per pass | Faults injected | Detected |
+|---|---|---|---|---|---|
+| Clean | 1 | 14,999 | 3,354,864 | 0 | 0 |
+| Injected | 133 | 14,999 every pass | 3,354,864 every pass | 250,971 | 250,971 |
 
   Same answer, not one cycle lost: correction happens in the vote, with
   no stall or retry. Simulation of the same SoC gives the same counts. On the
@@ -298,7 +299,7 @@ the board. Board results, from
 | **Game of Life** | Animated; pause, step, random or glider gun; the LEDs count generations | 81,581 cycles per generation |
 | **Tower of Hanoi** | Animated, adjustable speed | 2ⁿ − 1 moves |
 | **Prime sieve** | Up to 163,840, then tests any number you type | π(10⁵) = 9592; the full sieve in 16.0 ms |
-| **TMR fault injection** | The sieve again, with a random bit of one copy's pc flipped 1,887 times while it runs (TMR build) | Same 14,999 primes, same 3,352,978 cycles, all 1,887 flips detected ([`tmr_inject_board.txt`](docs/reports/tmr_inject_board.txt)) |
+| **TMR fault injection** | The sieve again and again until a key, a random bit of one copy's pc flipped 1,887 times a pass, the totals on screen and the LEDs (TMR build) | 133 passes: same 14,999 primes and 3,354,864 cycles every pass, all 250,971 flips detected ([`tmr_inject_board.txt`](docs/reports/tmr_inject_board.txt)) |
 
 ## In Vivado
 
@@ -338,7 +339,7 @@ rows. The per-slice trends (what each feature cost in LUTs and MHz) are in
 | Bugs formal caught that simulation missed | 2 | [formal-properties.md](docs/formal-properties.md) |
 | Functional coverage (UVM) | 205/205 bins, 100% | [coverage-plan.md](docs/coverage-plan.md) |
 | TMR: faults injected / failures | 10,000 / **0**; 1,275 detected, all corrected and recovered | [tmr_faults.txt](docs/reports/tmr_faults.txt) |
-| TMR: faults injected live on the board / effect | 1,887 pc flips during one sieve; all detected; answer and cycle count unchanged | [tmr_inject_board.txt](docs/reports/tmr_inject_board.txt) |
+| TMR: faults injected live on the board / effect | 250,971 pc flips over 133 sieves; all detected; answer and cycle count unchanged in every one | [tmr_inject_board.txt](docs/reports/tmr_inject_board.txt) |
 | TMR: area overhead / Fmax penalty (board) | 3.1x LUT, 3.7x FF / −8.7% (still meets 100 MHz) | [summary_board_tmr.txt](docs/reports/summary_board_tmr.txt) |
 
 **Stage 2 — SoC.** Not started.

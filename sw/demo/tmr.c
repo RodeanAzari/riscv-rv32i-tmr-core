@@ -1,10 +1,14 @@
-/* Fault injection, live: the same sieve run twice, the second time with a
- * bit of copy B's pc flipped every SPACING marks (soc.sv's TMR register).
- * Both runs execute the same instructions -- the first writes 0, which
- * flips nothing -- so their cycle counts compare directly. With TMR the
- * answers match, the cycles match, and the mismatch counter shows that the
- * voter saw every flip; on a single core the writes do nothing and the
- * counter stays at 0. (flips - 1: the last, settling flip(0) is not one.)
+/* Fault injection, live: the sieve once clean, then again and again until a
+ * key, each time with a bit of copy B's pc flipped every SPACING marks
+ * (soc.sv's TMR register). Every run executes the same instructions -- the
+ * clean one writes 0, which flips nothing -- so their cycle counts compare
+ * directly. With TMR the answers match, the cycles match, and the mismatch
+ * counter shows that the voter saw every flip; on a single core the writes
+ * do nothing and the counter stays at 0. The table's injected row is
+ * rewritten after each pass (outside the timed sieve: waiting on the UART
+ * would make the cycles differ), and the LEDs count disagreements / 4096,
+ * about one step per two passes. The counts run across passes (flips -
+ * pass - 1: each pass ends with a settling flip(0), which is not one).
  */
 #include "demo.h"
 
@@ -57,19 +61,27 @@ static uint32_t sieve(uint32_t on)
 
 void demo_tmr(void)
 {
-    puts_("TMR: each flip hits a random bit of copy B's pc\r\n\r\n");
-    for (uint32_t on = 0;; on = ~0u) {      /* clean, then injected */
-        seed(1);
-        flips = detected = 0;
-        last = TMR;
+    uint32_t pass = 0;
+    puts_("TMR: each flip hits a random bit of copy B's pc; any key stops\r\n\r\n"
+          "              primes   cycles    flips detected\r\n");
+    seed(1);
+    flips = detected = 0;
+    last = TMR;
+    for (uint32_t on = 0; on == 0 || try_getc() < 0; on = ~0u) {
         uint32_t t = CYCLE, primes = sieve(on);
         t = CYCLE - t;
-        printf_("  %s  primes to %u: %u   %u cycles   flips %u, detected %u\r\n",
-                on ? "injected" : "clean   ", N, primes, t, (flips - 1) & on, detected);
-        if (on)
-            break;
+        LED = TMR >> 12;
+        printf_("\r  %s %9u%9u%9u%9u", on ? "injected" : "clean   ",
+                primes, t, (flips - pass - 1) & on, detected);
+        if (on) {
+            printf_("   pass %u", ++pass);
+        } else {
+            puts_("\r\n");
+            flips = detected = 0;
+        }
     }
-    printf_("\r\n  disagreements since reset: %u%s\r\n", TMR,
-            TMR ? "" : " (one core: build with make impl TMR=1)");
+    LED = 0;
+    printf_("\r\n\r\n  disagreements since reset: %u%s\r\n", TMR,
+            TMR ? "" : " (one core: make impl TMR=1)");
     wait_key();
 }

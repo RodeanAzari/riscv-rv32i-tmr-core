@@ -338,13 +338,16 @@ async def test_primes(dut):
 
 @cocotb.test()
 async def test_tmr(dut):
-    """Demo 7: the sieve twice, the second time with copy B's pc flipped
-    every 64 marks. With TMR (soc_tmr) the answer and the cycle count are
-    unchanged and the voter saw every flip; on one core the writes do nothing."""
+    """Demo 7: the sieve once clean, then repeatedly with copy B's pc flipped
+    every 64 marks until a key, the table's injected row rewritten after each
+    pass. With TMR (soc_tmr) every pass has the clean answer and cycle count
+    and the voter saw every flip; on one core the writes do nothing."""
     b = Board(dut)
     await b.start()
     m = b.mark()
     await b.send("7")
+    await b.expect("pass 2", m, cycles=40_000_000)
+    await b.send("x")
     out = await b.expect("[press a key]", m, cycles=40_000_000)
     n = 163840
     odd = bytearray([1]) * (n + 1)
@@ -352,21 +355,26 @@ async def test_tmr(dut):
         if odd[p]:
             odd[p * p::2 * p] = bytes(len(range(p * p, n + 1, 2 * p)))
     primes = 1 + sum(odd[v] for v in range(3, n + 1, 2))
-    runs = re.findall(r"(clean|injected)\s+primes to \d+: (\d+)\s+(\d+) cycles\s+"
-                      r"flips (\d+), detected (\d+)", out)
-    assert [r[0] for r in runs] == ["clean", "injected"], f"two runs expected: {out!r}"
-    (p0, c0, f0, d0), (p1, c1, f1, d1) = [tuple(map(int, r[1:])) for r in runs]
-    assert p0 == p1 == primes, f"primes {p0}, {p1}; expected {primes}"
-    assert c0 == c1, f"cycles {c0} clean, {c1} injected: correction should cost none"
+    rows = re.findall(r"(clean|injected)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)(?:\s+pass (\d+))?", out)
+    assert rows and rows[0][0] == "clean", f"no clean run: {out!r}"
+    (p0, c0, f0, d0), inj = map(int, rows[0][1:5]), rows[1:]
+    assert p0 == primes, f"clean: primes {p0}, expected {primes}"
     assert (f0, d0) == (0, 0), "the clean run flipped or detected something"
-    assert f1 > 1000, f"only {f1} flips"
+    passes = [int(r[5]) for r in inj]
+    assert passes == list(range(1, len(inj) + 1)) and len(inj) >= 2, f"passes {passes}"
+    for _, p1, c1, _, _, _ in inj:
+        assert int(p1) == primes, f"injected: primes {p1}, expected {primes}"
+        assert int(c1) == c0, f"cycles {c0} clean, {c1} injected: correction should cost none"
+    f1, d1 = map(int, inj[-1][3:5])
+    assert f1 == len(inj) * int(inj[0][3]) > 1000 * len(inj), f"flips {f1} over {len(inj)} passes"
     core = dut.g_cpu.u_core
     if hasattr(core, "mismatch_count_o"):
         assert d1 == f1, f"{d1} of {f1} flips detected"
         since = int(re.search(r"disagreements since reset: (\d+)", out)[1])
         assert since == int(core.mismatch_count_o.value) >= f1
-        dut._log.info(f"{f1} flips, all detected ({since} disagreements); {c1} cycles either way")
+        dut._log.info(f"{f1} flips in {len(inj)} passes, all detected ({since} disagreements); "
+                      f"{c0} cycles every pass")
     else:
-        assert d1 == 0 and "(one core: build with make impl TMR=1)" in out
+        assert d1 == 0 and "(one core: make impl TMR=1)" in out
     await b.send("x")
     await b.expect("> ", b.mark())
