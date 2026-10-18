@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D — first light on the Arty A7 2026-10-17; CoreMark on the board 2026-10-17, 0.962 CoreMark/MHz, IPC 0.691. Phase A **done** 2026-10-08, CI run 37817380686
+**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D (hardware) **done** 2026-10-18: 100 MHz on the Arty A7, CoreMark 0.962 CoreMark/MHz, IPC 0.691, serial bootloader and six interactive demos. E (TMR) in progress. Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -41,7 +41,7 @@ the local GCC 16.
 | `make impl` | board-level route + bitstream, timing met at 100 MHz (WNS +0.948 ns with the UART receiver), ~2 min |
 | `make model-test` | the C golden model alone: rv32ui **40/40**; a planted SRA bug fails exactly `sra` |
 | `make uvm` | XSim, 300 random programs, ~45 s: **205/205 coverage bins (100%)** on seeds 1, 2, 3, ~45,000 retirements each compared with the model, 0 mismatches. Planted RTL faults caught: forwarding priority (in the hazard unit), LBU sign-extending, no rs2 load-use stall |
-| **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.jpg](img/fpgafirstlight.jpg) (Phase D's photo box; low-resolution, retake for the README) |
+| **On the board** | 2026-10-17, programmed from Windows (Lab Edition 2025.2), core at 50 MHz: "hello from rv32i", "sum 1..100 = 5050", then the count printing continuously with LD4-LD7 counting in binary. All three first-light goals seen; photo in [img/fpgafirstlight.jpg](img/fpgafirstlight.jpg), which with the demo video in the README closes Phase D's photo box (the user's choice: it shows the board and the screens at first light) |
 | **CoreMark on the board** | 2026-10-17, 2000 iterations at **100 MHz** (`make prog` from WSL): **0.962 CoreMark/MHz, about 96 CoreMark**, "Correct operation validated", 2,077,692,270 cycles ([coremark_board.txt](reports/coremark_board.txt)); the 50 MHz run before the clock change gave the same cycles per iteration. **IPC 0.691** (CPI 1.447) over the timed region, counted in RTL simulation of the same SoC ([coremark_sim.txt](reports/coremark_sim.txt)); simulated cycles per iteration match the board's to 0.0013%. RV32I without M: every multiply and divide is a libgcc call |
 | **ILA on the board** | 2026-10-17, `make impl ILA=1` then `make ila` from WSL (Hardware Manager in batch through `hw_server`): 13 probes, 328 bits (pc and instruction of all four pipeline registers, EX/MEM ALU result, writeback, halt), depth 1024, core clock. First-light program: every EX→MEM→WB shift consistent, 227 stall cycles and 114 flush bubbles in the window ([ila_summary.txt](reports/ila_summary.txt), [ila_capture.csv](reports/ila_capture.csv)). ILA build (at 50 MHz, before the clock change): +2233 LUT, +3772 FF, +10 BRAM, WNS +4.162 ns ([summary_board_ila.txt](reports/summary_board_ila.txt)). CoreMark at 100 MHz with the ILA (WNS +1.066 ns), triggered on `core_state_transition`: stage shifts consistent, 881 retirements in 1023 cycles ([ila_coremark_summary.txt](reports/ila_coremark_summary.txt), [ila_coremark.csv](reports/ila_coremark.csv)) |
 | **Bootloader on the board** | 2026-10-18: `scripts/load.py sw/build/apps/echo.bin` loads 1760 bytes over the UART in about 0.2 s; the program echoes keys, returns to the bootloader on q, and `r` reruns it without resending. Changing the program needs no Vivado rebuild |
@@ -412,15 +412,14 @@ history, [formal-properties.md](formal-properties.md) and
 > `scripts/load.py sw/build/apps/<prog>.bin --term`. Programs live in
 > `sw/apps/`. CoreMark 0.962/MHz, IPC 0.691 (`make impl
 > FW_IMAGE=sw/build/coremark.hex`); ILA: `make impl ILA=1`, `make ila`.
-> The demo reel is done: `scripts/load.py sw/build/apps/demo.bin --term`.
-> **Next:** PuTTY screenshots of the demos and the board photo (Phase D's
-> last box), then Phase E (TMR).
+> The demo reel is done: `scripts/load.py sw/build/apps/demo.bin --term`;
+> its video is in the README. **Phase D is done (2026-10-18). Next: Phase E
+> (TMR + fault injection, then LibreLane run #1).**
 
 ### User requests to carry forward
 
-- **Before Phase E: the six interactive demos are built (2026-10-18,
-  `sw/demo/`); still to do: the user's PuTTY screenshots and board photo.**
-  Originally: a boot
+- **Done 2026-10-18: the six interactive demos** (`sw/demo/`), with the
+  user's video of them in PuTTY in the README. Originally: a boot
   banner/system info, Mandelbrot (fixed point vs software float, cycles
   each), digits of pi, Conway's Life (animated, LEDs show the generation),
   Tower of Hanoi, a prime sieve. User asked for interactive versions (the
@@ -543,7 +542,7 @@ that changed meaningful state.
 
 ---
 
-*Last updated: 2026-10-18 — six interactive demos (sw/demo/) checked in simulation and run on the board; UART receiver and serial bootloader, on the board at 100 MHz (WNS +0.948 ns); programs load over serial with no rebuild. Before that, 2026-10-17 — 100 MHz on the board: data memory accessed from
+*Last updated: 2026-10-18 — Phase D done (demo video in the README); six interactive demos (sw/demo/) checked in simulation and run on the board; UART receiver and serial bootloader, on the board at 100 MHz (WNS +0.948 ns); programs load over serial with no rebuild. Before that, 2026-10-17 — 100 MHz on the board: data memory accessed from
 EX (load data registered into MEM/WB), board WNS +1.550 ns at 100 MHz, OOC
 122.7 MHz; CoreMark 0.962/MHz (about 96) validated at 100 MHz, IPC
 unchanged. XT's harness follows stores into EX. ILA on the pipeline

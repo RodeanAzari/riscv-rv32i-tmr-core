@@ -28,8 +28,8 @@ This is a portfolio project. **Measured results matter as much as working RTL.**
 | A — Working core | DONE (2026-10-08) | 40/40 RV32I; riscv-tests rv32ui 40/42 (2 excluded, reasons in PROGRESS.md); 104.5 MHz OOC, 1107 LUT / 501 FF |
 | B — Formal verification | DONE (2026-10-17) | riscv-formal 46/46 (37 insn + reg/pc/unique/causal/liveness/hang/ill, BMC), each reached or shown to fail; all §5.5 properties (x0, stall, forwarding, branch flush, structural hazard, X propagation) by k-induction, plus a bounded X check with an undefined regfile; 2 bugs found that simulation missed |
 | C — UVM environment | DONE (2026-10-17) | XSim UVM + DPI-C C golden model; 205/205 functional coverage bins (100%), ~45k retirements/run checked, 0 mismatches; 3 planted RTL faults caught |
-| D — Hardware bring-up | IN PROGRESS | On the board at 100 MHz (WNS +0.948 ns, Fmax estimate 110.5 MHz); CoreMark 0.962/MHz (about 96 at 100 MHz), IPC 0.691; UART both ways, a serial bootloader and six interactive demos; ILA on the pipeline registers. Open: a better photo |
-| E — TMR + fault injection | NOT STARTED | — |
+| D — Hardware bring-up | DONE (2026-10-18) | On the board at 100 MHz (WNS +0.948 ns, Fmax estimate 110.5 MHz); CoreMark 0.962/MHz (about 96 at 100 MHz), IPC 0.691; UART both ways, a serial bootloader and six interactive demos (video in the README); ILA on the pipeline registers |
+| E — TMR + fault injection | IN PROGRESS | — |
 | F — Systolic array | NOT STARTED | — |
 | G — DMA + interconnect | NOT STARTED | — |
 | H — Integration + DFT | NOT STARTED | — |

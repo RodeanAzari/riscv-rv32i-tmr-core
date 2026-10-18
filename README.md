@@ -9,7 +9,7 @@ The project has two stages. Stage 1 is the CPU: verified, hardware-proven,
 then made fault-tolerant with triple modular redundancy (TMR) and taken through
 an open-source ASIC flow to GDSII. Stage 2 builds an SoC around it: an INT8
 systolic-array accelerator, a descriptor-based DMA and an AXI interconnect.
-**Stage 1 is done through Phase D; TMR (Phase E) is next.**
+**Stage 1 is done through Phase D; TMR (Phase E) is in progress.**
 
 Every number below is transcribed from a report committed in
 [`docs/reports/`](docs/reports/), produced by a `make` target, with its
@@ -48,8 +48,8 @@ to zoom in to individual LUTs and flip-flops.*
 | **1 — CPU** | A — Working core | **Done** |
 | | B — Formal verification | **Done** |
 | | C — UVM environment | **Done** |
-| | D — Hardware bring-up | **Running on the board**; one box open (a better photo) |
-| | E — TMR + fault injection, ASIC run #1 | Next |
+| | D — Hardware bring-up | **Done** |
+| | E — TMR + fault injection, ASIC run #1 | **In progress** |
 | **2 — SoC** | F — Systolic array | Not started |
 | | G — DMA + AXI interconnect | Not started |
 | | H — Integration + DFT, ASIC run #2 | Not started |
