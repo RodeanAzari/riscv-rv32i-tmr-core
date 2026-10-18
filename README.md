@@ -207,6 +207,10 @@ sits between the load and its use and forwarding covers it. Over this
 
 ## Interactive demos
 
+https://github.com/user-attachments/assets/613c0f44-95a8-44bf-8c4c-f08adaeafa4e
+
+*On the board, in PuTTY: the bootloader, then all six demos from the menu.*
+
 The board boots a serial bootloader, so any program loads in a fraction of
 a second without rebuilding the FPGA:
 
