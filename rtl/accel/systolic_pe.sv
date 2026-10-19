@@ -11,7 +11,9 @@
 // register shifts down the column (w_i from the PE above, w_o to the one
 // below) while w_shift_i is high, during the previous tile's compute, and
 // w_swap_i copies it into the active weight at the tile boundary. The active
-// weight takes effect on the cycle after w_swap_i.
+// weight takes effect on the cycle after w_swap_i. The swap is passed right
+// with the activation (w_swap_o, registered): in the array each PE then
+// switches exactly when the last row of the old tile has gone through it.
 module systolic_pe #(
     parameter int unsigned DATA_W = 8,
     parameter int unsigned ACC_W  = 32
@@ -25,12 +27,14 @@ module systolic_pe #(
     input  logic signed [DATA_W-1:0] w_i,
     output logic signed [DATA_W-1:0] w_o,
     input  logic                     w_shift_i,
-    input  logic                     w_swap_i
+    input  logic                     w_swap_i,
+    output logic                     w_swap_o
 );
 
   logic signed [DATA_W-1:0] w_shadow_q;
   logic signed [DATA_W-1:0] w_q;
   logic signed [DATA_W-1:0] a_q;
+  logic                     swap_q;
   logic signed [ACC_W-1:0]  psum_q;
   logic signed [2*DATA_W-1:0] prod;
   logic signed [ACC_W-1:0]  prod_ext;
@@ -45,17 +49,20 @@ module systolic_pe #(
       w_shadow_q <= '0;
       w_q        <= '0;
       a_q        <= '0;
+      swap_q     <= 1'b0;
       psum_q     <= '0;
     end else begin
       if (w_shift_i) w_shadow_q <= w_i;
       if (w_swap_i)  w_q        <= w_shadow_q;
       a_q    <= a_i;
+      swap_q <= w_swap_i;
       psum_q <= psum_i + prod_ext;
     end
   end
 
-  assign a_o    = a_q;
-  assign psum_o = psum_q;
-  assign w_o    = w_shadow_q;
+  assign a_o      = a_q;
+  assign psum_o   = psum_q;
+  assign w_o      = w_shadow_q;
+  assign w_swap_o = swap_q;
 
 endmodule

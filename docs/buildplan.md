@@ -315,8 +315,8 @@ A phase is done when **every** box is checked. No partial credit.
 - [x] Single PE verified exhaustively
 - [x] Python/NumPy GEMM golden model written **before** the RTL
 - [ ] 4×4 working, then parameterized to 16×16 (or 8×8 if DSP packing fails)
-- [ ] Bit-exact match against golden model across thousands of random matrices
-- [ ] Edge cases: non-multiple-of-16 matrices, saturation boundaries
+- [x] Bit-exact match against golden model across thousands of random matrices
+- [x] Edge cases: non-multiple-of-16 matrices, saturation boundaries
 - [ ] Synthesis report confirms expected DSP usage
 
 ### Phase G — DMA + interconnect

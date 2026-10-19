@@ -75,6 +75,9 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          uart_tx:test_uart_tx \
          uart_rx:test_uart_rx \
          systolic_pe:test_systolic_pe \
+         systolic_array:test_systolic_array \
+         systolic_array_16x16:test_systolic_array \
+         systolic_array_4x8:test_systolic_array \
          soc:test_soc \
          soc:test_coremark \
          soc:test_boot \
@@ -118,6 +121,13 @@ ifdef TEST_ONE
       endif
     endif
     COMPILE_ARGS        += -GINIT_FILE='"$(abspath $(REPO)/sw/build/$(SOC_IMAGE).hex)"'
+  endif
+  # systolic_array_<ROWS>x<COLS>: the array at another size than its default
+  # 4x4. The test reads the shape from the port widths.
+  ifneq ($(filter systolic_array_%,$(TOPLEVEL)),)
+    ARRAY_SHAPE         := $(subst x, ,$(patsubst systolic_array_%,%,$(TOPLEVEL)))
+    COMPILE_ARGS        += -GROWS=$(word 1,$(ARRAY_SHAPE)) -GCOLS=$(word 2,$(ARRAY_SHAPE))
+    TOPLEVEL            := systolic_array
   endif
   # The fault campaign breaks the pipeline's invariants on purpose, so the
   # core's in-RTL properties (FORMAL, --assert) would stop it at the first

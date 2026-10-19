@@ -87,6 +87,7 @@ async def test_exhaustive(dut):
             if got != want:
                 raise AssertionError(f"a={a} w={w} psum={psum}: psum_o {got}, model {want}")
             assert dut.a_o.value.to_signed() == a
+            assert dut.w_swap_o.value == int(ai == 255), "w_swap_o is not w_swap_i, registered"
             if ai == 100:
                 assert dut.w_o.value.to_signed() == nxt, "w_o is not the shadow weight"
             checked += 1
