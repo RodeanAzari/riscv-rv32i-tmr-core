@@ -15,7 +15,8 @@ then made fault-tolerant with triple modular redundancy (TMR) and taken through
 an open-source ASIC flow to GDSII. Stage 2 builds an SoC around it: an INT8
 systolic-array accelerator, a descriptor-based DMA and an AXI interconnect.
 **Stage 1 (Phases A–E) is done**: the CPU is verified, running on the
-board, fault-tolerant and taken to GDSII. Stage 2 is next.
+board, fault-tolerant and taken to GDSII. Stage 2 is under way: the
+systolic-array accelerator (Phase F) is built and verified on its own.
 
 Every number below is transcribed from a report committed in
 [`docs/reports/`](docs/reports/), produced by a `make` target, with its
@@ -42,11 +43,12 @@ and flip-flops. The single core's floorplan, from Phase D, is
 | **IPC** | 0.691 on CoreMark (CPI 1.447), counted in RTL simulation of the same SoC; it matches the board's cycle count to 0.0013% |
 | **Size** | 966 LUT, 467 FF (core alone); 1123 LUT, 435 FF, 8 BRAM (whole SoC on the board): under 2% of the chip. TMR: 3446 LUT, 1621 FF on the board |
 | **Fault tolerance** | Three voted copies with feedback; voter formally proven; **10,000 random single-bit faults, 0 failures**, every detected fault corrected and the copies back in step; **live on the board**, 250,971 faults injected over 133 runs of one computation, all outvoted, every run the same answer and the same cycle count |
+| **Accelerator** | A 16×16 INT8 weight-stationary systolic array, **two multiply-accumulates per DSP slice**: 256 MACs on 128 DSP48E1, 7,681 LUT, 104.5 MHz (array alone, out of context); bit-exact against a NumPy golden model written first, on 5,000 GEMMs at three array sizes. Not yet connected to the core (Phases G and H) |
 | **As a chip** | The core through LibreLane to GDSII on Sky130 (130 nm): 0.23 mm² die, 13,853 cells, **DRC and LVS clean**, timing met at all 9 corners at 35 ns, **31.7 MHz worst case** (slow silicon, 100 °C, 1.60 V), 50.6 MHz typical |
 | **Formal** | riscv-formal **46/46 checks**; the pipeline's hazard, forwarding, flush, reset and X-propagation properties proven by k-induction; every check shown reachable, and the consistency checks shown to fail on planted bugs |
 | **Bugs formal caught that simulation missed** | **2**, both of which would have broken the ASIC (below) |
 | **UVM** | **205/205** functional coverage bins (100%); ~45,000 retirements per run compared with a C golden model, 0 mismatches |
-| **Simulation** | 308/308 cocotb tests, including the official `riscv-tests` suite (40/42; the 2 exclusions are explained) |
+| **Simulation** | 320/320 cocotb tests, including the official `riscv-tests` suite (40/42; the 2 exclusions are explained) |
 | **Interactive** | A serial bootloader: programs load over the UART in a fraction of a second, no FPGA rebuild; seven interactive demos, one of them injecting faults into the running TMR core |
 | **CI** | Lint, simulation and formal on every push |
 
@@ -59,7 +61,7 @@ and flip-flops. The single core's floorplan, from Phase D, is
 | | C — UVM environment | **Done** |
 | | D — Hardware bring-up | **Done** |
 | | E — TMR + fault injection, ASIC run #1 | **Done** |
-| **2 — SoC** | F — Systolic array | Not started |
+| **2 — SoC** | F — Systolic array | **Done** (on its own; joined to the core in H) |
 | | G — DMA + AXI interconnect | Not started |
 | | H — Integration + DFT, ASIC run #2 | Not started |
 
@@ -142,7 +144,7 @@ model (via DPI-C) on every RVFI retirement. **205/205 coverage bins** from
 run, 0 mismatches. Three planted RTL bugs (wrong forwarding priority, LBU
 sign-extending, a missing load-use stall) are each caught.
 
-**Simulation** (`make sim`, cocotb on Verilator): **308/308 tests**. Unit
+**Simulation** (`make sim`, cocotb on Verilator): **320/320 tests**. Unit
 tests for every module; random programs with every retirement checked against
 a Python golden model; the official **`riscv-tests` rv32ui suite, 40 of 42**
 (`fence_i` needs the Zifencei extension; `ma_data` expects misaligned
@@ -152,7 +154,7 @@ program bit by bit on the RX pin; and each of the seven demos below, its output
 checked against an independent Python model. The core's tests and the SoC's
 first-light, CoreMark and bootloader tests run again on the TMR core, which
 must also report zero mismatches, and 1,000 injected faults must change
-nothing.
+nothing. The systolic array's tests are in the same regression (below).
 
 **On the hardware**: an Integrated Logic Analyzer on the pipeline registers,
 captured from the running chip and checked by script (below).
@@ -218,6 +220,43 @@ What it costs, same RTL, same conditions:
 | Core alone, out of context | 966 LUT, 120.4 MHz | 3690 LUT, 101.4 MHz | 3.8x, −15.8% |
 
 The TMR build includes the mismatch counter and the live injector.
+
+## Systolic array (Phase F)
+
+A weight-stationary INT8 array ([`rtl/accel/`](rtl/accel/)): each PE holds
+one weight, activations stream left to right and partial sums flow down, so
+a 16×16 array does 256 multiply-accumulates a cycle. A row of A goes in as
+one vector and its results come out as one vector 23 cycles later; the
+array skews and deskews internally. Weights are double-buffered, so the next
+tile loads while the current one computes.
+
+**Golden model first.** [`sw/model/gemm_model.py`](sw/model/gemm_model.py)
+was written before any RTL: INT8 GEMM with INT32 accumulation, a
+cycle-by-cycle model of the array, the DSP packing and the requantization
+(per-column fixed-point scale, round half away from zero, saturate to INT8).
+It checks itself against plain Python integers and exact fractions
+(`make gemm-model`, run first by `make sim`).
+
+**Two MACs per DSP.** 16×16 is 256 multiplies; the Artix-7 has 240 DSP
+slices. Two neighbouring PEs see the same activation, so one 25 × 18 DSP
+multiply by the packed weight w0 + w1·2¹⁶ gives both products: a·w0 in the
+low 16 bits, a·w1 above them plus the low lane's borrow. (Spacing 17 would
+overflow the 25-bit port at w1 = −128, w0 < 0.) The sums stay in fabric: a
+16-bit lane cannot hold a column's total.
+
+| 16×16 array, alone, out of context, 100 MHz constraint | LUT | DSP | Fmax |
+|---|---|---|---|
+| Vivado's default: every MAC in LUT fabric | 28,545 (45%) | 0 | 104.6 MHz |
+| One DSP per PE (synthesis only) | — | 256 of 240: does not fit | — |
+| **Two MACs per DSP** ([report](docs/reports/summary_ooc_array16x16.txt)) | **7,681 (12%)** | **128** (53%) | **104.5 MHz** |
+
+**Verification**, all against the golden model: one PE on all 65,536
+(activation, weight) pairs; the DSP-packed pair on each lane's 65,536 with
+the other lane at its extremes (the packing itself, for all 16.7 million
+(a, w0, w1), in the model); the whole array at 4×4, 16×16 and 4×8 on 5,000
+random GEMMs (multiples of the array and not), edge shapes and saturating
+values, every element bit-exact and every row's latency exact. Planted bugs
+in the skew, the deskew, the weight swap and the lane split are each caught.
 
 ## On the board
 
@@ -388,14 +427,14 @@ rows. The per-slice trends (what each feature cost in LUTs and MHz) are in
 | TMR: faults injected live on the board / effect | 250,971 pc flips over 133 sieves; all detected; answer and cycle count unchanged in every one | [tmr_inject_board.txt](docs/reports/tmr_inject_board.txt) |
 | TMR: area overhead / Fmax penalty (board) | 3.1x LUT, 3.7x FF / −8.7% (still meets 100 MHz) | [summary_board_tmr.txt](docs/reports/summary_board_tmr.txt) |
 
-**Stage 2 — SoC.** Not started.
+**Stage 2 — SoC.** Phase F (the array, on its own) done.
 
 | Metric | Value |
 |---|---|
-| GOPS (INT8) at achieved Fmax | — |
-| **Measured** PE utilization | — |
-| Speedup vs. software matmul | — |
-| DSP slices used vs. LUT-fabric MACs | — |
+| GOPS (INT8) at achieved Fmax | — (Phase H, measured on the board) |
+| **Measured** PE utilization | — (Phase H) |
+| Speedup vs. software matmul | — (Phase H) |
+| DSP slices used vs. LUT-fabric MACs, 16×16 array alone, out of context | 128 DSP + 7,681 LUT (two MACs per DSP) vs. 0 DSP + 28,545 LUT (all in fabric); 104.5 / 104.6 MHz ([summary_ooc_array16x16.txt](docs/reports/summary_ooc_array16x16.txt)) |
 | AXI outstanding depth / measured throughput | — |
 | SVA properties proven on AXI interfaces | — |
 
@@ -462,12 +501,14 @@ scripts in `syn/`; no project directory is ever committed.
 | Target | Does |
 |---|---|
 | `make lint` | Verilator lint of `rtl/`, zero warnings |
-| `make sim` | cocotb regression on Verilator, 308 tests |
+| `make sim` | The GEMM golden model's self-check, then the cocotb regression on Verilator, 320 tests |
 | `make formal` | SymbiYosys properties and riscv-formal, checks and covers |
 | `make uvm` | UVM regression in XSim (`SEED`, `PROGRAMS`, `COV_MIN`) |
 | `make model-test` | The C golden model alone on rv32ui |
 | `make synth` | Out-of-context synth **and** place & route of the core and of the TMR core, reports to `docs/reports/` |
 | `make faults` | The TMR fault-injection campaign (10,000 trials) |
+| `make gemm-model` | The systolic array's golden model, checked on its own |
+| `make synth-array` | The systolic array alone, out of context, synth and place & route (`ARRAY=16x16`) |
 | `make fw` / `make bench` | First-light firmware / CoreMark images |
 | `make boot` / `make apps` | The serial bootloader (the default bitstream image) / programs and the demo reel for it |
 | `scripts/load.py <bin> [--term]` | Send a program to the board and, with `--term`, talk to it |
@@ -489,12 +530,13 @@ its reports are committed with the RTL that produced them.
 |---|---|
 | `rtl/core/` | The pipeline: `riscv_core`, decoder, ALU, branch unit, hazard unit, load/store alignment, register file |
 | `rtl/tmr/` | The 2-of-3 voter and the triplicated core |
+| `rtl/accel/` | The systolic array, its DSP-packed PE pairs, and the single-PE reference |
 | `rtl/periph/` | UART transmitter and receiver |
 | `rtl/top/` | The SoC (`soc.sv`), its RAM, and the Arty A7 top (clocking, reset, pins, optional ILA) |
 | `tb/cocotb/` | Python testbenches and the Python golden model |
 | `tb/uvm/` | UVM environment (XSim), DPI-C bridge to the C model |
 | `tb/formal/` | SymbiYosys jobs, harnesses, riscv-formal config (submodule) |
-| `sw/model/` | C golden model (ISS) |
+| `sw/model/` | C golden model (ISS); the systolic array's NumPy golden model |
 | `sw/boot/`, `sw/app/`, `sw/lib/` | The serial bootloader; startup and linker script for the programs it loads; their console library |
 | `sw/demo/`, `sw/apps/` | The demo reel; small programs (e.g. `echo`) |
 | `sw/firstlight/`, `sw/coremark-port/` | Bare-metal firmware and the CoreMark port (CoreMark itself is a submodule) |
@@ -506,10 +548,11 @@ its reports are committed with the RTL that produced them.
 
 ## Roadmap
 
-- **Stage 2 — the SoC.** An INT8 systolic array (measured GOPS and PE
-  utilisation, speedup over software matmul), a descriptor-based DMA, an AXI
-  interconnect with formally proven interfaces, scan insertion, and a second
-  ASIC run of the whole SoC.
+- **Stage 2 — the rest of the SoC.** A descriptor-based DMA and an AXI
+  interconnect with formally proven interfaces (Phase G); then the core
+  driving the array on the board, with measured GOPS, PE utilisation and
+  speedup over software matmul, scan insertion, and a second ASIC run of the
+  whole SoC (Phase H).
 - **After everything else: Doom.** Once Stage 2 ships, build what the SoC lacks
   to play Doom on the Arty: DDR3 with a cache, the game data from flash, a VGA
   framebuffer, and the M extension, measured in frames per second.

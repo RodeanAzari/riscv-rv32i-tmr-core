@@ -30,7 +30,7 @@ This is a portfolio project. **Measured results matter as much as working RTL.**
 | C — UVM environment | DONE (2026-10-17) | XSim UVM + DPI-C C golden model; 205/205 functional coverage bins (100%), ~45k retirements/run checked, 0 mismatches; 3 planted RTL faults caught |
 | D — Hardware bring-up | DONE (2026-10-18) | On the board at 100 MHz (WNS +0.948 ns, Fmax estimate 110.5 MHz); CoreMark 0.962/MHz (about 96 at 100 MHz), IPC 0.691; UART both ways, a serial bootloader and six interactive demos (video in the README); ILA on the pipeline registers |
 | E — TMR + fault injection | DONE (2026-10-18) | Three voted copies with feedback (three survive synthesis); voter formally proven; 10,000 single-bit faults, 0 failures, all detected faults corrected and recovered; 100 MHz on the board, 3.1x LUT, Fmax −8.7%; live injector on the board: 250,971 pc flips over 133 runs, same answer, same cycles; LibreLane run #1 (Sky130): DRC/LVS clean, timing met at all 9 corners at 35 ns, 31.7 MHz worst case, 119,277 µm² of cells |
-| F — Systolic array | NOT STARTED | — |
+| F — Systolic array | DONE (2026-10-18) | 16×16 INT8 weight-stationary, two MACs per DSP48E1: 128 DSP, 7,681 LUT, 104.5 MHz OOC; NumPy golden model first; bit-exact on 5,000 GEMMs at 4×4/16×16/4×8, PE and packed pair exhaustive. Not yet joined to the core (H) |
 | G — DMA + interconnect | NOT STARTED | — |
 | H — Integration + DFT | NOT STARTED | — |
 
