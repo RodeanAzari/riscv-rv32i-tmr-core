@@ -130,7 +130,7 @@ foreach {label group total} [list \
         LUT   LUT         [get_property LUT_ELEMENTS $dev] \
         FF    FLOP_LATCH  [get_property FLIPFLOPS    $dev] \
         BRAM  BMEM        [get_property BLOCK_RAMS   $dev] \
-        DSP   ARITHMETIC  [get_property DSP          $dev] \
+        DSP   MULT        [get_property DSP          $dev] \
         CARRY CARRY       0] {
     set used [llength [get_cells -hier -filter "PRIMITIVE_GROUP == $group"]]
     dict set util $label [list $used $total]
