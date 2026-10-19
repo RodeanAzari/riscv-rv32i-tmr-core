@@ -581,10 +581,17 @@ history, [formal-properties.md](formal-properties.md) and
 > exists. The single PE is done and verified exhaustively
 > (`rtl/accel/systolic_pe.sv`). The 16×16 array packs two MACs per DSP: 128 DSP,
 > 7,681 LUT, 104.5 MHz out of context (`make synth-array`). Every Phase F
-> box is checked, `make sim` is 320/320, the README has Phase F. **Next:**
-> the user's Vivado screenshot set for the array (a Stage 2 milestone:
-> `docs/img/vivado/phase-f/`), then Phase G (ask for the user's DMA
-> interface first, see below).
+> box is checked, `make sim` is 320/320, the README has Phase F. **Next
+> (agreed for 2026-10-19): the Vivado screenshot set of the array**, then
+> Phase G (ask for the user's DMA interface first, see below). First add
+> `make gui VIEW=array` (open `syn/build/array16x16/post_route.dcp`, colour
+> by array row, worst path, tabs). Shots into `docs/img/vivado/phase-f/`:
+> device.png (whole die, by row, used DSP sites), device-dsp.png (one DSP
+> column: DSPs + the lane-split/adder slices beside them),
+> worstpathdevice.png + worstpath.png, timing.png, utilization-hierarchy.png
+> (16 rows × 8 pairs, one DSP each), pair-schematic.png (one pair routed:
+> the DSP48E1 with the packed weight in its A register, lane split, two
+> adders), rtl-schematic-pair.png; optional, the DSP's properties (AREG = 1).
 
 ### User requests to carry forward
 
