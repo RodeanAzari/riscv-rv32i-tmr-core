@@ -50,6 +50,7 @@ the local GCC 16.
 | **GEMM golden model** (Phase F) | 2026-10-18, before any RTL: `sw/model/gemm_model.py`, `make gemm-model` (run first by `make sim`): INT8 GEMM with INT32 wraparound, a cycle-level weight-stationary array (feeder pads zeros; row m leaves column c's bottom at cycle m + ROWS − 1 + c), and requantization. 1,449 checks: PE exhaustive (65,536 pairs × 4 psums), gemm against plain Python ints, the array against gemm on 1,320 shapes at 4×4, 8×8, 16×16, 4×8, 8×4, saturation boundaries, INT32 wraparound at K = 131,073, requantization against exact fractions (ties, extremes). Four planted model bugs each caught. ~22 s |
 | **Systolic PE** (Phase F) | 2026-10-18: `rtl/accel/systolic_pe.sv`, INT8 × INT8 + INT32 psum, activation registered right, psum registered down; weights double-buffered (a shadow register shifts down the column while the current tile computes, `w_swap_i` makes it active the next cycle). `systolic_pe:test_systolic_pe`: all 65,536 (activation, weight) pairs back to back against `gemm_model.pe`, psums at 0, ±1, both INT32 limits and random, weight swaps with no idle cycle; reset test. Two planted bugs caught (using the shadow weight early; zero- instead of sign-extending the product). In `make lint` as its own top. ~6 s |
 | **Systolic array** (Phase F) | 2026-10-18: `rtl/accel/systolic_array.sv`, ROWS × COLS PEs (default 4×4): input skew (row r delayed r cycles) and output deskew (column c delayed COLS − 1 − c), so a row of A goes in as one vector and its results come out as one vector LATENCY = ROWS + COLS − 1 edges later, with `valid_o`. The weight swap rides with the data (PE `w_swap_o`), so each PE switches right after the tile's last row passes it; the shadows must hold until it reaches the last PE (ROWS + COLS − 2 cycles). Edge padding and summing tiles along K are the feeder's and output buffer's (Phase G/H); the test plays both. `test_systolic_array` at **4×4, 16×16 and 4×8**: 2,000 / 1,000 / 2,000 random GEMMs (shapes up to 3× the array, multiples and not), 9 edge shapes (1×1×1, one past and one short of a tile, …), 5 saturation jobs (every product ±16,384 or −16,256, alternating extremes); every element matches `gemm_model.gemm`, every row arrives exactly LATENCY edges after it entered. Four planted bugs caught (input skew, output deskew, broadcast swap, swap dropped below row 0). ~5 s / 39 s / 14 s. Not yet run in the full `make sim` regression (the 308/308 count above predates Phase F) |
+| **PE pair, two MACs per DSP** (Phase F) | 2026-10-18: `rtl/accel/systolic_pe_pair.sv`, columns 2p and 2p + 1 on one DSP48E1: the swap packs the two shadow weights into w0 + w1·2^16 (the DSP's A register), one multiply by the shared activation, lanes split in fabric (low 16 bits signed; upper field plus the low lane's borrow) and added to the two psums. The model's `pack_weights`/`unpack_lanes` check every (a, w0, w1), 16,777,216 of them. `test_systolic_pe_pair`: each lane through all 65,536 (activation, weight) pairs with the other lane's weight at −128, −1, 0, 1, 127 (655,360 cycles, both lanes against `gemm_model.pe`). Two planted bugs caught (borrow dropped, low lane zero-extended). The array now uses pairs (COLS must be even; LATENCY = ROWS + COLS/2 − 1, 23 at 16×16); `test_systolic_array` passes again at 4×4, 16×16, 4×8, and a planted odd-column deskew bug is caught. `systolic_pe` stays as the single-PE reference, tested, not instantiated. ~36 s |
 | CI on push | green (lint + sim + formal, 308/308 in one regression, on `ubuntu-24.04`) at `33e251a`, run 39162134462 (main fast-forwarded to it 2026-10-18) |
 
 ### Implemented, and what to know before touching it
@@ -312,10 +313,20 @@ Append-only.
 | Date | Array | MAC mapping | LUT | FF | DSP | CARRY4 | WNS (ns) | Fmax (MHz) |
 |---|---|---|---|---|---|---|---|---|
 | 2026-10-18 | 16×16 | Vivado's choice: **all 256 MACs in LUT fabric**, 0 DSP | 28,545 (45.0%) | 13,095 | 0 | 4,672 | +0.436 | 104.6 |
+| 2026-10-18 | 16×16 | **two MACs per DSP48E1** (`systolic_pe_pair`, `use_dsp` on the product only) | 7,681 (12.1%) | 9,966 | **128** (53.3%) | 2,632 | +0.431 | 104.5 |
 
 **Vivado did not infer DSPs** (buildplan §9: "DSP inference failure"): the
 8 × 8 multiplies went to LUTs, about 111 LUTs per MAC. It fits and meets
 100 MHz, but takes 45% of the LUTs before the DMA, interconnect and core.
+With `use_dsp` and one DSP per PE (synthesis only, exploratory, not
+committed): 8×8 used 64 DSP and 153 LUT; 16×16 needed 256 DSP of 240 and
+does not fit. So, decided with the user: **two PEs per DSP**. Neighbouring
+columns share the activation, so one 25 × 18 multiply by w0 + w1·2^16 gives
+both products (spacing 16: 2^17 overflows the 25-bit A port at w1 = −128,
+w0 < 0); the sums stay in fabric (a 16-bit lane cannot hold them). 128 DSP,
+LUTs down 73% at the same Fmax. `use_dsp` on the whole module first gave
+256 DSPs: the packing adder, which runs only at a swap, took a DSP of its
+own; on the product signal alone it is one DSP per pair.
 
 ## ASIC (LibreLane + Sky130, CLAUDE.md §6.4)
 
@@ -568,12 +579,11 @@ history, [formal-properties.md](formal-properties.md) and
 > the RTL: a 32×32 requant multiplier per column costs ~4 DSP48E1 each, on
 > top of the array's 128 (packed); decide sharing vs. width when the array
 > exists. The single PE is done and verified exhaustively
-> (`rtl/accel/systolic_pe.sv`). The array is done and verified at 4×4, 16×16 and
-> 4×8 (`rtl/accel/systolic_array.sv`). **Next:** synthesis of the array
-> (`make synth`-style OOC run) for the DSP count: 16×16 is 256 multiplies on
-> 240 DSP48E1; if Vivado does not pack or the array does not fit, try a
-> two-column PE that packs two weights per DSP, else drop to 8×8 (buildplan
-> 6.1). Then the full `make sim` regression and its new test count.
+> (`rtl/accel/systolic_pe.sv`). The 16×16 array packs two MACs per DSP: 128 DSP,
+> 7,681 LUT, 104.5 MHz out of context (`make synth-array`). Every Phase F
+> box is checked. **Next:** the full `make sim` regression for the new test
+> count, the README's Phase F results, and the user's Vivado screenshot set
+> for the array (a Stage 2 milestone: `docs/img/vivado/phase-f/`).
 
 ### User requests to carry forward
 

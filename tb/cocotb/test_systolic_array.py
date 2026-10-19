@@ -5,11 +5,12 @@ which splits a job into ROWS x COLS tiles of W, pads the edges with zeros and
 streams A row by row, and the output buffer, which sums the tiles along K.
 Every result is checked against gemm_model.gemm (sw/model/gemm_model.py, in
 turn checked against the model's cycle-level array), and every row's results
-must arrive exactly LATENCY = ROWS + COLS - 1 edges after the row went in.
+must arrive exactly LATENCY = ROWS + COLS/2 - 1 edges after the row went in
+(the PEs come in pairs, which see the activation in the same cycle).
 
 Weights load the way the double buffering allows: the next tile's rows shift
 into the shadow registers while the current tile streams, as soon as the
-previous swap has reached the last PE; the swap rides on the current tile's
+previous swap has reached the last pair; the swap rides on the current tile's
 last row when the load has finished by then, otherwise on an idle cycle
 after it. Jobs run back to back without a reset, so tile and job boundaries
 are exercised hundreds of times. The array shape comes from the port widths,
@@ -68,8 +69,8 @@ def schedule(jobs, rows, cols):
                 kk, nn = min(rows, k - k0), min(cols, n - n0)
                 tile[:kk, :nn] = w[k0:k0 + kk, n0:n0 + nn]
                 # Shift this tile into the shadows, bottom row first, once
-                # the previous swap has passed the last PE.
-                ls = max(last_swap + rows + cols - 1, 0)
+                # the previous swap has passed the last pair.
+                ls = max(last_swap + rows + cols // 2 - 1, 0)
                 for i in range(rows):
                     e = at(ls + i)
                     e["shift"] = 1
@@ -97,7 +98,7 @@ def schedule(jobs, rows, cols):
 async def run_jobs(dut, jobs, rows, cols):
     """Drive the jobs through the array; return per-job results and cycles."""
     cycles, owners = schedule(jobs, rows, cols)
-    latency = rows + cols - 1
+    latency = rows + cols // 2 - 1
     results = [np.zeros((a.shape[0], w.shape[1]), dtype=np.int64) for a, w in jobs]
     outs = []
     for t in range(len(cycles) + latency):

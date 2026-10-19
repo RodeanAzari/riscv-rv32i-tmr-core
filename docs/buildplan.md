@@ -314,10 +314,10 @@ A phase is done when **every** box is checked. No partial credit.
 ### Phase F — Systolic array
 - [x] Single PE verified exhaustively
 - [x] Python/NumPy GEMM golden model written **before** the RTL
-- [ ] 4×4 working, then parameterized to 16×16 (or 8×8 if DSP packing fails)
+- [x] 4×4 working, then parameterized to 16×16 (or 8×8 if DSP packing fails)
 - [x] Bit-exact match against golden model across thousands of random matrices
 - [x] Edge cases: non-multiple-of-16 matrices, saturation boundaries
-- [ ] Synthesis report confirms expected DSP usage
+- [x] Synthesis report confirms expected DSP usage
 
 ### Phase G — DMA + interconnect
 - [ ] AXI4-Lite control interface

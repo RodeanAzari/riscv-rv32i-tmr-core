@@ -60,6 +60,7 @@ lint:
 	verilator --lint-only -Wall --top-module riscv_core_tmr -DRISCV_FORMAL -DFORMAL $(RTL)
 	verilator --lint-only -Wall --top-module systolic_pe $(RTL)
 	verilator --lint-only -Wall --top-module systolic_array $(RTL)
+	verilator --lint-only -Wall --top-module systolic_pe_pair $(RTL)
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim

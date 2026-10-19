@@ -21,6 +21,17 @@ Dataflow, weight-stationary, on an array of ROWS x COLS PEs:
     its sum for column c leaves the bottom row at the end of cycle
     m + (ROWS - 1) + c. A tile takes M + ROWS + COLS - 2 cycles.
   - Results outside C are not written; tiles along K are summed (INT32).
+  The RTL pairs columns 2p and 2p + 1 on one DSP (below), which see the
+  activation in the same cycle: the same sums, column c reaching the bottom
+  at m + (ROWS - 1) + c // 2 instead.
+
+Two PEs per DSP48E1 (the array's columns 2p and 2p + 1 share one): both
+multiply the same activation, so one 25 x 18 multiply of a by the packed
+weight w0 + w1 * 2^16 gives both products, a * w0 in the low 16 bits (signed)
+and a * w1 above them, plus 1 if the low lane is negative (its sign borrowed
+from the upper lane). Spacing 16, not 17: w0 + w1 * 2^17 leaves the 25-bit
+signed range when w1 = -128 and w0 < 0. pack_weights() and unpack_lanes()
+are that arithmetic; the self-check runs every (a, w0, w1).
 
 Requantization to INT8, per output column n, with mult[n] in [0, 2^31) and
 shift[n] in [0, 31]:
@@ -43,6 +54,22 @@ def wrap32(x):
 def pe(a, w, psum):
     """One PE: psum + w * a, wrapped to INT32."""
     return int(wrap32(psum + w * a))
+
+
+PACK_SHIFT = 16
+
+
+def pack_weights(w0, w1):
+    """The packed DSP operand for a pair of INT8 weights: w0 + w1 * 2^16."""
+    return np.asarray(w0, dtype=np.int64) + (np.asarray(w1, dtype=np.int64) << PACK_SHIFT)
+
+
+def unpack_lanes(p):
+    """(a * w0, a * w1) from the product p = a * pack_weights(w0, w1)."""
+    p = np.asarray(p, dtype=np.int64)
+    low = p & ((1 << PACK_SHIFT) - 1)
+    neg = low >> (PACK_SHIFT - 1)
+    return low - (neg << PACK_SHIFT), (p >> PACK_SHIFT) + neg
 
 
 def gemm(a, w):
@@ -130,6 +157,19 @@ def main():
                for ra, rw in zip(av.tolist(), wv.tolist())], cases)
     check("pe exhaustive", [pe(-128, -128, 2**31 - 1), pe(127, -128, -2**31)],
           [-2**31 + 16383, 2**31 - 16256], cases)
+
+    # Packing: every (a, w0, w1), the packed operand within 25 bits signed
+    # and both lanes exact.
+    v = np.arange(-128, 128, dtype=np.int64)
+    w0, w1 = np.meshgrid(v, v, indexing="ij")
+    packed = pack_weights(w0, w1)
+    check("packed operand fits 25 bits signed",
+          [packed.min() >= -2**24, packed.max() < 2**24], [True, True], cases)
+    for a in v:
+        lo, hi = unpack_lanes(a * packed)
+        if not (np.array_equal(lo, a * w0) and np.array_equal(hi, a * w1)):
+            sys.exit(f"FAIL packing: a = {a}")
+    cases["packing, every (a, w0, w1)"] = 256 ** 3
 
     # gemm against plain Python integers.
     for _ in range(200):

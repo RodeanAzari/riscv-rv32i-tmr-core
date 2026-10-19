@@ -75,6 +75,7 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          uart_tx:test_uart_tx \
          uart_rx:test_uart_rx \
          systolic_pe:test_systolic_pe \
+         systolic_pe_pair:test_systolic_pe_pair \
          systolic_array:test_systolic_array \
          systolic_array_16x16:test_systolic_array \
          systolic_array_4x8:test_systolic_array \
