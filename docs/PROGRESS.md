@@ -301,6 +301,22 @@ critical path is copy → mismatch compare → its register: the compare tree
 is deep. Counting from mismatch_o directly made the counter's enable the
 critical path (OOC −0.386 ns); registering it first gave +0.126.
 
+## Systolic array synthesis (Phase F)
+
+`make synth-array ARRAY=<rows>x<cols>`: `rtl/accel/systolic_array.sv` alone,
+out of context, synth + place + route, part `xc7a100tcsg324-1`, 10.000 ns
+constraint, from `docs/reports/summary_ooc_array<rows>x<cols>.txt`. LUT/FF
+are cell counts, as in the synthesis trend. The device has 240 DSP48E1.
+Append-only.
+
+| Date | Array | MAC mapping | LUT | FF | DSP | CARRY4 | WNS (ns) | Fmax (MHz) |
+|---|---|---|---|---|---|---|---|---|
+| 2026-10-18 | 16×16 | Vivado's choice: **all 256 MACs in LUT fabric**, 0 DSP | 28,545 (45.0%) | 13,095 | 0 | 4,672 | +0.436 | 104.6 |
+
+**Vivado did not infer DSPs** (buildplan §9: "DSP inference failure"): the
+8 × 8 multiplies went to LUTs, about 111 LUTs per MAC. It fits and meets
+100 MHz, but takes 45% of the LUTs before the DMA, interconnect and core.
+
 ## ASIC (LibreLane + Sky130, CLAUDE.md §6.4)
 
 Separate from every FPGA table (§10: different targets, never one table).

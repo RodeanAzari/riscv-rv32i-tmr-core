@@ -277,6 +277,14 @@ synth:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_core_tmr
 
+# The systolic array alone, out of context (Phase F): ARRAY=<rows>x<cols>.
+# Reports docs/reports/*_ooc_array<rows>x<cols>.*, with the DSP count.
+ARRAY ?= 16x16
+.PHONY: synth-array
+synth-array:
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART) systolic_array $(subst x, ,$(ARRAY))
+
 # --- TMR fault injection ---------------------------------------------------
 # The documented campaign (CLAUDE.md 5.7): FAULTS random single-bit flips into
 # the TMR core, each in a fresh random program, judged against the golden

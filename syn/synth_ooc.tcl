@@ -1,12 +1,14 @@
-# Out-of-context synthesis and implementation of riscv_core on its own, or of
-# the TMR core (three voted copies, rtl/tmr/riscv_core_tmr.sv).
+# Out-of-context synthesis and implementation of riscv_core on its own, of
+# the TMR core (three voted copies, rtl/tmr/riscv_core_tmr.sv), or of the
+# systolic array at a given size (rtl/accel/systolic_array.sv, Phase F).
 #
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> [riscv_core_tmr]
+#   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> systolic_array <rows> <cols>
 #
 # Reports: docs/reports/*_ooc.* for the core, *_ooc_tmr.* for the TMR core,
 # which also gets a per-hierarchy utilization report and a check that three
 # copies survived synthesis (CLAUDE.md 5.7: Vivado merges identical logic
-# unless told not to).
+# unless told not to), *_ooc_array<rows>x<cols>.* for the array.
 #
 # Why out-of-context: the core's ports (imem_*, if_id_*) are internal signals
 # that will connect to BRAM and downstream stages, not package pins. In-context
@@ -26,8 +28,18 @@ set top     [lindex $argv 1]
 if {$top eq ""} { set top riscv_core }
 set tmr     [expr {$top eq "riscv_core_tmr"}]
 set sfx     [expr {$tmr ? "_ooc_tmr" : "_ooc"}]
+set sub     [expr {$tmr ? "tmr" : ""}]
+set generics {}
+set title    $top
+if {$top eq "systolic_array"} {
+    lassign [lrange $argv 2 3] rows cols
+    set sfx      "_ooc_array${rows}x${cols}"
+    set sub      "array${rows}x${cols}"
+    set generics [list -generic ROWS=$rows -generic COLS=$cols]
+    set title    "$top ${rows}x${cols}"
+}
 set repo    [file normalize [file join [file dirname [info script]] ..]]
-set rundir  [file join $repo syn build [expr {$tmr ? "tmr" : ""}]]
+set rundir  [file join $repo syn build $sub]
 set reports [file join $repo docs reports]
 
 file mkdir $rundir $reports
@@ -51,7 +63,7 @@ if {[llength $sv] == 0} {
 read_verilog -sv $sv
 read_xdc [file join $repo constr core_ooc.xdc]
 
-synth_design -top $top -part $part -mode out_of_context
+synth_design -top $top -part $part -mode out_of_context {*}$generics
 
 # A module Vivado cannot find becomes a black box with a critical warning and
 # the run completes, producing a utilization report for a design with a hole in
@@ -122,7 +134,7 @@ foreach {label group total} [list \
 set fh [open [file join $reports summary$sfx.txt] w]
 foreach out [list stdout $fh] {
     puts $out ""
-    puts $out "=== $top, out-of-context, post-route ==="
+    puts $out "=== $title, out-of-context, post-route ==="
     puts $out [format "part            %s" $part]
     puts $out [format "constraint      %.3f ns (%.1f MHz)" $period [expr {1000.0/$period}]]
     puts $out [format "WNS             %.3f ns" $wns]
