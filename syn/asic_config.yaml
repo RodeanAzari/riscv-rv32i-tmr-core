@@ -14,11 +14,13 @@ CLOCK_PORT: clk_i
 # elaborates only DESIGN_NAME's hierarchy.
 USE_SLANG: true
 
-# 25 ns (40 MHz): a first target to get a clean run; the post-layout slack
-# then says how far it can be tightened. Inputs arrive and outputs must be
-# ready 20% of the period from the edge (LibreLane's default
-# IO_DELAY_CONSTRAINT): the memories sit outside the block.
-CLOCK_PERIOD: 25
+# 35 ns (28.6 MHz). Inputs arrive and outputs must be ready 20% of the
+# period from the edge (LibreLane's default IO_DELAY_CONSTRAINT): the
+# memories sit outside the block. The first target, 25 ns, met timing at
+# typical but failed at max_ss by 4.68 ns on the fetch-address output
+# (imem_addr_o), i.e. it needed 29.7 ns with a 5 ns output delay; at 35 ns
+# the output delay grows to 7 ns, leaving about 3 ns of margin.
+CLOCK_PERIOD: 35
 
 FP_CORE_UTIL: 40
 

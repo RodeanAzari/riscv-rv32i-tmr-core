@@ -312,7 +312,8 @@ Append-only.
 | Date | Run | Clock | Die µm² | Std-cell µm² (util) | Cells (seq) | Setup WS worst | Reg-to-reg WS worst | Fmax worst, I/O incl. / reg-to-reg | Fmax typical | Power (tt) | DRC / LVS | Max slew viol. |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-18 | #1, PnR optimized at tt only (LibreLane default) | 25 ns | 227,997 | — | — | −4.705 ns | +3.283 ns | 33.7 / 46.0 MHz | 58.0 MHz | 6.42 mW | clean / clean | 2805 |
-| 2026-10-18 | #1, PnR at tt + max_ss + min_ff (committed reports) | 25 ns | 227,997 | 123,272 (58.2%) | 13,168 (1,496) | −4.679 ns | +3.240 ns | 33.7 / 46.0 MHz | 58.0 MHz | 6.42 mW | clean / clean | 2689 |
+| 2026-10-18 | #1, PnR at tt + max_ss + min_ff | 25 ns | 227,997 | 123,272 (58.2%) | 13,168 (1,496) | −4.679 ns | +3.240 ns | 33.7 / 46.0 MHz | 58.0 MHz | 6.42 mW | clean / clean | 2689 |
+| 2026-10-18 | #1, 35 ns, PnR at tt + max_ss + min_ff | 35 ns | 227,997 | 123,291 (58.2%) | 13,180 (1,496) | −0.973 ns | +9.199 ns | 27.8 / 38.8 MHz | 47.0 MHz | 4.59 mW | clean / clean | 2778 |
 
 **Run #1 does not close timing at the slow corner.** All 90 setup
 violations are register-to-output: the fetch-address path (forwarding select
@@ -326,6 +327,15 @@ fanout trees the resizer built from delay cells (`clkdlybuf4s*`,
 `dlymetal*`), including the forwarding select on the critical path: 2,683
 delay cells in the netlist, 1,253 of them hold buffers. Pre-layout estimate
 (synthesised netlist): setup −1.464 ns, reg-to-reg +3.249 ns at nom_ss.
+**35 ns did not close it either, and every path got slower** (reg-to-reg
+needs 25.8 ns at ss, against 21.8 ns at 25 ns): with more slack the
+resizer buffers fanout with `clkdlybuf4s25_1`, a clock *delay* cell, 1.2 to
+2.4 ns per stage at ss. The worst path (fwd select → … → `imem_addr_o[28]`)
+passes seven of them, about 11 ns of its 29 ns. 1,431 of them in the
+netlist: 820 fanout, 546 output-port and 65 input-port buffers. Hold repair
+uses a different cell (`dlygate4sd3_1`, 1,253). 15 setup violations, all
+`imem_addr_o`.
+
 Layout screenshots from KLayout (met4/met5 power grid hidden), in
 `docs/img/asic/run1/`: `layout.png`, the whole block, and `layout-zoom.png`,
 single standard cells with li1/met1 wiring and their names. LibreLane's own
