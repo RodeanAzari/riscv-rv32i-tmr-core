@@ -1,4 +1,5 @@
 # LibreLane RTL-to-GDSII of the bare core, Sky130 (CLAUDE.md §6.4, run #1).
+# Closes at 35 ns: 0 setup/hold violations at all 9 signoff corners.
 # Run with `make asic`, which supplies VERILOG_FILES (every .sv under rtl/,
 # found recursively) and runs this inside LibreLane's nix-shell.
 #
@@ -14,10 +15,12 @@ CLOCK_PORT: clk_i
 # elaborates only DESIGN_NAME's hierarchy.
 USE_SLANG: true
 
-# 25 ns (40 MHz). Inputs arrive and outputs must be ready 20% of the
+# 35 ns (28.6 MHz). Inputs arrive and outputs must be ready 20% of the
 # period from the edge (LibreLane's default IO_DELAY_CONSTRAINT): the
-# memories sit outside the block.
-CLOCK_PERIOD: 25
+# memories sit outside the block. At 25 ns the slow corner fails on the
+# fetch-address output (imem_addr_o): 21.9 ns of logic at ss against 19.75 ns
+# required; 35 ns leaves 27.75 ns.
+CLOCK_PERIOD: 35
 
 # Keep clock delay cells out of the netlist. Without this the resizer used
 # clkdlybuf4s25_1 (1.2-2.4 ns per stage at ss) as an ordinary buffer: 1,431

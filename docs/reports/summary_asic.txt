@@ -1,19 +1,19 @@
 === riscv_core, LibreLane RTL-to-GDSII ===
 flow            LibreLane 3.0.16, classic
 PDK             sky130A (sky130_fd_sc_hd)
-constraint      25.000 ns (40.0 MHz), I/O delay 20% of the period
+constraint      35.000 ns (28.6 MHz), I/O delay 20% of the period
 PnR corners     nom_tt_025C_1v80, max_ss_100C_1v60, min_ff_n40C_1v95
 signoff corners 9 (ss/tt/ff x min/nom/max parasitics)
 
 Timing, post-layout (worst corner of all signoff corners)
-  setup WS        -4.498 ns  (max_ss_100C_1v60)  -> Fmax 33.9 MHz, I/O paths included
-  reg-to-reg WS   +3.339 ns  (max_ss_100C_1v60)  -> Fmax 46.2 MHz
+  setup WS        +3.502 ns  (max_ss_100C_1v60)  -> Fmax 31.7 MHz, I/O paths included
+  reg-to-reg WS   +13.339 ns  (max_ss_100C_1v60)  -> Fmax 46.2 MHz
   hold WS         +0.102 ns  (min_ff_n40C_1v95)
-  setup / hold violations   87 / 0
-  typical (nom_tt_025C_1v80): setup WS +8.088 ns -> Fmax 59.1 MHz
+  setup / hold violations   0 / 0
+  typical (nom_tt_025C_1v80): setup WS +15.247 ns -> Fmax 50.6 MHz
 Timing, pre-layout estimate (synthesised netlist, before placement)
-  setup WS        -1.464 ns  (nom_ss_100C_1v60)  -> Fmax 37.8 MHz
-  reg-to-reg WS   +3.249 ns  (nom_ss_100C_1v60)  -> Fmax 46.0 MHz
+  setup WS        +6.536 ns  (nom_ss_100C_1v60)  -> Fmax 35.1 MHz
+  reg-to-reg WS   +13.249 ns  (nom_ss_100C_1v60)  -> Fmax 46.0 MHz
 
 Electrical rule checks (all corners)
   max slew / max cap / max fanout violations  3091 / 26 / 33
@@ -32,8 +32,8 @@ Cells
   clock buffers   270
 
 Power (nom_tt_025C_1v80, vectorless default activity)
-  total           6.440 mW (internal 4.411, switching 2.029, leakage 0.229 uW)
+  total           4.600 mW (internal 3.151, switching 1.449, leakage 0.229 uW)
 
 Signoff
   Magic DRC 0, KLayout DRC 0, LVS errors 0, antenna violations 0, GDS XOR differences 0
-  routed wirelength 474722 um, IR drop worst 0.36 mV
+  routed wirelength 474722 um, IR drop worst 0.26 mV

@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D (hardware) **done** 2026-10-18: 100 MHz on the Arty A7, CoreMark 0.962 CoreMark/MHz, IPC 0.691, serial bootloader and six interactive demos. E (TMR) in progress: three voted copies with feedback, voter proven, 10,000-fault campaign with 0 failures, 100 MHz on the board, live fault injector on the board (250,971 flips over 133 runs, same answer, same cycles); LibreLane run #1 to go. Phase A **done** 2026-10-08, CI run 37817380686
+**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D (hardware) **done** 2026-10-18: 100 MHz on the Arty A7, CoreMark 0.962 CoreMark/MHz, IPC 0.691, serial bootloader and six interactive demos. E (TMR) in progress: three voted copies with feedback, voter proven, 10,000-fault campaign with 0 failures, 100 MHz on the board, live fault injector on the board (250,971 flips over 133 runs, same answer, same cycles); LibreLane run #1 closes at 35 ns at all 9 Sky130 corners, DRC/LVS clean (31.7 MHz worst case); README update and TMR screenshots to go. Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -315,8 +315,19 @@ Append-only.
 | 2026-10-18 | #1, PnR at tt + max_ss + min_ff | 25 ns | 227,997 | 123,272 (58.2%) | 13,168 (1,496) | −4.679 ns | +3.240 ns | 33.7 / 46.0 MHz | 58.0 MHz | 6.42 mW | clean / clean | 2689 |
 | 2026-10-18 | #1, 35 ns, PnR at tt + max_ss + min_ff | 35 ns | 227,997 | 123,291 (58.2%) | 13,180 (1,496) | −0.973 ns | +9.199 ns | 27.8 / 38.8 MHz | 47.0 MHz | 4.59 mW | clean / clean | 2778 |
 | 2026-10-18 | #1, 25 ns, clock delay cells excluded, GRT_ADJUSTMENT 0.26 | 25 ns | 227,997 | 119,277 (56.3%) | 13,853 (1,496) | −4.498 ns | +3.339 ns | 33.9 / 46.2 MHz | 59.1 MHz | 6.44 mW | clean / clean | 3091 |
+| 2026-10-18 | **#1, 35 ns, clock delay cells excluded (committed reports, closes)** | 35 ns | 227,997 | 119,277 (56.3%) | 13,853 (1,496) | **+3.502 ns** | +13.339 ns | 31.7 / 46.2 MHz | 50.6 MHz | 4.60 mW | clean / clean | 3091 |
 
-**Run #1 does not close timing at the slow corner.** All 90 setup
+**Run #1 closes at 35 ns** with the clock delay cells excluded: 0 setup
+and 0 hold violations at all 9 signoff corners, worst setup slack +3.502 ns
+(max_ss, `imem_addr_o`), DRC/LVS/antenna clean. Worst-case Fmax 31.7 MHz
+counting the 20% I/O budget, 46.2 MHz register-to-register; the placed and
+routed netlist is the same as the 25 ns exclusion run (same cells, area and
+wirelength), only the constraint differs. Open, not blocking: 3,091 max-slew
+violations (0.75 ns limit, mostly at ss on weak `buf_1` fanout buffers) and
+the fetch-address path, which a 25 ns target at ss would need fixed in RTL.
+The rows above are the way there.
+
+**The 25 ns runs did not close timing at the slow corner.** All 90 setup
 violations are register-to-output: the fetch-address path (forwarding select
 → comparator → redirect → pc mux → `imem_addr_o`), the same critical path as
 on the FPGA, here owing 20% of the period to the memory outside the block
@@ -527,10 +538,9 @@ history, [formal-properties.md](formal-properties.md) and
 > measured: `rtl/tmr/`, `make synth` (core and TMR), `make impl TMR=1`,
 > `make faults`. Voter proven; 10,000 faults, 0 failures; 100 MHz on the
 > board (WNS +0.095 ns); live injector on the board (demo 7). **Next:**
-> LibreLane run #1: done 2026-10-18 (`make asic`), DRC/LVS clean, but setup
-> fails at the slow corner on the fetch-address output (see the ASIC section);
-> decide whether to close it (layout screenshots taken), then the
-> Phase E README update and the Vivado/floorplan screenshot set for TMR
+> LibreLane run #1: **done** 2026-10-18 (`make asic`), closes at 35 ns at all
+> 9 corners, DRC/LVS clean, layout screenshots in `docs/img/asic/run1/` (of the
+> 25 ns run, same floorplan). Then the Phase E README update and the Vivado/floorplan screenshot set for TMR
 > (the committed floorplan SVGs are the TMR build before the injector).
 
 ### User requests to carry forward
