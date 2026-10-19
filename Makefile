@@ -2,7 +2,8 @@
 # and the phase each target belongs to.
 #
 #   make lint   verilator lint of rtl/
-#   make sim    cocotb regression on verilator (see tb/cocotb/Makefile)
+#   make sim    the GEMM golden model's self-check, then the cocotb
+#               regression on verilator (see tb/cocotb/Makefile)
 #   make formal SymbiYosys over every tb/formal/*.sby, then riscv-formal
 #   make sw     build sw/*.c to .elf and .hex
 #   make spike  run the .elf on the spike reference model
@@ -12,6 +13,7 @@
 #   make impl   board-level bitstream for the Arty A7;  make prog  program it
 #   make ila    program an ILA=1 build and capture the pipeline registers
 #   make model-test  the C golden model alone, on riscv-tests rv32ui
+#   make gemm-model  the systolic array's golden model alone (Phase F)
 #   make uvm    UVM regression in XSim against the golden model
 #   make clean
 #
@@ -59,8 +61,18 @@ lint:
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim
-sim:
+sim: gemm-model
 	$(MAKE) -C tb/cocotb
+
+# The systolic array's golden model (sw/model/gemm_model.py) checks itself
+# against plain integers and exact fractions before it judges any RTL. NumPy
+# comes from the cocotb venv when there is one, as in tb/cocotb/Makefile; CI
+# installs it with cocotb (tb/cocotb/requirements.txt).
+GEMM_PY := $(if $(wildcard $(HOME)/cocotb-env/bin/python),$(HOME)/cocotb-env/bin/python,python3)
+
+.PHONY: gemm-model
+gemm-model:
+	$(GEMM_PY) sw/model/gemm_model.py
 
 # --- formal ----------------------------------------------------------------
 # Every tb/formal/*.sby, each with all its tasks (prove, cover). The tools come
