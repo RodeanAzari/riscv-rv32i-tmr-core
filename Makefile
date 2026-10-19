@@ -358,6 +358,7 @@ ILA_TRIGGER ?= core_state_transition
 .PHONY: gui
 gui:
 	$(VIVADO) -mode gui -nojournal -nolog -source syn/gui_view.tcl -tclargs $(VIEW) $(PART) \
+		$(if $(filter rtl,$(VIEW)),$(TMR)) \
 		$(if $(filter ila,$(VIEW)),$(abspath $(BIT)) $(abspath $(LTX)) \
 		$$($(RISCV_PREFIX)nm $(ILA_ELF) | awk '$$3 == "$(ILA_TRIGGER)" {print $$1}'))
 

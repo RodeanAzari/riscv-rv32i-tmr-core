@@ -1,6 +1,7 @@
 # Open the board design in the Vivado GUI, set up for looking at it.
 #
-#   vivado -mode gui -source syn/gui_view.tcl -tclargs routed|rtl [part]
+#   vivado -mode gui -source syn/gui_view.tcl -tclargs routed [part]
+#   vivado -mode gui -source syn/gui_view.tcl -tclargs rtl <part> [tmr]
 #   vivado -mode gui -source syn/gui_view.tcl -tclargs ila <part> <bit> <ltx> <pc>
 #
 # routed (default): the placed and routed checkpoint from the last
@@ -10,7 +11,7 @@
 #   utilization by hierarchy and a vectorless power estimate open as tabs.
 # rtl: the elaborated design: the RTL as adders, muxes, comparators and
 #   registers, before synthesis maps it onto LUTs. Reads rtl/ the way
-#   impl_arty.tcl does.
+#   impl_arty.tcl does; tmr = 1 elaborates the TMR core, as make impl TMR=1.
 # ila: programs an ILA build on the board and shows a capture as waveforms,
 #   triggered when the instruction at <pc> (hex) enters EX.
 #
@@ -34,8 +35,10 @@ proc find_sv {dir} {
 if {$view eq "rtl"} {
     read_verilog -sv [find_sv [file join $repo rtl]]
     read_xdc [file join $repo constr arty_a7.xdc]
-    synth_design -rtl -top arty_a7_top -part $part
-    show_schematic [get_cells u_soc/u_core]
+    set tmr [lindex $argv 2]
+    if {$tmr eq ""} { set tmr 0 }
+    synth_design -rtl -top arty_a7_top -part $part -generic "TMR=$tmr"
+    show_schematic [get_cells u_soc/g_cpu.u_core]
     return
 }
 if {$view eq "ila"} {

@@ -466,7 +466,7 @@ scripts in `syn/`; no project directory is ever committed.
 | `make impl` | Board-level place & route and bitstream (`FW_IMAGE=`, `ILA=1`), reports to `docs/reports/` |
 | `make prog` | Program the Arty (from WSL via usbipd, or prints the Windows steps) |
 | `make ila` | Capture the pipeline registers from the running board and check them |
-| `make gui` | Open the routed design in the Vivado GUI (`VIEW=rtl`: RTL schematic; `VIEW=ila`: live waveforms) |
+| `make gui` | Open the routed design in the Vivado GUI (`VIEW=rtl`: RTL schematic, `TMR=1` for the TMR core; `VIEW=ila`: live waveforms) |
 | `make floorplan` | Draw the routed design as zoomable SVGs in `docs/img/` |
 | `make asic` | LibreLane RTL-to-GDSII of the core on Sky130 (`syn/asic_config.yaml`), reports to `docs/reports/`; about 15 minutes |
 
