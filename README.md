@@ -310,19 +310,27 @@ the board. Board results, from
 
 ## In Vivado
 
-The CoreMark build of 2026-10-17: 100 MHz, WNS +1.550 ns, before the UART
-receiver (+38 LUT, +37 FF) joined (`make gui`, `make gui VIEW=rtl`). The
-floorplan at the top is from the same build. A new set follows each milestone; these
-are from Phase D, in [`docs/img/vivado/phase-d/`](docs/img/vivado/phase-d/).
-The [whole-die floorplan](docs/img/vivado/phase-d/floorplan_board.svg) shows the SoC in one
-of the chip's eight clock regions.
+A screenshot set per milestone, each kept in its own folder and taken from the
+build whose reports are committed (`make gui`, `make gui VIEW=rtl`, with
+`TMR=1` for the TMR core). Side by side, so the change shows:
 
-| | |
+- **Phase D, the single core** ([`phase-d/`](docs/img/vivado/phase-d/)): the CoreMark build of
+  2026-10-17, 100 MHz, WNS +1.550 ns, before the UART receiver (+38 LUT,
+  +37 FF) joined. [Whole-die floorplan](docs/img/vivado/phase-d/floorplan_board.svg).
+- **Phase E, the TMR core** ([`phase-e/`](docs/img/vivado/phase-e/)): three copies and the voter,
+  with the live injector, 2026-10-18, 100 MHz, WNS +0.095 ns. Its floorplan is
+  the one at the top ([whole die](docs/img/vivado/phase-e/floorplan_board.svg)).
+
+| Phase D — single core | Phase E — TMR |
 |---|---|
-| ![Device view](docs/img/vivado/phase-d/device.png) Device view, coloured by module | ![Device view, zoomed](docs/img/vivado/phase-d/device-zoom.png) Zoomed to single slices, with routing |
-| ![Worst path on the device](docs/img/vivado/phase-d/worstpathdevice.png) The worst setup path on the die | ![Worst path schematic](docs/img/vivado/phase-d/worstpath.png) The same path: forwarding select → branch comparator (CARRY4 chain) → redirect → pc mux → block RAM address |
-| ![RTL schematic of the core](docs/img/vivado/phase-d/rtl-schematic-u_core.png) The core as elaborated RTL | ![RTL schematic of the ALU](docs/img/vivado/phase-d/rtl-schematic-alu.png) The ALU, opened up |
-| ![Timing summary](docs/img/vivado/phase-d/timing.png) Timing: met at 100 MHz, WNS +1.550 ns, WHS +0.110 ns | ![Utilization by hierarchy](docs/img/vivado/phase-d/utilization-hierarchy.png) Utilization by module |
+| ![Device view, single core](docs/img/vivado/phase-d/device.png) Device view, coloured by module | ![Device view, TMR](docs/img/vivado/phase-e/device.png) Device view, coloured by copy: A orange, B green, C cyan, voter and mismatch counter magenta; RAM white, UART red. Still one clock region of eight |
+| ![Device view zoomed, single core](docs/img/vivado/phase-d/device-zoom.png) Zoomed to single slices, with routing | ![Device view zoomed, TMR](docs/img/vivado/phase-e/device-zoom.png) Zoomed in where the voter sits: magenta voter cells placed between the copies, the worst path in yellow |
+| ![Worst path on the device, single core](docs/img/vivado/phase-d/worstpathdevice.png) The worst setup path on the die | ![Worst path on the device, TMR](docs/img/vivado/phase-e/worstpathdevice.png) The worst path, from copy B's logic (green) into the voter (magenta) |
+| ![Worst path schematic, single core](docs/img/vivado/phase-d/worstpath.png) Forwarding select → branch comparator (CARRY4 chain) → redirect → pc mux → block RAM address | ![Worst path schematic, TMR](docs/img/vivado/phase-e/worstpath.png) Copy B's forwarding select → its branch comparator → redirect → the **voter's mismatch detector** (a CARRY4 chain comparing the copies) → `mismatch_q`. TMR's slowest path is the error *detection*, not the vote |
+| ![Timing summary, single core](docs/img/vivado/phase-d/timing.png) Timing: met at 100 MHz, WNS +1.550 ns, WHS +0.110 ns | ![Timing summary, TMR](docs/img/vivado/phase-e/timing.png) Timing: still met at 100 MHz, WNS +0.095 ns, WHS +0.119 ns |
+| ![Utilization by hierarchy, single core](docs/img/vivado/phase-d/utilization-hierarchy.png) Utilization by module | ![Utilization by hierarchy, TMR](docs/img/vivado/phase-e/utilization-hierarchy.png) Three copies of equal size (893–894 slice LUTs, 472 registers each) and the voter (160): all three survived synthesis. Vivado counts physical slice LUTs here (3,172); the 3,446 elsewhere in this README are LUT cells, two of which can share one LUT |
+| ![RTL schematic of the core](docs/img/vivado/phase-d/rtl-schematic-u_core.png) The core as elaborated RTL | ![RTL schematic of the TMR core](docs/img/vivado/phase-e/rtl-schematic-tmr.png) The TMR core as elaborated RTL: copy A (`u_core_a`), copies B and C (`g_other`), the voted feedback into each, the voter (`u_voter`) and the mismatch counter |
+| ![RTL schematic of the ALU](docs/img/vivado/phase-d/rtl-schematic-alu.png) The ALU, opened up | ![RTL schematic of the voter](docs/img/vivado/phase-e/rtl-schematic-voter.png) The voter, opened up: a 2-of-3 majority (`a&b \| b&c \| a&c`) over each copy's 143-bit bundle, a compare flagging any disagreement, and one per copy saying which disagrees |
 | ![Power estimate](docs/img/vivado/phase-d/power.png) Power: 0.26 W, Vivado's **vectorless estimate**, not a measurement; the MMCM is 65% of it | |
 
 ## As a chip (Sky130)

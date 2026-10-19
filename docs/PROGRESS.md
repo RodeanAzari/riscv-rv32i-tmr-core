@@ -538,9 +538,9 @@ history, [formal-properties.md](formal-properties.md) and
 > and measured (`rtl/tmr/`, `make synth`, `make impl TMR=1`, `make faults`,
 > live injector on the board), LibreLane run #1 closed at 35 ns at all 9
 > corners (`make asic`), README updated with every Stage 1 result (the ASIC
-> layout shots are not retaken, by the user's choice). **Next:** the TMR
-> Vivado screenshot set (below), then **Phase F** (systolic array), golden
-> model first (buildplan §6.1, §8).
+> layout shots are not retaken, by the user's choice). The TMR Vivado
+> set is in `docs/img/vivado/phase-e/`, beside Phase D's in the README.
+> **Next: Phase F** (systolic array), golden model first (buildplan §6.1, §8).
 
 ### User requests to carry forward
 
@@ -556,9 +556,12 @@ history, [formal-properties.md](formal-properties.md) and
   plus `make floorplan` (the zoomable SVGs in `docs/img/`):** device view colored by module, worst path (device + schematic), RTL
   schematic, timing summary, utilization by hierarchy, power (label it a
   vectorless estimate), ILA waveforms. `make gui`, `make gui VIEW=rtl`,
-  `make gui VIEW=ila`. The Phase D set is done (2026-10-17, single core; in the README's "On the chip"). **Remind
-  the user to take a new set after Phase E** (TMR: three copies visible,
-  before/after comparison) **and at Stage 2 milestones** (systolic array,
+  `make gui VIEW=ila`. Done: Phase D (2026-10-17, single core) and Phase E
+  (2026-10-18, TMR, with the voter schematic), side by side in the README's
+  "In Vivado". **Every set is kept, never replaced** (the user's rule,
+  2026-10-18): a new folder per stage, and the README adds a column or
+  section rather than swapping images. **Remind the user to take a new set
+  at Stage 2 milestones** (systolic array,
   DMA + interconnect, integration). Shots must come from the build whose
   reports are committed: rebuild without ILA before the non-ILA shots.
   `make floorplan` overwrites `docs/img/floorplan_board*.svg`: move the
