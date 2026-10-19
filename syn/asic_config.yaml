@@ -14,15 +14,26 @@ CLOCK_PORT: clk_i
 # elaborates only DESIGN_NAME's hierarchy.
 USE_SLANG: true
 
-# 35 ns (28.6 MHz). Inputs arrive and outputs must be ready 20% of the
+# 25 ns (40 MHz). Inputs arrive and outputs must be ready 20% of the
 # period from the edge (LibreLane's default IO_DELAY_CONSTRAINT): the
-# memories sit outside the block. The first target, 25 ns, met timing at
-# typical but failed at max_ss by 4.68 ns on the fetch-address output
-# (imem_addr_o), i.e. it needed 29.7 ns with a 5 ns output delay; at 35 ns
-# the output delay grows to 7 ns, leaving about 3 ns of margin.
-CLOCK_PERIOD: 35
+# memories sit outside the block.
+CLOCK_PERIOD: 25
+
+# Keep clock delay cells out of the netlist. Without this the resizer used
+# clkdlybuf4s25_1 (1.2-2.4 ns per stage at ss) as an ordinary buffer: 1,431
+# of them for fanout and I/O, seven on the worst path, and the slow corner
+# failed at both 25 ns (-4.68 ns) and 35 ns (-0.97 ns). Hold repair uses
+# dlygate4sd3_1, which stays available.
+EXTRA_EXCLUDED_CELLS:
+  - sky130_fd_sc_hd__clkdlybuf4s*
 
 FP_CORE_UTIL: 40
+
+# Global routing reserves less of each edge's capacity than the 0.30
+# default: with the delay cells excluded, global routing overflowed by one
+# edge on met2 (of 145k) and OpenROAD suggested 0.26 (GRT-0704). Detailed
+# routing and DRC signoff check the result.
+GRT_ADJUSTMENT: 0.26
 
 # Repair and optimize for the worst setup corner (slow, max parasitics), the
 # worst hold corner (fast, min parasitics) and typical. By default only

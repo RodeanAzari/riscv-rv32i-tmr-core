@@ -314,6 +314,7 @@ Append-only.
 | 2026-10-18 | #1, PnR optimized at tt only (LibreLane default) | 25 ns | 227,997 | — | — | −4.705 ns | +3.283 ns | 33.7 / 46.0 MHz | 58.0 MHz | 6.42 mW | clean / clean | 2805 |
 | 2026-10-18 | #1, PnR at tt + max_ss + min_ff | 25 ns | 227,997 | 123,272 (58.2%) | 13,168 (1,496) | −4.679 ns | +3.240 ns | 33.7 / 46.0 MHz | 58.0 MHz | 6.42 mW | clean / clean | 2689 |
 | 2026-10-18 | #1, 35 ns, PnR at tt + max_ss + min_ff | 35 ns | 227,997 | 123,291 (58.2%) | 13,180 (1,496) | −0.973 ns | +9.199 ns | 27.8 / 38.8 MHz | 47.0 MHz | 4.59 mW | clean / clean | 2778 |
+| 2026-10-18 | #1, 25 ns, clock delay cells excluded, GRT_ADJUSTMENT 0.26 | 25 ns | 227,997 | 119,277 (56.3%) | 13,853 (1,496) | −4.498 ns | +3.339 ns | 33.9 / 46.2 MHz | 59.1 MHz | 6.44 mW | clean / clean | 3091 |
 
 **Run #1 does not close timing at the slow corner.** All 90 setup
 violations are register-to-output: the fetch-address path (forwarding select
@@ -335,6 +336,16 @@ passes seven of them, about 11 ns of its 29 ns. 1,431 of them in the
 netlist: 820 fanout, 546 output-port and 65 input-port buffers. Hold repair
 uses a different cell (`dlygate4sd3_1`, 1,253). 15 setup violations, all
 `imem_addr_o`.
+
+**Excluding `clkdlybuf4s*` at 25 ns barely helped** (−4.50 ns, from
+−4.68): at 25 ns the resizer had kept them off the worst path, so the path
+is plain logic, 21.9 ns at ss (fwd select → 32-bit compare, an `or4`
+chain → redirect → fanout to the 32 address bits) after 2.4 ns of clock
+latency, against 19.75 ns required (25 − 5 output delay − 0.25
+uncertainty). Closing 25 ns at ss needs an RTL change on the fetch-address
+path. The first try of this run failed global routing on one met2 edge of
+145k (GRT-0116); `GRT_ADJUSTMENT` 0.26, as OpenROAD suggested, fixed it
+with DRC still clean.
 
 Layout screenshots from KLayout (met4/met5 power grid hidden), in
 `docs/img/asic/run1/`: `layout.png`, the whole block, and `layout-zoom.png`,

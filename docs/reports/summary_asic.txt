@@ -1,39 +1,39 @@
 === riscv_core, LibreLane RTL-to-GDSII ===
 flow            LibreLane 3.0.16, classic
 PDK             sky130A (sky130_fd_sc_hd)
-constraint      35.000 ns (28.6 MHz), I/O delay 20% of the period
+constraint      25.000 ns (40.0 MHz), I/O delay 20% of the period
 PnR corners     nom_tt_025C_1v80, max_ss_100C_1v60, min_ff_n40C_1v95
 signoff corners 9 (ss/tt/ff x min/nom/max parasitics)
 
 Timing, post-layout (worst corner of all signoff corners)
-  setup WS        -0.973 ns  (max_ss_100C_1v60)  -> Fmax 27.8 MHz, I/O paths included
-  reg-to-reg WS   +9.199 ns  (max_ss_100C_1v60)  -> Fmax 38.8 MHz
-  hold WS         +0.113 ns  (min_ff_n40C_1v95)
-  setup / hold violations   15 / 0
-  typical (nom_tt_025C_1v80): setup WS +13.726 ns -> Fmax 47.0 MHz
+  setup WS        -4.498 ns  (max_ss_100C_1v60)  -> Fmax 33.9 MHz, I/O paths included
+  reg-to-reg WS   +3.339 ns  (max_ss_100C_1v60)  -> Fmax 46.2 MHz
+  hold WS         +0.102 ns  (min_ff_n40C_1v95)
+  setup / hold violations   87 / 0
+  typical (nom_tt_025C_1v80): setup WS +8.088 ns -> Fmax 59.1 MHz
 Timing, pre-layout estimate (synthesised netlist, before placement)
-  setup WS        +6.536 ns  (nom_ss_100C_1v60)  -> Fmax 35.1 MHz
-  reg-to-reg WS   +13.249 ns  (nom_ss_100C_1v60)  -> Fmax 46.0 MHz
+  setup WS        -1.464 ns  (nom_ss_100C_1v60)  -> Fmax 37.8 MHz
+  reg-to-reg WS   +3.249 ns  (nom_ss_100C_1v60)  -> Fmax 46.0 MHz
 
 Electrical rule checks (all corners)
-  max slew / max cap / max fanout violations  2778 / 23 / 29
+  max slew / max cap / max fanout violations  3091 / 26 / 33
 
 Area
   die             227997 um^2
   core            211876 um^2
-  standard cells  123291 um^2 (58.2% of the core)
+  standard cells  119277 um^2 (56.3% of the core)
   of which flops  31820 um^2 (1496 cells)
 
 Cells
-  standard cells  13180 (2992 tap cells among them; 26410 fill cells besides)
+  standard cells  13853 (2992 tap cells among them; 27540 fill cells besides)
   combinational   4996
   sequential      1496
-  timing repair buffers 3169 (hold 1253, setup 0)
-  clock buffers   263
+  timing repair buffers 3831 (hold 1255, setup 0)
+  clock buffers   270
 
 Power (nom_tt_025C_1v80, vectorless default activity)
-  total           4.588 mW (internal 3.138, switching 1.450, leakage 0.220 uW)
+  total           6.440 mW (internal 4.411, switching 2.029, leakage 0.229 uW)
 
 Signoff
   Magic DRC 0, KLayout DRC 0, LVS errors 0, antenna violations 0, GDS XOR differences 0
-  routed wirelength 478558 um, IR drop worst 0.34 mV
+  routed wirelength 474722 um, IR drop worst 0.36 mV
