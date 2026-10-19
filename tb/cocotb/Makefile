@@ -74,6 +74,7 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_branch:test_branch \
          uart_tx:test_uart_tx \
          uart_rx:test_uart_rx \
+         systolic_pe:test_systolic_pe \
          soc:test_soc \
          soc:test_coremark \
          soc:test_boot \

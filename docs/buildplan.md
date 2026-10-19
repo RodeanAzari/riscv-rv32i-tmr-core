@@ -312,8 +312,8 @@ A phase is done when **every** box is checked. No partial credit.
 **→ Stage 1 complete. Update README with all results before starting Phase F.**
 
 ### Phase F — Systolic array
-- [ ] Single PE verified exhaustively
-- [ ] Python/NumPy GEMM golden model written **before** the RTL
+- [x] Single PE verified exhaustively
+- [x] Python/NumPy GEMM golden model written **before** the RTL
 - [ ] 4×4 working, then parameterized to 16×16 (or 8×8 if DSP packing fails)
 - [ ] Bit-exact match against golden model across thousands of random matrices
 - [ ] Edge cases: non-multiple-of-16 matrices, saturation boundaries

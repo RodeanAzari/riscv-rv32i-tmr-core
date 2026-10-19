@@ -58,6 +58,7 @@ lint:
 	verilator --lint-only -Wall --top-module arty_a7_top -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall --top-module riscv_core_tmr $(RTL)
 	verilator --lint-only -Wall --top-module riscv_core_tmr -DRISCV_FORMAL -DFORMAL $(RTL)
+	verilator --lint-only -Wall --top-module systolic_pe $(RTL)
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim

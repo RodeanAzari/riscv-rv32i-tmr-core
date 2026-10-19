@@ -48,6 +48,7 @@ the local GCC 16.
 | **Demo reel on the board** | 2026-10-18, `sw/demo/` loaded over serial ([demo_board.txt](reports/demo_board.txt)): microbenchmarks measure exactly 1 cycle per ALU op, +1 per load-use, +2 per taken branch or jump, 0 for not taken; Mandelbrot frame 12,849,963 cycles fixed point vs 49,110,978 software float (3.8x; simulation gives the same counts, and both pictures match a bit-exact model, IEEE single included); 750 digits of pi in 4.95 s; Life 81,581 cycles a generation; sieve to 163840 in 16.0 ms |
 | **TMR** (Phase E) | 2026-10-18: `rtl/tmr/riscv_core_tmr.sv`, three copies with `DONT_TOUCH`/`KEEP_HIERARCHY` (three survive: 1601 cells each, `summary_ooc_tmr.txt`), voted feedback into each copy's pc, halt flags and register file. The voter is proven (`tmr_voter.sby`). The core's 105 tests and the SoC's first light, CoreMark and bootloader tests pass on it with zero mismatches. **Fault campaign, 10,000 single-bit flips** ([tmr_faults.txt](reports/tmr_faults.txt)): 0 failures; 1,275 detected, all corrected and all three copies identical again; median disagreement 1 cycle, max 30; 5,777 register-file flips latent in registers the programs never use. Board: 100 MHz met, WNS +0.095 ns, 3.1x LUT, Fmax −8.7%. **Live injector on the board** (2026-10-18, [tmr_inject_board.txt](reports/tmr_inject_board.txt)): demo 7 repeats a sieve to 163840 until a key, flipping a random bit of copy B's pc 1,887 times a pass: 133 passes, each 14,999 primes and 3,354,864 cycles, exactly as the clean run; all 250,971 flips detected; the same counts in simulation (`soc_tmr:test_demo`). Totals on screen, disagreements / 4096 on the LEDs. The plain demos still exact on the TMR bitstream |
 | **GEMM golden model** (Phase F) | 2026-10-18, before any RTL: `sw/model/gemm_model.py`, `make gemm-model` (run first by `make sim`): INT8 GEMM with INT32 wraparound, a cycle-level weight-stationary array (feeder pads zeros; row m leaves column c's bottom at cycle m + ROWS − 1 + c), and requantization. 1,449 checks: PE exhaustive (65,536 pairs × 4 psums), gemm against plain Python ints, the array against gemm on 1,320 shapes at 4×4, 8×8, 16×16, 4×8, 8×4, saturation boundaries, INT32 wraparound at K = 131,073, requantization against exact fractions (ties, extremes). Four planted model bugs each caught. ~22 s |
+| **Systolic PE** (Phase F) | 2026-10-18: `rtl/accel/systolic_pe.sv`, INT8 × INT8 + INT32 psum, activation registered right, psum registered down; weights double-buffered (a shadow register shifts down the column while the current tile computes, `w_swap_i` makes it active the next cycle). `systolic_pe:test_systolic_pe`: all 65,536 (activation, weight) pairs back to back against `gemm_model.pe`, psums at 0, ±1, both INT32 limits and random, weight swaps with no idle cycle; reset test. Two planted bugs caught (using the shadow weight early; zero- instead of sign-extending the product). In `make lint` as its own top. ~6 s |
 | CI on push | green (lint + sim + formal, 308/308 in one regression, on `ubuntu-24.04`) at `33e251a`, run 39162134462 (main fast-forwarded to it 2026-10-18) |
 
 ### Implemented, and what to know before touching it
@@ -549,8 +550,10 @@ history, [formal-properties.md](formal-properties.md) and
 > padding zeros (full tiles always, results outside C not written). Open for
 > the RTL: a 32×32 requant multiplier per column costs ~4 DSP48E1 each, on
 > top of the array's 128 (packed); decide sharing vs. width when the array
-> exists. **Next:** the single PE in RTL, verified exhaustively against
-> `gemm_model.pe`.
+> exists. The single PE is done and verified exhaustively
+> (`rtl/accel/systolic_pe.sv`). **Next:** the 4×4 array with its feeder
+> (skew, zero padding) and output collection, checked bit-exact against
+> `gemm_model.systolic` / `gemm`, including output timing.
 
 ### User requests to carry forward
 
