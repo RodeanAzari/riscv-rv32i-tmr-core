@@ -6,14 +6,16 @@ an FPGA at 100 MHz**: a Digilent Arty A7-100T, where it runs CoreMark at
 0.962 CoreMark/MHz. It can also run as **three voted copies (triple modular
 redundancy)**, still at 100 MHz: in 10,000 injected single-bit faults, none
 changed its output, and on the board it shrugs off faults injected live
-while it computes.
+while it computes. The core has also been taken through the open-source
+LibreLane flow to a **DRC- and LVS-clean layout on SkyWater's 130 nm
+process**, timing met at all nine signoff corners.
 
 The project has two stages. Stage 1 is the CPU: verified, hardware-proven,
 then made fault-tolerant with triple modular redundancy (TMR) and taken through
 an open-source ASIC flow to GDSII. Stage 2 builds an SoC around it: an INT8
 systolic-array accelerator, a descriptor-based DMA and an AXI interconnect.
-**Stage 1 is done through Phase D; Phase E (TMR) is built and measured, with
-its ASIC run still to come.**
+**Stage 1 (Phases A–E) is done**: the CPU is verified, running on the
+board, fault-tolerant and taken to GDSII. Stage 2 is next.
 
 Every number below is transcribed from a report committed in
 [`docs/reports/`](docs/reports/), produced by a `make` target, with its
@@ -40,6 +42,7 @@ and flip-flops. The single core's floorplan, from Phase D, is
 | **IPC** | 0.691 on CoreMark (CPI 1.447), counted in RTL simulation of the same SoC; it matches the board's cycle count to 0.0013% |
 | **Size** | 966 LUT, 467 FF (core alone); 1123 LUT, 435 FF, 8 BRAM (whole SoC on the board): under 2% of the chip. TMR: 3446 LUT, 1621 FF on the board |
 | **Fault tolerance** | Three voted copies with feedback; voter formally proven; **10,000 random single-bit faults, 0 failures**, every detected fault corrected and the copies back in step; **live on the board**, 250,971 faults injected over 133 runs of one computation, all outvoted, every run the same answer and the same cycle count |
+| **As a chip** | The core through LibreLane to GDSII on Sky130 (130 nm): 0.23 mm² die, 13,853 cells, **DRC and LVS clean**, timing met at all 9 corners at 35 ns, **31.7 MHz worst case** (slow silicon, 100 °C, 1.60 V), 50.6 MHz typical |
 | **Formal** | riscv-formal **46/46 checks**; the pipeline's hazard, forwarding, flush, reset and X-propagation properties proven by k-induction; every check shown reachable, and the consistency checks shown to fail on planted bugs |
 | **Bugs formal caught that simulation missed** | **2**, both of which would have broken the ASIC (below) |
 | **UVM** | **205/205** functional coverage bins (100%); ~45,000 retirements per run compared with a C golden model, 0 mismatches |
@@ -55,7 +58,7 @@ and flip-flops. The single core's floorplan, from Phase D, is
 | | B — Formal verification | **Done** |
 | | C — UVM environment | **Done** |
 | | D — Hardware bring-up | **Done** |
-| | E — TMR + fault injection, ASIC run #1 | **TMR done and measured**; ASIC run #1 next |
+| | E — TMR + fault injection, ASIC run #1 | **Done** |
 | **2 — SoC** | F — Systolic array | Not started |
 | | G — DMA + AXI interconnect | Not started |
 | | H — Integration + DFT, ASIC run #2 | Not started |
@@ -322,6 +325,37 @@ of the chip's eight clock regions.
 | ![Timing summary](docs/img/vivado/phase-d/timing.png) Timing: met at 100 MHz, WNS +1.550 ns, WHS +0.110 ns | ![Utilization by hierarchy](docs/img/vivado/phase-d/utilization-hierarchy.png) Utilization by module |
 | ![Power estimate](docs/img/vivado/phase-d/power.png) Power: 0.26 W, Vivado's **vectorless estimate**, not a measurement; the MMCM is 65% of it | |
 
+## As a chip (Sky130)
+
+Run #1 of the ASIC flow: the bare core (one copy, no TMR) from RTL to GDSII
+with [LibreLane](https://github.com/librelane/librelane) 3.0.16 on SkyWater's
+open 130 nm PDK, `sky130_fd_sc_hd` cells (`make asic`,
+[`syn/asic_config.yaml`](syn/asic_config.yaml)). It is hardened as a block:
+the memory ports are the block's pins, the register file is 1,024
+flip-flops, with no SRAM macros and no pads. Timing is signed off at 9
+corners (slow, typical and fast silicon, each with minimum, nominal and
+maximum wiring parasitics), and the worst of them, slow silicon at 100 °C
+and 1.60 V, is the number quoted.
+
+| | |
+|---|---|
+| [![The whole block in KLayout](docs/img/asic/run1/layout.png)](docs/img/asic/run1/layout.png) The whole block, 472 × 483 µm, in KLayout with the met4/met5 power grid hidden: standard cells under the lower metal layers of signal wiring, the memory-port pins along the edges | [![Single standard cells](docs/img/asic/run1/layout-zoom.png)](docs/img/asic/run1/layout-zoom.png) Zoomed in to single Sky130 standard cells, each labelled: flip-flops (`dfxtp`), multiplexers (`mux2`), clock buffers (`clkbuf`), with their local wiring and vias |
+
+*Both screenshots are of the first 25 ns run; the final 35 ns layout has the
+same die and floorplan.*
+
+**Getting it to close.** At a 25 ns target the layout met timing at the
+typical corner (58 MHz) but failed by 4.7 ns at the slow one, on the fetch
+address leaving the block: forwarding select → branch compare → redirect →
+pc mux → `imem_addr_o`, the same path that is critical on the FPGA. Two
+things were in the way. The tool was buffering high-fanout nets with a clock
+*delay* cell (`clkdlybuf4s25_1`, up to 2.4 ns per stage at the slow corner,
+seven of them on the worst path); excluding it fixed that. What remained was
+21.9 ns of real logic at the slow corner, against 19.75 ns allowed at 25 ns
+once 20% of the cycle is reserved for the memory outside the block. At 35 ns,
+with the delay cells excluded, timing is met at every corner. Each attempt is
+a row in the ASIC table in [docs/PROGRESS.md](docs/PROGRESS.md).
+
 ## Results
 
 Conditions travel with every number: an out-of-context Fmax models no clock
@@ -358,15 +392,21 @@ rows. The per-slice trends (what each feature cost in LUTs and MHz) are in
 | SVA properties proven on AXI interfaces | — |
 
 **ASIC flow (LibreLane + Sky130).** Two runs: the bare core closing Phase E, the full
-SoC in Phase H. The delta between them is the result.
+SoC in Phase H. The delta between them is the result. Run 1: LibreLane 3.0.16,
+sky130A `sky130_fd_sc_hd`, 35 ns constraint, inputs and outputs given 20% of
+the period, worst of 9 signoff corners
+([summary_asic.txt](docs/reports/summary_asic.txt),
+[sta_asic.rpt](docs/reports/sta_asic.rpt)).
 
 | Metric | Run 1 (bare core) | Run 2 (full SoC) |
 |---|---|---|
-| Die area, cell count, utilization | — | — |
-| Post-layout Fmax | — | — |
-| Power estimate | — | — |
-| DRC / LVS clean | — | — |
-| Scan chains: count, coverage, area overhead | — | — |
+| Die area, cell count, utilization | 227,997 µm² (472 × 483 µm); 13,853 cells, 1,496 of them flip-flops; 56.3% | — |
+| Post-layout Fmax, worst corner | **31.7 MHz** including the I/O budget (35 ns met, +3.502 ns); 46.2 MHz register to register | — |
+| Post-layout Fmax, typical corner | 50.6 MHz | — |
+| Pre-layout estimate, synthesised netlist | 35.1 MHz including I/O; 46.0 MHz register to register | — |
+| Power estimate (typical, 35 ns, vectorless) | 4.60 mW | — |
+| DRC / LVS clean | **Clean**: Magic and KLayout DRC 0, LVS 0, antenna 0 | — |
+| Scan chains: count, coverage, area overhead | — (Phase H) | — |
 
 ## Limitations
 
@@ -388,6 +428,13 @@ Stated plainly, because they are real:
   untimed. The board-level number is the one that counts, and it is the one
   quoted first.
 - **Power is an estimate.** Vivado's vectorless analysis, not a measurement.
+- **The ASIC run is the bare core, and slow.** 31.7 MHz worst case
+  (50.6 MHz typical) against 100 MHz on the FPGA: a 130 nm process signed off
+  at its slow corner, with a fifth of each cycle given to memories outside
+  the block. A 25 ns target at the slow corner needs an RTL change on the
+  fetch-address path. 3,091 max-slew violations remain (timing is signed off
+  with them included). One copy, not TMR; the register file is flip-flops;
+  power is a vectorless estimate.
 - **TMR guards the core, not the memory.** The RAM, the I/O and the voter
   itself are single; protecting memory (ECC) is out of scope. Register-file
   faults in unused registers stay latent until rewritten (see Fault
@@ -399,7 +446,9 @@ Requires Verilator ≥ 5.036 and **cocotb ≥ 2.1.0** (2.0.1 segfaults reading a
 port once a register-file-sized array exists), a venv at `~/cocotb-env`, the
 RISC-V GNU toolchain, and OSS CAD Suite for formal. Vivado 2025.2 (free ML
 Standard edition) for synthesis, UVM and the board:
-[docs/vivado-setup.md](docs/vivado-setup.md). Vivado runs in batch from Tcl
+[docs/vivado-setup.md](docs/vivado-setup.md). For `make asic`: Nix and
+LibreLane 3.0.16, cloned to `~/librelane` (`LIBRELANE_DIR`), which fetches
+the sky130 PDK. Vivado runs in batch from Tcl
 scripts in `syn/`; no project directory is ever committed.
 
 | Target | Does |
@@ -419,7 +468,7 @@ scripts in `syn/`; no project directory is ever committed.
 | `make ila` | Capture the pipeline registers from the running board and check them |
 | `make gui` | Open the routed design in the Vivado GUI (`VIEW=rtl`: RTL schematic; `VIEW=ila`: live waveforms) |
 | `make floorplan` | Draw the routed design as zoomable SVGs in `docs/img/` |
-| `make asic` | LibreLane RTL-to-GDSII (Phase E, then H; prints what it is waiting on) |
+| `make asic` | LibreLane RTL-to-GDSII of the core on Sky130 (`syn/asic_config.yaml`), reports to `docs/reports/`; about 15 minutes |
 
 `make synth` routes rather than stopping at synthesis: post-synthesis timing is
 an estimate, post-route timing is measured. CI runs lint, simulation and
@@ -442,15 +491,13 @@ its reports are committed with the RTL that produced them.
 | `sw/demo/`, `sw/apps/` | The demo reel; small programs (e.g. `echo`) |
 | `sw/firstlight/`, `sw/coremark-port/` | Bare-metal firmware and the CoreMark port (CoreMark itself is a submodule) |
 | `sw/riscv-tests-env/` | Our environment for the official `riscv-tests` (the suite is a submodule, `sw/riscv-tests/`) |
-| `syn/` | Vivado Tcl: OOC synth, board impl, ILA capture, GUI views, floorplan export |
+| `syn/` | Vivado Tcl: OOC synth, board impl, ILA capture, GUI views, floorplan export; the LibreLane config |
 | `constr/` | Arty A7 pin constraints |
-| `scripts/` | Build automation, the ILA checker, the floorplan renderer |
+| `scripts/` | Build automation, the ILA checker, the floorplan renderer, the ASIC report summary |
 | `docs/` | Build plan, progress log, formal and coverage plans, committed reports, images |
 
 ## Roadmap
 
-- **Phase E — the rest.** The first ASIC run: the core through LibreLane on
-  Sky130 to GDSII.
 - **Stage 2 — the SoC.** An INT8 systolic array (measured GOPS and PE
   utilisation, speedup over software matmul), a descriptor-based DMA, an AXI
   interconnect with formally proven interfaces, scan insertion, and a second

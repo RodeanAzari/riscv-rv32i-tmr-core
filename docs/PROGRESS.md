@@ -6,7 +6,7 @@ meaningful state.
 
 **Repo:** https://github.com/RodeanAzari/riscv-rv32i-tmr-core (private)
 **Local:** `~/riscv-rv32i-tmr-core`
-**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D (hardware) **done** 2026-10-18: 100 MHz on the Arty A7, CoreMark 0.962 CoreMark/MHz, IPC 0.691, serial bootloader and six interactive demos. E (TMR) in progress: three voted copies with feedback, voter proven, 10,000-fault campaign with 0 failures, 100 MHz on the board, live fault injector on the board (250,971 flips over 133 runs, same answer, same cycles); LibreLane run #1 closes at 35 ns at all 9 Sky130 corners, DRC/LVS clean (31.7 MHz worst case); README update and TMR screenshots to go. Phase A **done** 2026-10-08, CI run 37817380686
+**Phase:** B (formal) **done** 2026-10-17: every §5.5 property by k-induction, riscv-formal 46/46 with each check reached or shown to fail. C (UVM) **done** 2026-10-17: 205/205 coverage bins, every retirement checked against a C golden model. D (hardware) **done** 2026-10-18: 100 MHz on the Arty A7, CoreMark 0.962 CoreMark/MHz, IPC 0.691, serial bootloader and six interactive demos. E (TMR) **done** 2026-10-18: three voted copies with feedback, voter proven, 10,000-fault campaign with 0 failures, 100 MHz on the board, live fault injector on the board (250,971 flips over 133 runs, same answer, same cycles); LibreLane run #1 closes at 35 ns at all 9 Sky130 corners, DRC/LVS clean (31.7 MHz worst case). **Stage 1 complete.** Phase A **done** 2026-10-08, CI run 37817380686
 
 ---
 
@@ -534,14 +534,12 @@ history, [formal-properties.md](formal-properties.md) and
 
 ## Next up
 
-> **Resume here (2026-10-18, Phase E in progress).** TMR is built and
-> measured: `rtl/tmr/`, `make synth` (core and TMR), `make impl TMR=1`,
-> `make faults`. Voter proven; 10,000 faults, 0 failures; 100 MHz on the
-> board (WNS +0.095 ns); live injector on the board (demo 7). **Next:**
-> LibreLane run #1: **done** 2026-10-18 (`make asic`), closes at 35 ns at all
-> 9 corners, DRC/LVS clean, layout screenshots in `docs/img/asic/run1/` (of the
-> 25 ns run, same floorplan). Then the Phase E README update and the Vivado/floorplan screenshot set for TMR
-> (the committed floorplan SVGs are the TMR build before the injector).
+> **Resume here (2026-10-18, Stage 1 complete).** Phase E is done: TMR built
+> and measured (`rtl/tmr/`, `make synth`, `make impl TMR=1`, `make faults`,
+> live injector on the board), LibreLane run #1 closed at 35 ns at all 9
+> corners (`make asic`), README updated with every Stage 1 result. The user
+> waived the TMR Vivado screenshot set. **Next: Phase F** (systolic array),
+> golden model first (buildplan §6.1, §8).
 
 ### User requests to carry forward
 
@@ -557,9 +555,9 @@ history, [formal-properties.md](formal-properties.md) and
   plus `make floorplan` (the zoomable SVGs in `docs/img/`):** device view colored by module, worst path (device + schematic), RTL
   schematic, timing summary, utilization by hierarchy, power (label it a
   vectorless estimate), ILA waveforms. `make gui`, `make gui VIEW=rtl`,
-  `make gui VIEW=ila`. The Phase D set is done (2026-10-17, single core; in the README's "On the chip"). **Remind
-  the user to take a new set after Phase E** (TMR: three copies visible,
-  before/after comparison) **and at Stage 2 milestones** (systolic array,
+  `make gui VIEW=ila`. The Phase D set is done (2026-10-17, single core; in the README's "On the chip"). The
+  Phase E (TMR) set was waived by the user 2026-10-18. **Remind the user to
+  take a new set at Stage 2 milestones** (systolic array,
   DMA + interconnect, integration). Shots must come from the build whose
   reports are committed: rebuild without ILA before the non-ILA shots.
   `make floorplan` overwrites `docs/img/floorplan_board*.svg`: move the
