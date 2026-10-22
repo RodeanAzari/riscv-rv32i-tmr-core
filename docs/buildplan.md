@@ -19,6 +19,7 @@ relevant section when starting a phase; do not load the whole file.
 - `FENCE` `ECALL` `EBREAK`
 
 **Out of scope:** M/A/F/D/C extensions, CSRs beyond a basic timer, MMU, privilege modes, interrupts.
+*Changed 2026-10-22: the M extension is now planned for after Phase G (see Phase H), to speed up the tiny-LLM demo and Doom. A/F/D/C remain out of scope.*
 
 ### 5.2 Pipeline
 
@@ -262,7 +263,8 @@ Arty. Everything below is out of scope until then.
   (the Arty has no video output)
 - **Input and time:** keys over the UART; the cycle counter as the clock
 - **Speed:** the M extension (Doom's fixed-point math multiplies constantly),
-  measured as frames per second before and after
+  measured as frames per second with and without it (M itself is built in
+  Phase H, see there)
 
 ---
 
@@ -328,12 +330,14 @@ A phase is done when **every** box is checked. No partial credit.
 - [ ] Software on the core configures and launches an accelerator job
 
 ### Phase H — Integration + DFT
+- [ ] M extension (RV32IM), first thing after Phase G: a parameter defaulting to off so every Stage 1 result stays valid for RV32I; riscv-formal M checks, UVM golden model + coverage, TMR, CoreMark, synth trend rerun with RV32IM in their own rows
 - [ ] End-to-end on hardware: C program loads weights via DMA, launches GEMM, reads results
 - [ ] Benchmarked against software matmul on the same core, several matrix sizes
 - [ ] Measured PE utilization reported
 - [ ] Scan chain insertion; chain count, coverage, area overhead reported (§6.5)
 - [ ] **LibreLane run #2** on the full SoC (§6.4)
 - [ ] Written comparison of run #1 vs. run #2 — how area, congestion, and timing changed
+- [ ] Written FPGA-vs-ASIC comparison for the same RTL (§6.4)
 
 ---
 

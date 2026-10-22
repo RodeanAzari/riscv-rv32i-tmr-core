@@ -179,7 +179,8 @@ properties, UVM, TMR), §6 Stage 2 (systolic array, AXI, DMA, LibreLane, scan),
 §7 out of scope, §8 phase definitions of done. Read the relevant section when
 starting a phase. Rules that apply to every session:
 
-- **ISA:** RV32I base, 40 instructions. No M/A/F/D/C, CSRs beyond a basic timer,
+- **ISA:** RV32I base, 40 instructions. No A/F/D/C (M only after Phase G, see
+  buildplan Phase H), CSRs beyond a basic timer,
   MMU, privilege modes or interrupts. 5-stage in-order pipeline, branches
   resolved in EX, static not-taken, load-use stall of one cycle, `x0` always 0.
 - **Out of scope, flag rather than build:** out-of-order, superscalar, caches

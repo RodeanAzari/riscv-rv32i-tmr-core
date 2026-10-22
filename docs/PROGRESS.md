@@ -595,10 +595,26 @@ history, [formal-properties.md](formal-properties.md) and
 
 ### User requests to carry forward
 
-- **The DMA engine comes from the user's other project** (2026-10-18): they
-  are building it there and will bring it here. When Phase G reaches the DMA
-  step, stop and tell them; do not design one. Ask for its interface early
-  in Phase G, before the interconnect's ports are fixed.
+- **The DMA's software side comes from the user's other project**
+  (2026-10-18, corrected 2026-10-22): they are building the driver there,
+  against a QEMU model. The DMA RTL is built here in Phase G. Before fixing
+  its registers and descriptor format, ask the user what their driver
+  expects, so the two match.
+
+- **Phase H demo: a tiny LLM on the SoC** (2026-10-22). Try Karpathy's
+  llama2.c `stories260K` (260K parameters, about 260 KB in INT8, fits in
+  on-chip memory) or another small LLM, printing stories over the UART. The
+  matrix multiplies go on the systolic array. The core has no hardware
+  multiply or float, so softmax, RMSNorm and SiLU need fixed point or
+  software float. Measure tokens/s, both on the array and in software
+  alone. Bigger models (stories15M and up) need the DDR3 controller.
+
+- **M extension after Phase G** (2026-10-22). Finish Phase G first, then
+  build M (Phase H's first checkbox) to speed up the tiny-LLM demo and Doom
+  (Doom's `FixedMul` needs `MUL`/`MULH`). F stays out of scope: use fixed
+  point instead. **README:** when M lands, say plainly that the project first
+  ruled M out (RV32I only) and added it later for Doom and the tiny LLM,
+  with RV32I and RV32IM results kept apart.
 
 - **Done 2026-10-18: the six interactive demos** (`sw/demo/`), with the
   user's video of them in PuTTY in the README. Originally: a boot
