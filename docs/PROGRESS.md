@@ -474,7 +474,7 @@ riscv-formal found on its first run (see Decisions).
 | `make synth` | OOC synth + impl of the core, then of the TMR core (`*_ooc_tmr.*`, with the three-copy check), reports to `docs/reports/` | working |
 | `make prog` | Arty attached to WSL (usbipd): programs it with `openFPGALoader -b arty_a7_100t`; otherwise prints the Hardware Manager steps and the Windows path | working, both routes tried on the board |
 | `make ila` | after `make impl ILA=1`, with the Arty attached to WSL: programs it and captures the pipeline registers (`syn/ila_capture.tcl`, Vivado Hardware Manager in batch) to `syn/build/board/ila_capture.{csv,vcd}`, then checks the capture (`scripts/ila_check.py`) | working |
-| `make gui` | opens the last `make impl`'s routed design in the Vivado GUI (`syn/gui_view.tcl`): device view colored by module, worst path + its schematic, timing, utilization, power tabs. `VIEW=rtl`: elaborated RTL schematic. `VIEW=ila`: programs an ILA build, triggers on `ILA_TRIGGER` (default `core_state_transition`; must be a function the code calls, GCC inlines some) and shows waveforms | working |
+| `make gui` | opens the last `make impl`'s routed design in the Vivado GUI (`syn/gui_view.tcl`): device view colored by module, worst path + its schematic, timing, utilization, power tabs. `VIEW=rtl`: elaborated RTL schematic. `VIEW=array`: the 16×16 array's routed checkpoint (`make synth-array`), coloured by row; `VIEW=pair`: one PE pair as elaborated RTL. `VIEW=ila`: programs an ILA build, triggers on `ILA_TRIGGER` (default `core_state_transition`; must be a function the code calls, GCC inlines some) and shows waveforms | working |
 | `make floorplan` | exports placement + routing from the routed checkpoint (`syn/floorplan_export.tcl`) and draws `docs/img/floorplan_board{,_core}.svg` (`scripts/floorplan.py`); refuses an ILA build | working |
 | `make faults` | the documented TMR fault campaign, `FAULTS` (10000) trials, `SEED`; summary to `docs/reports/tmr_faults.txt`. The regression runs 1000 | working |
 | `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks, then `scripts/riscv-formal.sh` (checks + covers, verdicts read from status files); appends OSS CAD Suite's `bin/` to PATH itself; `FORMAL_JOBS=n` | working |
@@ -581,17 +581,13 @@ history, [formal-properties.md](formal-properties.md) and
 > exists. The single PE is done and verified exhaustively
 > (`rtl/accel/systolic_pe.sv`). The 16×16 array packs two MACs per DSP: 128 DSP,
 > 7,681 LUT, 104.5 MHz out of context (`make synth-array`). Every Phase F
-> box is checked, `make sim` is 320/320, the README has Phase F. **Next
-> (agreed for 2026-10-19): the Vivado screenshot set of the array**, then
-> Phase G (ask for the user's DMA interface first, see below). First add
-> `make gui VIEW=array` (open `syn/build/array16x16/post_route.dcp`, colour
-> by array row, worst path, tabs). Shots into `docs/img/vivado/phase-f/`:
-> device.png (whole die, by row, used DSP sites), device-dsp.png (one DSP
-> column: DSPs + the lane-split/adder slices beside them),
-> worstpathdevice.png + worstpath.png, timing.png, utilization-hierarchy.png
-> (16 rows × 8 pairs, one DSP each), pair-schematic.png (one pair routed:
-> the DSP48E1 with the packed weight in its A register, lane split, two
-> adders), rtl-schematic-pair.png; optional, the DSP's properties (AREG = 1).
+> box is checked, `make sim` is 320/320, the README has Phase F.
+> **The array's Vivado set is done (2026-10-25)**: `make gui VIEW=array`
+> (routed 16×16, coloured by row) and `VIEW=pair` (elaborated pair), shots
+> in `docs/img/vivado/phase-f/`, README "In Vivado" has a Phase F section.
+> On every DSP AREG = 1 (the packed weight sits in the A register), MREG =
+> PREG = 0, BREG = 2 on 125 of 128. **Next: Phase G.** Ask for the user's
+> DMA driver interface first (see below).
 
 ### User requests to carry forward
 
@@ -628,8 +624,9 @@ history, [formal-properties.md](formal-properties.md) and
   plus `make floorplan` (the zoomable SVGs in `docs/img/`):** device view colored by module, worst path (device + schematic), RTL
   schematic, timing summary, utilization by hierarchy, power (label it a
   vectorless estimate), ILA waveforms. `make gui`, `make gui VIEW=rtl`,
-  `make gui VIEW=ila`. Done: Phase D (2026-10-17, single core) and Phase E
-  (2026-10-18, TMR, with the voter schematic), side by side in the README's
+  `make gui VIEW=ila`. Done: Phase D (2026-10-17, single core), Phase E
+  (2026-10-18, TMR, with the voter schematic) and Phase F (2026-10-25, the
+  array alone, its own README section), side by side in the README's
   "In Vivado". **Every set is kept, never replaced** (the user's rule,
   2026-10-18): a new folder per stage, and the README adds a column or
   section rather than swapping images. **Remind the user to take a new set
@@ -743,7 +740,7 @@ that changed meaningful state.
 
 ---
 
-*Last updated: 2026-10-18 — Phase E: live fault injector on the board (demo 7). Before that: TMR built, voter proven, 10,000-fault campaign 0 failures, 100 MHz on the board. Before that: Phase D done (demo video in the README); six interactive demos (sw/demo/) checked in simulation and run on the board; UART receiver and serial bootloader, on the board at 100 MHz (WNS +0.948 ns); programs load over serial with no rebuild. Before that, 2026-10-17 — 100 MHz on the board: data memory accessed from
+*Last updated: 2026-10-25 — Phase F's Vivado screenshot set (`make gui VIEW=array`/`pair`). Before that, 2026-10-18 — Phase E: live fault injector on the board (demo 7). Before that: TMR built, voter proven, 10,000-fault campaign 0 failures, 100 MHz on the board. Before that: Phase D done (demo video in the README); six interactive demos (sw/demo/) checked in simulation and run on the board; UART receiver and serial bootloader, on the board at 100 MHz (WNS +0.948 ns); programs load over serial with no rebuild. Before that, 2026-10-17 — 100 MHz on the board: data memory accessed from
 EX (load data registered into MEM/WB), board WNS +1.550 ns at 100 MHz, OOC
 122.7 MHz; CoreMark 0.962/MHz (about 96) validated at 100 MHz, IPC
 unchanged. XT's harness follows stores into EX. ILA on the pipeline

@@ -3,6 +3,7 @@
 #   vivado -mode gui -source syn/gui_view.tcl -tclargs routed [part]
 #   vivado -mode gui -source syn/gui_view.tcl -tclargs rtl <part> [tmr]
 #   vivado -mode gui -source syn/gui_view.tcl -tclargs ila <part> <bit> <ltx> <pc>
+#   vivado -mode gui -source syn/gui_view.tcl -tclargs array|pair <part>
 #
 # routed (default): the placed and routed checkpoint from the last
 #   `make impl`. The Device view shows where every cell landed, colored by
@@ -14,6 +15,9 @@
 #   impl_arty.tcl does; tmr = 1 elaborates the TMR core, as make impl TMR=1.
 # ila: programs an ILA build on the board and shows a capture as waveforms,
 #   triggered when the instruction at <pc> (hex) enters EX.
+# array: the 16x16 systolic array's routed checkpoint from make synth-array,
+#   coloured by array row, with the worst path, timing and utilization tabs.
+# pair: one systolic_pe_pair (two MACs on one DSP48E1) as elaborated RTL.
 #
 # For looking only. Nothing here writes to docs/reports/: the committed
 # numbers come from the batch flows.
@@ -71,7 +75,49 @@ if {$view eq "ila"} {
     display_hw_ila_data [upload_hw_ila_data $ila]
     return
 }
-if {$view ne "routed"} { error "view '$view': expected routed, rtl or ila" }
+if {$view eq "pair"} {
+    read_verilog -sv [find_sv [file join $repo rtl]]
+    synth_design -rtl -top systolic_pe_pair -part $part
+    show_schematic [get_cells]
+    return
+}
+if {$view eq "array"} {
+    # The 16x16 array out of context (make synth-array): cells coloured by
+    # array row, so the systolic structure shows, skew and deskew in grey;
+    # no row is yellow, the worst path's colour.
+    # Names are flat (synthesis flattened the hierarchy), so match prefixes.
+    set dcp [file join $repo syn build array16x16 post_route.dcp]
+    if {![file exists $dcp]} { error "$dcp not found -- run make synth-array first" }
+    open_checkpoint $dcp
+    set rgbs {
+        {255   0   0} {255 128   0} {150 100  50} {128 255   0}
+        {  0 255   0} {  0 255 128} {  0 255 255} {  0 128 255}
+        {  0   0 255} {128   0 255} {255   0 255} {255   0 128}
+        {255 160 160} {160 255 160} {160 160 255} {255 255 255}}
+    array set rows {}
+    set other {}
+    foreach c [get_cells -hier -filter {IS_PRIMITIVE}] {
+        if {[regexp {^g_row\[(\d+)\]\.} $c -> r]} { lappend rows($r) $c } \
+        elseif {![string match {[GV][NC][DC]} $c]} { lappend other $c }
+    }
+    puts "\n--- Device view colors ---"
+    foreach r [lsort -integer [array names rows]] {
+        highlight_objects -rgb [lindex $rgbs $r] [get_cells $rows($r)]
+        puts [format "  %-14s %5d cells  row %d" "rgb([lindex $rgbs $r])" [llength $rows($r)] $r]
+    }
+    highlight_objects -rgb {128 128 128} [get_cells $other]
+    puts [format "  %-14s %5d cells  input skew, output deskew, valid" "rgb(128 128 128)" [llength $other]]
+    set worst [get_timing_paths -max_paths 1 -nworst 1 -setup]
+    highlight_objects -color yellow $worst
+    select_objects $worst
+    puts "  yellow: worst setup path, slack [get_property SLACK $worst] ns"
+    show_schematic -name worst_path [get_cells -of_objects $worst]
+    report_timing_summary -name timing_summary
+    report_utilization -name utilization
+    report_utilization -hierarchical -name utilization_hierarchy
+    return
+}
+if {$view ne "routed"} { error "view '$view': expected routed, rtl, ila, array or pair" }
 
 set dcp [file join $repo syn build board post_route.dcp]
 if {![file exists $dcp]} { error "$dcp not found -- run make impl first" }

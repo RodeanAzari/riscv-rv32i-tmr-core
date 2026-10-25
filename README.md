@@ -351,7 +351,8 @@ the board. Board results, from
 
 A screenshot set per milestone, each kept in its own folder and taken from the
 build whose reports are committed (`make gui`, `make gui VIEW=rtl`, with
-`TMR=1` for the TMR core). Side by side, so the change shows:
+`TMR=1` for the TMR core; `VIEW=array` and `VIEW=pair` for the systolic
+array). Side by side, so the change shows:
 
 - **Phase D, the single core** ([`phase-d/`](docs/img/vivado/phase-d/)): the CoreMark build of
   2026-10-17, 100 MHz, WNS +1.550 ns, before the UART receiver (+38 LUT,
@@ -371,6 +372,21 @@ build whose reports are committed (`make gui`, `make gui VIEW=rtl`, with
 | ![RTL schematic of the core](docs/img/vivado/phase-d/rtl-schematic-u_core.png) The core as elaborated RTL | ![RTL schematic of the TMR core](docs/img/vivado/phase-e/rtl-schematic-tmr.png) The TMR core as elaborated RTL: copy A (`u_core_a`), copies B and C (`g_other`), the voted feedback into each, the voter (`u_voter`) and the mismatch counter |
 | ![RTL schematic of the ALU](docs/img/vivado/phase-d/rtl-schematic-alu.png) The ALU, opened up | ![RTL schematic of the voter](docs/img/vivado/phase-e/rtl-schematic-voter.png) The voter, opened up: a 2-of-3 majority (`a&b \| b&c \| a&c`) over each copy's 143-bit bundle, a compare flagging any disagreement, and one per copy saying which disagrees |
 | ![Power estimate](docs/img/vivado/phase-d/power.png) Power: 0.26 W, Vivado's **vectorless estimate**, not a measurement; the MMCM is 65% of it | |
+
+### Phase F, the systolic array
+
+The 16×16 array on its own ([`phase-f/`](docs/img/vivado/phase-f/)): the
+`make synth-array ARRAY=16x16` build of 2026-10-18, **out of context** (no
+board, no core, no clock tree), so not comparable cell for cell with the
+board builds above. 10 ns constraint, WNS +0.431 ns, 128 DSP48E1.
+
+| Placed and routed | Inside a PE pair |
+|---|---|
+| ![Device view, array](docs/img/vivado/phase-f/device.png) Device view, coloured by array row (row 0 red … row 15 white; skew, deskew and `valid` grey). Vivado does not lay the rows out as a grid: they form ragged vertical strips around the DSP columns | ![RTL schematic of a PE pair](docs/img/vivado/phase-f/rtl-schematic-pair.png) One `systolic_pe_pair` as elaborated RTL: two columns' shadow weights, the activation in and out, two psums in and out |
+| ![One DSP48E1 site](docs/img/vivado/phase-f/device-dsp.png) One DSP48E1 site (`DSP48_X2Y40`, row 15, pair 0) with the worst path (yellow) leaving its product output for the fabric | ![RTL datapath of a PE pair](docs/img/vivado/phase-f/rtl-schematic-pair-datapath.png) The datapath alone: the two INT8 weights packed into `w0 + w1·2^16`, **one multiply** by the shared activation, the lane split, two INT32 psum adders |
+| ![One slice](docs/img/vivado/phase-f/device-slice.png) One slice (SLICEM) of the fabric around the DSPs: four LUTs, a CARRY4 and flip-flops, coloured by row | ![DSP register properties](docs/img/vivado/phase-f/dsp-properties.png) The DSP's registers. **AREG = 1**: the pair's packed-weight register went *into* the DSP's A input, so the stationary weight is stored inside the multiplier. BREG = 2 (on 125 of the 128): two registers from the activation's path absorbed too. MREG = PREG = 0: the product leaves unregistered (CREG/DREG are unused ports) |
+| ![Worst path on the device, array](docs/img/vivado/phase-f/worstpathdevice.png) The worst setup path on the die | ![Worst path schematic, array](docs/img/vivado/phase-f/worstpath.png) The worst path: row 15, pair 0's DSP multiply → lane split and psum adder (CARRY4 chains; one LUT is row 14's psum coming down) → the output deskew shift register (Vivado folded the bottom psum register into an SRL16E) |
+| ![Timing summary, array](docs/img/vivado/phase-f/timing.png) Timing: met at 100 MHz out of context, WNS +0.431 ns, WHS +0.097 ns | ![Utilization by hierarchy, array](docs/img/vivado/phase-f/utilization-hierarchy.png) 128 pairs (16 rows × 8), one DSP each. 7,645 physical slice LUTs here; the 7,681 elsewhere are LUT cells |
 
 ## As a chip (Sky130)
 

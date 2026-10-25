@@ -369,7 +369,9 @@ ila:
 
 # Open the last make impl's routed design in the Vivado GUI (syn/gui_view.tcl):
 # device view colored by module, worst path, schematic, timing, utilization,
-# power. VIEW=rtl opens the elaborated RTL schematic instead. VIEW=ila
+# power. VIEW=rtl opens the elaborated RTL schematic instead; VIEW=array the
+# 16x16 systolic array (make synth-array) coloured by row, VIEW=pair one PE
+# pair as elaborated RTL. VIEW=ila
 # programs an ILA build (make impl ILA=1) and shows a capture as waveforms,
 # triggered when the function ILA_TRIGGER of ILA_ELF enters EX (one the code
 # calls: GCC inlines some, e.g. core_list_find, leaving a dead copy); the Arty must
