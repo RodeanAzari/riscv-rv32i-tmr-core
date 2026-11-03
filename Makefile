@@ -14,6 +14,7 @@
 #   make ila    program an ILA=1 build and capture the pipeline registers
 #   make model-test  the C golden model alone, on riscv-tests rv32ui
 #   make gemm-model  the systolic array's golden model alone (Phase F)
+#   make dma-model   the DMA engine's golden model alone (Phase G)
 #   make uvm    UVM regression in XSim against the golden model
 #   make clean
 #
@@ -64,7 +65,7 @@ lint:
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim
-sim: gemm-model
+sim: gemm-model dma-model
 	$(MAKE) -C tb/cocotb
 
 # The systolic array's golden model (sw/model/gemm_model.py) checks itself
@@ -76,6 +77,13 @@ GEMM_PY := $(if $(wildcard $(HOME)/cocotb-env/bin/python),$(HOME)/cocotb-env/bin
 .PHONY: gemm-model
 gemm-model:
 	$(GEMM_PY) sw/model/gemm_model.py
+
+# The DMA engine's golden model (sw/model/dmaeng_model.py, ported from
+# DMA-Engine's QEMU device) replays DMA-Engine's golden trace and runs the
+# directed checks the trace does not cover. Plain Python, no packages.
+.PHONY: dma-model
+dma-model:
+	python3 sw/model/dmaeng_model.py
 
 # --- formal ----------------------------------------------------------------
 # Every tb/formal/*.sby, each with all its tasks (prove, cover). The tools come
