@@ -7,3 +7,6 @@
 [submodule "sw/coremark"]
 	path = sw/coremark
 	url = https://github.com/eembc/coremark.git
+[submodule "sw/dma-engine"]
+	path = sw/dma-engine
+	url = https://github.com/RodeanAzari/DMA-Engine.git

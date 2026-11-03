@@ -194,6 +194,19 @@ starting a phase. Rules that apply to every session:
 - **Phase is done only when every box in its §8 checklist is checked.** Ship
   Stage 1 before starting Stage 2. LibreLane run #1 is part of Phase E.
 
+**Array clock domain (Project 5 depends on this):**
+- The systolic array runs on its own clock, `clk_array`, from a separate MMCM output.
+  Default it to the core frequency.
+- All core ↔ array traffic crosses through proper CDC: async FIFOs for data, pulse or
+  handshake synchronizers for control and status, reset synchronizer in `clk_array`.
+  XDC: `set_clock_groups -asynchronous` between the domains.
+- **Prove it now:** run the full regression and the hardware GEMM test with `clk_array`
+  at a different frequency from the core (e.g. 80 MHz vs. 100 MHz). Both must pass.
+- Weight-load hook: a weight-transform stage in the load path, identity by default,
+  so a perturbation unit can be inserted later without touching the array.
+- Optional now, needed later: wire the MMCM's DRP to core-accessible registers so
+  `clk_array` can be changed at runtime.
+
 ---
 
 ## 9. Known failure modes (Stage 1; Stage 2 in docs/buildplan.md)
