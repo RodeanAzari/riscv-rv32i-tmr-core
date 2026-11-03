@@ -593,9 +593,15 @@ history, [formal-properties.md](formal-properties.md) and
 
 - **The DMA's software side comes from the user's other project**
   (2026-10-18, corrected 2026-10-22): they are building the driver there,
-  against a QEMU model. The DMA RTL is built here in Phase G. Before fixing
-  its registers and descriptor format, ask the user what their driver
-  expects, so the two match.
+  against a QEMU model. The DMA RTL is built here in Phase G. **Received
+  2026-11-03:** [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine),
+  submodule `sw/dma-engine/` at `3dcf38a`. `spec/dmaeng.yaml` is the single
+  source of truth (generates `rtl/dmaeng_pkg.sv`, `include/dmaeng_regs.h`);
+  `qemu-device/dmaeng.c` is the behavioural golden model; the RTL is
+  checked against `traces/dmaeng-sync.trace` (format in
+  `qemu-device/PATCH.md`). The Linux driver does not run on this core: the
+  bare-metal one here uses the same header. **The user's rule:** wherever
+  this repo uses DMA-Engine's files, the README says so and links the repo.
 
 - **Phase H demo: a tiny LLM on the SoC** (2026-10-22). Try Karpathy's
   llama2.c `stories260K` (260K parameters, about 260 KB in INT8, fits in

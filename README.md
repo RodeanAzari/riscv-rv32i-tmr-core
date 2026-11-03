@@ -556,6 +556,7 @@ its reports are committed with the RTL that produced them.
 | `sw/boot/`, `sw/app/`, `sw/lib/` | The serial bootloader; startup and linker script for the programs it loads; their console library |
 | `sw/demo/`, `sw/apps/` | The demo reel; small programs (e.g. `echo`) |
 | `sw/firstlight/`, `sw/coremark-port/` | Bare-metal firmware and the CoreMark port (CoreMark itself is a submodule) |
+| `sw/dma-engine/` | [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine) (submodule): the DMA's register map and descriptor spec, its QEMU device model and recorded trace, the reference for Phase G |
 | `sw/riscv-tests-env/` | Our environment for the official `riscv-tests` (the suite is a submodule, `sw/riscv-tests/`) |
 | `syn/` | Vivado Tcl: OOC synth, board impl, ILA capture, GUI views, floorplan export; the LibreLane config |
 | `constr/` | Arty A7 pin constraints |
@@ -565,7 +566,11 @@ its reports are committed with the RTL that produced them.
 ## Roadmap
 
 - **Stage 2 — the rest of the SoC.** A descriptor-based DMA and an AXI
-  interconnect with formally proven interfaces (Phase G); then the core
+  interconnect with formally proven interfaces (Phase G). The DMA's register
+  map, descriptor format and golden trace come from my companion project,
+  [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine) (a Linux driver and
+  QEMU device model for the same engine), pinned here as the submodule
+  `sw/dma-engine/`; then the core
   driving the array on the board, with measured GOPS, PE utilisation and
   speedup over software matmul, scan insertion, and a second ASIC run of the
   whole SoC (Phase H).
