@@ -42,3 +42,7 @@ sw/*.bin
 sw/*.hex
 sw/build/
 tb/uvm/build/
+
+# Local Claude context, not published
+CLAUDE.md
+docs/PROGRESS.md
