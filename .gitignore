@@ -46,3 +46,4 @@ tb/uvm/build/
 # Local Claude context, not published
 CLAUDE.md
 docs/PROGRESS.md
+DMA.md
