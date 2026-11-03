@@ -177,7 +177,9 @@ Also specify: edge handling for matrices not a multiple of 16 (zero-pad vs. part
 
 ### 6.3 DMA engine
 
-Descriptor-based with scatter-gather. Descriptor in memory: source address, destination address, length, next-descriptor pointer, control/status flags.
+Descriptor-based with scatter-gather. **The register map and descriptor format are [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine)'s** (submodule `sw/dma-engine/`, `spec/dmaeng.yaml`), so the driver built there against its QEMU model matches this RTL. That replaces the linked list first planned here (descriptors with a next pointer): descriptors sit in a power-of-two ring (32 bytes each: source, destination, length, flags with OWN/IRQ/LAST, status); the driver advances TAIL (the doorbell), the engine walks HEAD to TAIL, writes status before clearing OWN, and stops on an error until `CTRL.RESET`. Scatter-gather is a run of descriptors closed by `LAST`. Behaviour follows `qemu-device/dmaeng.c`; `traces/dmaeng-sync.trace` is golden stimulus.
+
+On this SoC: addresses are 32 bits, so `RING_BASE_HI` and the descriptors' upper address words must be 0 (anything else fails as an unmapped access, `DMA_FAIL`). The core has no interrupts: `IRQ_STATUS`/`IRQ_MASK` and the interrupt output exist as specified, and software polls OWN or HEAD.
 
 > **Design note:** this DMA is reused later for a PCIe host bridge. **Separate the descriptor/scatter-gather logic from the transport layer** so only the transport changes. Do not entangle AXI specifics into the descriptor engine.
 
@@ -324,20 +326,26 @@ A phase is done when **every** box is checked. No partial credit.
 ### Phase G — DMA + interconnect
 - [ ] AXI4-Lite control interface
 - [ ] AXI4 data interface
-- [ ] Descriptor-based DMA with scatter-gather
+- [ ] Descriptor-based DMA with scatter-gather, to DMA-Engine's spec (§6.3): register package generated from `spec/dmaeng.yaml` and checked against it, a Python model ported from `qemu-device/dmaeng.c` first, `traces/dmaeng-sync.trace` replayed against the RTL, and a bare-metal driver on the core using `dmaeng_regs.h`
 - [ ] Interconnect with round-robin arbitration and address decode
 - [ ] All §6.2 SVA assertions written and passing
 - [ ] Software on the core configures and launches an accelerator job
+- [ ] Release `soc-v1.0` (fpga-coord §5: release test, `CHANGELOG.md`, annotated tag); P4 waits on it
 
 ### Phase H — Integration + DFT
 - [ ] M extension (RV32IM), first thing after Phase G: a parameter defaulting to off so every Stage 1 result stays valid for RV32I; riscv-formal M checks, UVM golden model + coverage, TMR, CoreMark, synth trend rerun with RV32IM in their own rows
+- [ ] Array clock domain (CLAUDE.md §5-8): `clk_array` from its own MMCM output, defaulting to the core clock; async FIFOs for data, pulse or handshake synchronizers for control and status, a reset synchronizer in `clk_array`; `set_clock_groups -asynchronous` in the XDC; Vivado `report_cdc` shows no unsafe crossings
+- [ ] Weight-transform stage in the weight-load path, identity by default, the array itself untouched
+- [ ] MMCM DRP behind core-accessible registers: software changes `clk_array` at runtime (part of `soc-v2.0`, which P5 and P7 wait on)
 - [ ] End-to-end on hardware: C program loads weights via DMA, launches GEMM, reads results
+- [ ] Full regression and the hardware GEMM test pass with `clk_array` at a different frequency from the core (e.g. 80 MHz vs. 100 MHz)
 - [ ] Benchmarked against software matmul on the same core, several matrix sizes
 - [ ] Measured PE utilization reported
 - [ ] Scan chain insertion; chain count, coverage, area overhead reported (§6.5)
 - [ ] **LibreLane run #2** on the full SoC (§6.4)
 - [ ] Written comparison of run #1 vs. run #2 — how area, congestion, and timing changed
 - [ ] Written FPGA-vs-ASIC comparison for the same RTL (§6.4)
+- [ ] Release `soc-v2.0` (fpga-coord §5); P4, P5 and P7 wait on it
 
 ---
 
