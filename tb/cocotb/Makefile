@@ -18,9 +18,11 @@ REPO := $(CURDIR)/../..
 
 # Recursive, for the same reason as the root Makefile: rtl/ is nested, and a
 # one-level glob would drop whole subdirectories without saying so.
-VERILOG_SOURCES := $(shell find $(REPO)/rtl -name '*.sv' | sort)
+# DMA-Engine's register package first, as in the root Makefile.
+RTL_SOURCES     := $(shell find $(REPO)/rtl -name '*.sv' | sort)
+VERILOG_SOURCES := $(REPO)/sw/dma-engine/rtl/dmaeng_pkg.sv $(RTL_SOURCES)
 
-ifeq ($(VERILOG_SOURCES),)
+ifeq ($(RTL_SOURCES),)
   $(error no .sv files found under $(REPO)/rtl)
 endif
 
@@ -51,7 +53,7 @@ endif
 # makes Verilator evaluate them: every test then checks every property on
 # every cycle it runs. A failing assertion stops the simulation with the
 # file and line of the property, which the test reports as a failure.
-COMPILE_ARGS += -DRISCV_FORMAL -DFORMAL --assert
+COMPILE_ARGS += -DRISCV_FORMAL -DFORMAL --assert $(REPO)/tb/lint/waivers.vlt
 
 # One entry per elaboration, <toplevel module>:<python test modules>.
 #
@@ -79,6 +81,7 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          systolic_array:test_systolic_array \
          systolic_array_16x16:test_systolic_array \
          systolic_array_4x8:test_systolic_array \
+         dmaeng_regs:test_dmaeng_regs \
          soc:test_soc \
          soc:test_coremark \
          soc:test_boot \

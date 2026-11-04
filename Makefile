@@ -31,13 +31,18 @@ export TOP ?= riscv_core
 # so a one-level rtl/*.sv glob would silently miss whole subdirectories. sorted
 # because find returns filesystem order, which differs between machines and
 # would make CI and local builds disagree on compile order.
-RTL := $(shell find rtl -name '*.sv' | sort)
+# DMA-Engine's register package (submodule, generated from its
+# spec/dmaeng.yaml) comes first: packages compile before what imports them.
+DMAENG_PKG := sw/dma-engine/rtl/dmaeng_pkg.sv
+RTL := $(DMAENG_PKG) $(shell find rtl -name '*.sv' | sort)
 
-ifeq ($(RTL),)
+ifeq ($(filter-out $(DMAENG_PKG),$(RTL)),)
   $(error no .sv files found under rtl/)
 endif
 
 # --- lint ------------------------------------------------------------------
+# tb/lint/waivers.vlt: one waiver, for the generated DMA package (see there).
+LINT_WAIVERS := tb/lint/waivers.vlt
 # No --timing: that flag is for delay and event constructs, which CLAUDE.md §3
 # forbids in rtl/. If lint ever needs it, something non-synthesizable got in.
 #
@@ -53,15 +58,16 @@ XILINX_MODELS := $(shell find tb/models -name '*.sv' | sort)
 
 .PHONY: lint
 lint:
-	verilator --lint-only -Wall --top-module $(TOP) $(RTL)
-	verilator --lint-only -Wall --top-module $(TOP) -DRISCV_FORMAL -DFORMAL $(RTL)
-	verilator --lint-only -Wall --top-module arty_a7_top $(RTL) $(XILINX_MODELS)
-	verilator --lint-only -Wall --top-module arty_a7_top -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
-	verilator --lint-only -Wall --top-module riscv_core_tmr $(RTL)
-	verilator --lint-only -Wall --top-module riscv_core_tmr -DRISCV_FORMAL -DFORMAL $(RTL)
-	verilator --lint-only -Wall --top-module systolic_pe $(RTL)
-	verilator --lint-only -Wall --top-module systolic_array $(RTL)
-	verilator --lint-only -Wall --top-module systolic_pe_pair $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module $(TOP) $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module $(TOP) -DRISCV_FORMAL -DFORMAL $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top $(RTL) $(XILINX_MODELS)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr -DRISCV_FORMAL -DFORMAL $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_pe $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_array $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_pe_pair $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module dmaeng_regs $(RTL)
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim
@@ -80,9 +86,13 @@ gemm-model:
 
 # The DMA engine's golden model (sw/model/dmaeng_model.py, ported from
 # DMA-Engine's QEMU device) replays DMA-Engine's golden trace and runs the
-# directed checks the trace does not cover. Plain Python, no packages.
+# directed checks the trace does not cover. First, the register package and
+# header it and the RTL read must be what DMA-Engine's spec/dmaeng.yaml
+# generates (scripts/dmaeng_regs_check.py; needs PyYAML, pinned in
+# tb/cocotb/requirements.txt).
 .PHONY: dma-model
 dma-model:
+	python3 scripts/dmaeng_regs_check.py
 	python3 sw/model/dmaeng_model.py
 
 # --- formal ----------------------------------------------------------------
@@ -293,6 +303,15 @@ ARRAY ?= 16x16
 synth-array:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART) systolic_array $(subst x, ,$(ARRAY))
+
+# The DMA engine alone, out of context (Phase G): DMA_TOP (dmaeng_regs, the
+# AXI4-Lite register slave, until the engine exists). Reports
+# docs/reports/*_ooc_<DMA_TOP>.*.
+DMA_TOP ?= dmaeng_regs
+.PHONY: synth-dma
+synth-dma:
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART) $(DMA_TOP)
 
 # --- TMR fault injection ---------------------------------------------------
 # The documented campaign (CLAUDE.md 5.7): FAULTS random single-bit flips into

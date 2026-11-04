@@ -4,6 +4,7 @@
 #
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> [riscv_core_tmr]
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> systolic_array <rows> <cols>
+#   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> <other top>
 #
 # Reports: docs/reports/*_ooc.* for the core, *_ooc_tmr.* for the TMR core,
 # which also gets a per-hierarchy utilization report and a check that three
@@ -37,6 +38,10 @@ if {$top eq "systolic_array"} {
     set sub      "array${rows}x${cols}"
     set generics [list -generic ROWS=$rows -generic COLS=$cols]
     set title    "$top ${rows}x${cols}"
+} elseif {$top ne "riscv_core" && !$tmr} {
+    # any other block on its own (the DMA, Phase G): reports *_ooc_<top>.*
+    set sfx "_ooc_$top"
+    set sub $top
 }
 set repo    [file normalize [file join [file dirname [info script]] ..]]
 set rundir  [file join $repo syn build $sub]
@@ -60,6 +65,9 @@ set sv [find_sv [file join $repo rtl]]
 if {[llength $sv] == 0} {
     error "no .sv files found under rtl/ -- refusing to synthesize nothing"
 }
+# DMA-Engine's register package (submodule, generated from its
+# spec/dmaeng.yaml) first: packages compile before what imports them.
+set sv [concat [list [file join $repo sw dma-engine rtl dmaeng_pkg.sv]] $sv]
 read_verilog -sv $sv
 read_xdc [file join $repo constr core_ooc.xdc]
 

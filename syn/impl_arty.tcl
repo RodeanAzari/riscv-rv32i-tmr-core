@@ -57,6 +57,9 @@ set sv [find_sv [file join $repo rtl]]
 if {[llength $sv] == 0} {
     error "no .sv files found under rtl/ -- refusing to synthesize nothing"
 }
+# DMA-Engine's register package (submodule, generated from its
+# spec/dmaeng.yaml) first: packages compile before what imports them.
+set sv [concat [list [file join $repo sw dma-engine rtl dmaeng_pkg.sv]] $sv]
 read_verilog -sv $sv
 read_xdc [file join $repo constr arty_a7.xdc]
 

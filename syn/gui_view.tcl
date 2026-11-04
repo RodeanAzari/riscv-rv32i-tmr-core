@@ -35,9 +35,14 @@ proc find_sv {dir} {
     }
     return [lsort $out]
 }
+# rtl/ plus DMA-Engine's register package (submodule), the package first
+proc rtl_sv {repo} {
+    return [concat [list [file join $repo sw dma-engine rtl dmaeng_pkg.sv]] \
+                [find_sv [file join $repo rtl]]]
+}
 
 if {$view eq "rtl"} {
-    read_verilog -sv [find_sv [file join $repo rtl]]
+    read_verilog -sv [rtl_sv $repo]
     read_xdc [file join $repo constr arty_a7.xdc]
     set tmr [lindex $argv 2]
     if {$tmr eq ""} { set tmr 0 }
@@ -76,7 +81,7 @@ if {$view eq "ila"} {
     return
 }
 if {$view eq "pair"} {
-    read_verilog -sv [find_sv [file join $repo rtl]]
+    read_verilog -sv [rtl_sv $repo]
     synth_design -rtl -top systolic_pe_pair -part $part
     show_schematic [get_cells]
     return

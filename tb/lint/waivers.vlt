@@ -1,0 +1,6 @@
+`verilator_config
+// DMA-Engine's register package is generated from its spec/dmaeng.yaml and
+// consumed read-only from the submodule (sw/dma-engine/), so it carries every
+// constant in the spec whether or not this RTL uses it. Waived for that file
+// and that rule only; every file under rtl/ is still linted with -Wall.
+lint_off -rule UNUSEDPARAM -file "*sw/dma-engine/rtl/dmaeng_pkg.sv"
