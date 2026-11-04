@@ -82,6 +82,7 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          systolic_array_16x16:test_systolic_array \
          systolic_array_4x8:test_systolic_array \
          dmaeng_regs:test_dmaeng_regs \
+         dmaeng:test_dmaeng \
          soc:test_soc \
          soc:test_coremark \
          soc:test_boot \

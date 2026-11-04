@@ -68,6 +68,7 @@ lint:
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_array $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_pe_pair $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module dmaeng_regs $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module dmaeng $(RTL)
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim
