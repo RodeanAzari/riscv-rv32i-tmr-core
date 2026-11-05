@@ -17,7 +17,7 @@
 // copy would commit something different" (see the masking at the bundle).
 // mismatch_count_o counts episodes -- cycles where a mismatch begins -- so
 // one fault reads as one, however long its effects take to drain; it
-// saturates, and lags mismatch_o by a cycle. disagree_o says which copy is
+// saturates, and lags mismatch_o by two cycles. disagree_o says which copy is
 // out.
 //
 // DONT_TOUCH and KEEP_HIERARCHY on the copies: without them Vivado sees three
@@ -240,11 +240,22 @@ module riscv_core_tmr #(
   /* verilator lint_on PINCONNECTEMPTY */
 
   // ---- the mismatch counter ----
-  // Counts from mismatch_o registered, not mismatch_o itself: the compare
-  // across the whole bundle is a deep OR tree, and feeding it straight into
-  // the counter's enable made that the critical path (OOC, 2026-10-18). The
-  // count lands a cycle later; nothing reads it that fast.
-  logic mismatch_q, mismatch_q2;
+  // Counts from the three bundles registered, then compared and registered
+  // again, not from mismatch_o: each bundle comes out of its copy's EX logic
+  // (forwarding, the address adder), and the compare on top was the TMR
+  // critical path from the start. Feeding mismatch_o straight into the
+  // counter's enable missed timing (OOC, 2026-10-18); registering mismatch_o
+  // once left copy -> compare -> flop at 22 levels, which failed the board
+  // at 100 MHz once the AXI crossbar joined the SoC (WNS -0.260 ns,
+  // 2026-11-05). Now the compare starts at a flop. The count lands two cycles
+  // after mismatch_o; software reads it far later. mismatch_o and the vote
+  // itself are unchanged.
+  logic [VW-1:0] bundle_q [3];
+  logic          mismatch_q, mismatch_q2;
+
+  always_ff @(posedge clk_i) begin
+    for (int i = 0; i < 3; i++) bundle_q[i] <= bundle[i];
+  end
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
@@ -252,7 +263,7 @@ module riscv_core_tmr #(
       mismatch_q2      <= 1'b0;
       mismatch_count_o <= '0;
     end else begin
-      mismatch_q  <= mismatch_o;
+      mismatch_q  <= (bundle_q[0] != bundle_q[1]) || (bundle_q[0] != bundle_q[2]);
       mismatch_q2 <= mismatch_q;
       if (mismatch_q && !mismatch_q2 && (mismatch_count_o != '1))
         mismatch_count_o <= mismatch_count_o + 32'd1;
