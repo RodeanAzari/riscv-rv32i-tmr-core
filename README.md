@@ -66,7 +66,7 @@ and flip-flops. The single core's floorplan, from Phase D, is
 | | H — Integration + DFT, ASIC run #2 | Not started |
 
 Full scope and each phase's definition of done: [docs/buildplan.md](docs/buildplan.md).
-Day-to-day state, trend tables and decisions: [docs/PROGRESS.md](docs/PROGRESS.md).
+Trend tables and verification detail: [docs/measurements.md](docs/measurements.md); implementation notes and decisions: [docs/design-notes.md](docs/design-notes.md).
 
 ## Architecture
 
@@ -417,14 +417,14 @@ seven of them on the worst path); excluding it fixed that. What remained was
 21.9 ns of real logic at the slow corner, against 19.75 ns allowed at 25 ns
 once 20% of the cycle is reserved for the memory outside the block. At 35 ns,
 with the delay cells excluded, timing is met at every corner. Each attempt is
-a row in the ASIC table in [docs/PROGRESS.md](docs/PROGRESS.md).
+a row in the ASIC table in [docs/measurements.md](docs/measurements.md).
 
 ## Results
 
 Conditions travel with every number: an out-of-context Fmax models no clock
 skew and is not the same quantity as a board-level one, so they are separate
 rows. The per-slice trends (what each feature cost in LUTs and MHz) are in
-[docs/PROGRESS.md](docs/PROGRESS.md).
+[docs/measurements.md](docs/measurements.md).
 
 **Stage 1 — CPU.** Part `xc7a100tcsg324-1`, Vivado 2025.2.
 

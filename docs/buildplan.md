@@ -334,7 +334,7 @@ A phase is done when **every** box is checked. No partial credit.
 
 ### Phase H — Integration + DFT
 - [ ] M extension (RV32IM), first thing after Phase G: a parameter defaulting to off so every Stage 1 result stays valid for RV32I; riscv-formal M checks, UVM golden model + coverage, TMR, CoreMark, synth trend rerun with RV32IM in their own rows
-- [ ] Array clock domain (CLAUDE.md §5-8): `clk_array` from its own MMCM output, defaulting to the core clock; async FIFOs for data, pulse or handshake synchronizers for control and status, a reset synchronizer in `clk_array`; `set_clock_groups -asynchronous` in the XDC; Vivado `report_cdc` shows no unsafe crossings
+- [ ] Array clock domain (P5 and P7 depend on it): `clk_array` from its own MMCM output, defaulting to the core clock; async FIFOs for data, pulse or handshake synchronizers for control and status, a reset synchronizer in `clk_array`; `set_clock_groups -asynchronous` in the XDC; Vivado `report_cdc` shows no unsafe crossings
 - [ ] Weight-transform stage in the weight-load path, identity by default, the array itself untouched
 - [ ] MMCM DRP behind core-accessible registers: software changes `clk_array` at runtime (part of `soc-v2.0`, which P5 and P7 wait on)
 - [ ] End-to-end on hardware: C program loads weights via DMA, launches GEMM, reads results
