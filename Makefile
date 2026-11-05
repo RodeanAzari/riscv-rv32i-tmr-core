@@ -64,6 +64,9 @@ lint:
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr -DRISCV_FORMAL -DFORMAL $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core -GMEM_WAIT=1 $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core -GMEM_WAIT=1 -DRISCV_FORMAL -DFORMAL $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr -GMEM_WAIT=1 -DRISCV_FORMAL -DFORMAL $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_pe $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_array $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_pe_pair $(RTL)
@@ -296,6 +299,15 @@ synth:
 		-source syn/synth_ooc.tcl -tclargs $(PART)
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_core_tmr
+
+# The core and the TMR core built with MEM_WAIT = 1 (the data-port wait,
+# Phase G): what the hold costs. Reports *_ooc_wait.*, *_ooc_tmr_wait.*.
+.PHONY: synth-wait
+synth-wait:
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_core wait
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_core_tmr wait
 
 # The systolic array alone, out of context (Phase F): ARRAY=<rows>x<cols>.
 # Reports docs/reports/*_ooc_array<rows>x<cols>.*, with the DSP count.

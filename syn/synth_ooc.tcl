@@ -5,6 +5,7 @@
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> [riscv_core_tmr]
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> systolic_array <rows> <cols>
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> <other top>
+#   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> riscv_core[_tmr] wait
 #
 # Reports: docs/reports/*_ooc.* for the core, *_ooc_tmr.* for the TMR core,
 # which also gets a per-hierarchy utilization report and a check that three
@@ -42,6 +43,14 @@ if {$top eq "systolic_array"} {
     # any other block on its own (the DMA, Phase G): reports *_ooc_<top>.*
     set sfx "_ooc_$top"
     set sub $top
+}
+# "wait" after the core or TMR core: built with MEM_WAIT = 1 (the data-port
+# wait, Phase G), reports *_ooc_wait.* / *_ooc_tmr_wait.*
+if {($top eq "riscv_core" || $tmr) && [lindex $argv 2] eq "wait"} {
+    set sfx      "${sfx}_wait"
+    set sub      "${sub}wait"
+    set generics [list -generic MEM_WAIT=1]
+    set title    "$top MEM_WAIT=1"
 }
 set repo    [file normalize [file join [file dirname [info script]] ..]]
 set rundir  [file join $repo syn build $sub]

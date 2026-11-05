@@ -68,6 +68,8 @@ COMPILE_ARGS += -DRISCV_FORMAL -DFORMAL --assert $(REPO)/tb/lint/waivers.vlt
 TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_core_tmr:test_core,test_riscv_tests \
          riscv_core_tmr:test_tmr_faults \
+         riscv_core_wait:test_core,test_riscv_tests \
+         riscv_core_tmr_wait:test_core,test_riscv_tests \
          riscv_alu:test_alu \
          riscv_regfile:test_regfile \
          riscv_decoder:test_decoder \
@@ -133,6 +135,18 @@ ifdef TEST_ONE
     ARRAY_SHAPE         := $(subst x, ,$(patsubst systolic_array_%,%,$(TOPLEVEL)))
     COMPILE_ARGS        += -GROWS=$(word 1,$(ARRAY_SHAPE)) -GCOLS=$(word 2,$(ARRAY_SHAPE))
     TOPLEVEL            := systolic_array
+  endif
+  # <core>_wait: the core built with MEM_WAIT = 1 (the data-port wait,
+  # Phase G), its data port held low a random DMEM_WAIT of the cycles. Only
+  # the tests that judge by retirements run: the golden-model random
+  # programs, the official suite and the hold tests. The rest count cycles
+  # or step the pipeline by hand, which a random hold would break.
+  ifneq ($(filter %_wait,$(TOPLEVEL)),)
+    TOPLEVEL            := $(patsubst %_wait,%,$(TOPLEVEL))
+    COMPILE_ARGS        += -GMEM_WAIT=1
+    export DMEM_WAIT    ?= 0.3
+    # quoted: cocotb puts it on a shell command line as is
+    export COCOTB_TEST_FILTER := 'test_hold|test_random|test_rv32ui'
   endif
   # The fault campaign breaks the pipeline's invariants on purpose, so the
   # core's in-RTL properties (FORMAL, --assert) would stop it at the first

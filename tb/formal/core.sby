@@ -2,16 +2,28 @@
 # rtl/core/riscv_core.sv -- under the environment in core_formal.sv.
 # See regfile_x0.sby for what the two tasks mean. RISCV_FORMAL as well as
 # FORMAL: the forwarding properties use the RVFI valid bits to skip bubbles.
+# The *_wait tasks build the core with MEM_WAIT (Phase G). prove_wait: every
+# property and H1 (a held cycle changes nothing) by k-induction, holds in any
+# cycle but one at a time (core_formal.sv HOLD1) -- with H1, sound for holds
+# of any length; depth 20, as holds leave fewer real steps in the window.
+# bmc_wait: holds completely free, bounded from reset; depth 14 (~1.5 min;
+# each step doubles, 15 took 3 min, 16 over 10; 0-15 passed, 2026-11-04).
 
 [tasks]
 prove
 cover
+prove_wait prove
+bmc_wait bmc
+cover_wait cover
 
 [options]
 prove: mode prove
 cover: mode cover
+bmc: mode bmc
 prove: depth 10
 cover: depth 10
+bmc_wait: depth 14
+prove_wait: depth 20
 
 [engines]
 smtbmc yices
@@ -20,6 +32,9 @@ smtbmc yices
 read_verilog -sv -formal -DRISCV_FORMAL riscv_alu.sv riscv_branch.sv riscv_decoder.sv
 read_verilog -sv -formal -DRISCV_FORMAL riscv_hazard.sv riscv_mem_align.sv riscv_regfile.sv
 read_verilog -sv -formal -DRISCV_FORMAL riscv_core.sv core_formal.sv
+prove_wait: chparam -set WAIT 1 -set HOLD1 1 core_formal
+bmc_wait: chparam -set WAIT 1 core_formal
+cover_wait: chparam -set WAIT 1 core_formal
 prep -top core_formal
 
 [files]

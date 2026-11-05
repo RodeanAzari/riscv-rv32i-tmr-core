@@ -21,6 +21,10 @@ from cocotb.triggers import RisingEdge, FallingEdge, Timer
 from rv32i_model import run_model
 
 CLK_PERIOD_NS = 10
+# Data-port wait (riscv_core MEM_WAIT = 1, the riscv_core_wait build): the
+# probability that dmem_ready_i is low in a cycle. 0 on every other build,
+# where the core ignores dmem_ready_i and nothing here changes.
+DMEM_WAIT = float(os.environ.get("DMEM_WAIT", "0"))
 NOP = 0x0000_0013
 MASK32 = 0xFFFF_FFFF
 
@@ -138,6 +142,13 @@ async def bram_model(dut, prefix, mem, default):
     while True:
         await Timer(CLK_PERIOD_NS // 2 - 1, unit="ns")
         addr = int(addr_sig.value) & ~0b11
+        # Held (MEM_WAIT): the core is waiting for the access it already
+        # made, so the data port keeps its output and takes no new address.
+        # This is the core's dmem_ready_i contract. IMEM needs nothing: the
+        # core re-presents the same fetch address while held. Only on a
+        # MEM_WAIT build (DMEM_WAIT set): without it the core ignores the pin,
+        # and so does a BRAM wired to it.
+        held = writable and bool(DMEM_WAIT) and not int(dut.dmem_ready_i.value)
         if writable:
             we = int(dut.dmem_we_o.value)
             wstrb = int(dut.dmem_wstrb_o.value)
@@ -145,10 +156,26 @@ async def bram_model(dut, prefix, mem, default):
         await RisingEdge(dut.clk_i)
         old = mem.get(addr, default)
         if writable and we:
+            assert not held, "a store issued while the core was held"
             keep = sum(0xFF << (8 * i) for i in range(4) if not (wstrb >> i) & 1)
             mem[addr] = (old & keep) | (wdata & ~keep & MASK32)
-        rdata_sig.value = old
+        if not held:
+            rdata_sig.value = old
         await FallingEdge(dut.clk_i)
+
+
+# A test that drives dmem_ready_i itself sets this, and random_ready leaves
+# the pin alone.
+_ready_by_test = False
+
+
+async def random_ready(dut, rng, p):
+    """dmem_ready_i low with probability p each cycle, set at the falling
+    edge. Never low during reset, which the core does not hold for."""
+    while True:
+        await FallingEdge(dut.clk_i)
+        if not _ready_by_test:
+            dut.dmem_ready_i.value = int(int(dut.rst_i.value) or rng.random() >= p)
 
 
 async def reset(dut, program=(), mem=None):
@@ -168,7 +195,11 @@ async def reset(dut, program=(), mem=None):
     dut.rst_i.value = 1
     dut.imem_rdata_i.value = NOP
     dut.dmem_rdata_i.value = 0
+    dut.dmem_ready_i.value = 1
     cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start())
+    if DMEM_WAIT:
+        rng = random.Random(int(os.environ.get("SEED", "1")) * 7919 + len(program))
+        cocotb.start_soon(random_ready(dut, rng, DMEM_WAIT))
     await RisingEdge(dut.clk_i)
     await FallingEdge(dut.clk_i)
     cocotb.start_soon(bram_model(dut, "imem", _imem, NOP))
@@ -515,6 +546,8 @@ async def run(dut, program, mem=None, timed=False, cycles=None, rvfi=None):
     writebacks = []
     if cycles is None:
         cycles = 3 * len(program) + MEM_WB + 1
+    if DMEM_WAIT:
+        cycles = int(cycles / (1 - DMEM_WAIT) * 2) + 50   # held cycles do no work
     for cycle in range(cycles):
         await RisingEdge(dut.clk_i)
         await FallingEdge(dut.clk_i)
@@ -1387,6 +1420,73 @@ def seeded_rng(dut):
 
 def random_mem(rng):
     return {a: rng.getrandbits(32) for a in range(0, 64, 4)}
+
+
+@cocotb.test(skip=not DMEM_WAIT)
+async def test_hold_commits_nothing(dut):
+    """MEM_WAIT: a held cycle is an edge that never happened. Hold for 12
+    cycles at many points of a program dense with stores, loads, branches and
+    forwarding: while held nothing commits (no store, no load issued, no
+    register write, no retirement) and nothing in the pipeline or the fetch
+    address moves; the retirements still match the model one for one."""
+    global _ready_by_test
+    rng = seeded_rng(dut)
+    watched = ("imem_addr_o", "if_id_pc_o", "if_id_instr_o", "id_ex_pc_o",
+               "ex_mem_pc_o", "mem_wb_pc_o", "ex_mem_alu_result_o", "halt_o")
+    holds = 0
+
+    async def hold_now_and_then():
+        nonlocal holds
+        while True:
+            for _ in range(rng.randrange(3, 15)):
+                await FallingEdge(dut.clk_i)
+            if int(dut.rst_i.value):
+                continue
+            dut.dmem_ready_i.value = 0
+            # imem_addr_o is combinational (pc while held): read the baseline
+            # once the hold has settled, not before it
+            await Timer(1, unit="ns")
+            before = {w: int(getattr(dut, w).value) for w in watched}
+            for _ in range(12):
+                await RisingEdge(dut.clk_i)
+                await FallingEdge(dut.clk_i)
+                assert not int(dut.dmem_we_o.value), "store issued while held"
+                assert not int(dut.dmem_re_o.value), "load issued while held"
+                assert not int(dut.wb_rd_we_o.value), "register write while held"
+                assert not int(dut.rvfi_valid_o.value), "retirement while held"
+                for w in watched:
+                    assert int(getattr(dut, w).value) == before[w], f"{w} moved while held"
+            dut.dmem_ready_i.value = 1
+            holds += 1
+
+    _ready_by_test = True
+    task = cocotb.start_soon(hold_now_and_then())
+    try:
+        await check_against_model(dut, random_program(rng, 400, 0), random_mem(rng),
+                                  min_taken=20)
+    finally:
+        task.cancel()
+        _ready_by_test = False
+    dut._log.info(f"{holds} holds of 12 cycles")
+    assert holds > 20
+
+
+@cocotb.test(skip=bool(DMEM_WAIT))
+async def test_ready_ignored_without_mem_wait(dut):
+    """MEM_WAIT = 0, every Stage 1 build: dmem_ready_i held low changes
+    nothing, so no Stage 1 result can depend on it."""
+    rng = seeded_rng(dut)
+
+    async def ready_low():
+        while True:
+            await FallingEdge(dut.clk_i)
+            dut.dmem_ready_i.value = 0
+    task = cocotb.start_soon(ready_low())
+    try:
+        await check_against_model(dut, random_program(rng, 200, 0), random_mem(rng),
+                                  min_taken=10)
+    finally:
+        task.cancel()
 
 
 @cocotb.test()

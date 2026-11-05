@@ -44,6 +44,7 @@ module rvfi_wrapper (
       .dmem_we_o        (dmem_we),
       .dmem_re_o        (),
       .dmem_rdata_i     (dmem_rdata),
+      .dmem_ready_i     (1'b1),
 
       .wb_rd_we_o       (),
       .wb_rd_addr_o     (),

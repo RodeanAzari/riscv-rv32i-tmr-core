@@ -36,7 +36,10 @@
 // happens.
 module riscv_core_tmr #(
     parameter int unsigned XLEN   = 32,
-    parameter int unsigned ADDR_W = 5
+    parameter int unsigned ADDR_W = 5,
+    // Data-port wait (riscv_core MEM_WAIT): one dmem_ready_i for all three
+    // copies, so a hold can never split them.
+    parameter bit          MEM_WAIT = 1'b0
 ) (
     input  logic            clk_i,
     input  logic            rst_i,
@@ -49,6 +52,7 @@ module riscv_core_tmr #(
     output logic            dmem_we_o,
     output logic            dmem_re_o,
     input  logic [XLEN-1:0] dmem_rdata_i,
+    input  logic            dmem_ready_i,
 
     output logic              wb_rd_we_o,
     output logic [ADDR_W-1:0] wb_rd_addr_o,
@@ -166,7 +170,7 @@ module riscv_core_tmr #(
   // Copy A drives the debug and RVFI ports; B's and C's are left open.
   /* verilator lint_off PINCONNECTEMPTY */
   (* DONT_TOUCH = "TRUE", KEEP_HIERARCHY = "TRUE" *)
-  riscv_core #(.XLEN(XLEN), .ADDR_W(ADDR_W), .VOTED(1'b1)) u_core_a (
+  riscv_core #(.XLEN(XLEN), .ADDR_W(ADDR_W), .VOTED(1'b1), .MEM_WAIT(MEM_WAIT)) u_core_a (
       .clk_i (clk_i), .rst_i (rst_i),
 `ifdef FORMAL
       .f_regs_o (),
@@ -175,6 +179,7 @@ module riscv_core_tmr #(
       .dmem_addr_o (dmem_addr[0]), .dmem_wdata_o (dmem_wdata[0]),
       .dmem_wstrb_o (dmem_wstrb[0]), .dmem_we_o (dmem_we[0]), .dmem_re_o (dmem_re[0]),
       .dmem_rdata_i (dmem_rdata_i),
+      .dmem_ready_i (dmem_ready_i),
       .wb_rd_we_o (rd_we[0]), .wb_rd_addr_o (rd_addr[0]), .wb_rd_wdata_o (rd_wdata[0]),
       .halt_o (halt[0]), .halt_next_o (halt_next[0]),
       .vote_pc_i (v_imem_addr), .vote_halt_i (v_halt_next),
@@ -203,7 +208,7 @@ module riscv_core_tmr #(
 
   for (genvar i = 1; i < 3; i++) begin : g_other
     (* DONT_TOUCH = "TRUE", KEEP_HIERARCHY = "TRUE" *)
-    riscv_core #(.XLEN(XLEN), .ADDR_W(ADDR_W), .VOTED(1'b1)) u_core (
+    riscv_core #(.XLEN(XLEN), .ADDR_W(ADDR_W), .VOTED(1'b1), .MEM_WAIT(MEM_WAIT)) u_core (
         .clk_i (clk_i), .rst_i (rst_i),
 `ifdef FORMAL
         .f_regs_o (),
@@ -212,6 +217,7 @@ module riscv_core_tmr #(
         .dmem_addr_o (dmem_addr[i]), .dmem_wdata_o (dmem_wdata[i]),
         .dmem_wstrb_o (dmem_wstrb[i]), .dmem_we_o (dmem_we[i]), .dmem_re_o (dmem_re[i]),
         .dmem_rdata_i (dmem_rdata_i),
+        .dmem_ready_i (dmem_ready_i),
         .wb_rd_we_o (rd_we[i]), .wb_rd_addr_o (rd_addr[i]), .wb_rd_wdata_o (rd_wdata[i]),
         .halt_o (halt[i]), .halt_next_o (halt_next[i]),
         .vote_pc_i (i == 1 ? v_imem_addr ^ inject_pc_i : v_imem_addr),

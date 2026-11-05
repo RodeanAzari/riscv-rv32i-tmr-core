@@ -8,14 +8,24 @@
 // reset whenever it likes, so the properties must hold across resets too.
 // Assumptions are where vacuous proofs come from, so they stay here, few and
 // visible, and never in rtl/.
-module core_formal (
+module core_formal #(
+    // 1: the core built with MEM_WAIT and dmem_ready_i free as well, so the
+    // solver may hold the core in any cycle, for any number of cycles
+    // (core.sby's *_wait tasks). 0: tied ready, as every Stage 1 proof ran.
+    parameter bit WAIT = 1'b0,
+    // 1 (prove_wait): holds last one cycle -- no two held cycles in a row.
+    // Sound for holds of any length together with H1, proven in the same
+    // run: a held cycle changes nothing. bmc_wait leaves holds free.
+    parameter bit HOLD1 = 1'b0
+) (
     input logic        clk_i,
     input logic        rst_i,
     input logic [31:0] imem_rdata_i,
-    input logic [31:0] dmem_rdata_i
+    input logic [31:0] dmem_rdata_i,
+    input logic        dmem_ready_i
 );
 
-  riscv_core u_core (
+  riscv_core #(.MEM_WAIT(WAIT)) u_core (
       .clk_i               (clk_i),
       .rst_i               (rst_i),
       .imem_addr_o         (),
@@ -26,6 +36,7 @@ module core_formal (
       .dmem_we_o           (),
       .dmem_re_o           (),
       .dmem_rdata_i        (dmem_rdata_i),
+      .dmem_ready_i        (WAIT ? dmem_ready_i : 1'b1),
       .wb_rd_we_o          (),
       .wb_rd_addr_o        (),
       .wb_rd_wdata_o       (),
@@ -60,5 +71,9 @@ module core_formal (
   logic f_first = 1'b1;
   always_ff @(posedge clk_i) f_first <= 1'b0;
   always_comb if (f_first) assume (rst_i);
+
+  logic f_held_q = 1'b0;
+  always_ff @(posedge clk_i) f_held_q <= WAIT && !dmem_ready_i;
+  always_comb if (HOLD1 && f_held_q) assume (dmem_ready_i);
 
 endmodule

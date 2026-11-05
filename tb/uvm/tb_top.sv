@@ -24,6 +24,7 @@ module tb_top;
       .dmem_we_o           (cif.dmem_we),
       .dmem_re_o           (),
       .dmem_rdata_i        (cif.dmem_rdata),
+      .dmem_ready_i        (1'b1),
       .wb_rd_we_o          (cif.wb_rd_we),
       .wb_rd_addr_o        (cif.wb_rd_addr),
       .wb_rd_wdata_o       (),

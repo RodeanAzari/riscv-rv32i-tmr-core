@@ -38,7 +38,14 @@ module riscv_core #(
     // copy a fault has knocked off course is pulled back into step. With
     // VOTED = 0, the default and every other use of the core, the vote_*
     // inputs are ignored and nothing changes.
-    parameter bit          VOTED  = 1'b0
+    parameter bit          VOTED  = 1'b0,
+    // Data-port wait (Phase G). With MEM_WAIT = 1, dmem_ready_i low holds the
+    // whole core for that cycle: no pipeline register, pc, halt flag or RVFI
+    // record changes, no store is issued and no register write commits, so
+    // the core behaves exactly as if the cycle had not happened (see Hold,
+    // below). With MEM_WAIT = 0, the default and every Stage 1 result,
+    // dmem_ready_i is ignored and nothing changes.
+    parameter bit          MEM_WAIT = 1'b0
 ) (
     input  logic            clk_i,
     input  logic            rst_i,
@@ -69,6 +76,10 @@ module riscv_core #(
     output logic            dmem_we_o,
     output logic            dmem_re_o,
     input  logic [XLEN-1:0] dmem_rdata_i,
+    // With MEM_WAIT: low = hold this cycle. A load's data must be on
+    // dmem_rdata_i in the cycle dmem_ready_i is high again (the access taken
+    // at the last edge with dmem_ready_i high), as a BRAM's would have been.
+    input  logic            dmem_ready_i,
 
     // The register file write WB performs this cycle. Outputs, for observation:
     // these are rvfi_rd_addr / rvfi_rd_wdata in waiting (docs/rvfi-plan.md).
@@ -174,18 +185,27 @@ module riscv_core #(
   logic [XLEN-1:0] redirect_target;
   logic            freeze;     // a trap in EX, or after; driven in EX
 
+  // Hold (MEM_WAIT): the memory system is not ready. Every register below
+  // keeps its value and every commit -- store, register write, halt, RVFI
+  // retirement -- is gated, so a held cycle is a clock edge that never
+  // happened. The fetch re-presents pc, which is the address the BRAM latched
+  // on the last edge that did happen, so the word at its output stays right.
+  // A constant 0 without MEM_WAIT, so synthesis removes every use of it.
+  logic            hold;
+  assign hold = MEM_WAIT && !dmem_ready_i;
+
   always_comb begin
     if      (redirect)        pc_next = redirect_target;
     else if (stall || freeze) pc_next = pc;
     else                      pc_next = pc + 32'd4;
   end
 
-  assign imem_addr_o = rst_i ? RESET_VECTOR : pc_next;
+  assign imem_addr_o = rst_i ? RESET_VECTOR : (hold ? pc : pc_next);
 
   always_ff @(posedge clk_i) begin
     if      (rst_i) pc <= RESET_VECTOR;
     else if (VOTED) pc <= vote_pc_i;      // the voted imem_addr_o: pc_next
-    else            pc <= pc_next;
+    else if (!hold) pc <= pc_next;
   end
 
   // IF/ID. Reset injects a NOP so ID never sees X on the first cycle. A stall
@@ -195,10 +215,10 @@ module riscv_core #(
   // bubble every cycle from then on, so the word here can never issue, and
   // redirect's flush is already the critical path's endpoint.
   always_ff @(posedge clk_i) begin
-    if (rst_i || redirect) begin
+    if (rst_i || (redirect && !hold)) begin
       if_id_pc_o    <= RESET_VECTOR;
       if_id_instr_o <= NOP;
-    end else if (!stall) begin
+    end else if (!stall && !hold) begin
       if_id_pc_o    <= pc;
       if_id_instr_o <= imem_rdata_i;
     end
@@ -359,7 +379,7 @@ module riscv_core #(
       id_ex_fwd_rs1_mem_wb <= 1'b0;
       id_ex_fwd_rs2_ex_mem <= 1'b0;
       id_ex_fwd_rs2_mem_wb <= 1'b0;
-    end else begin
+    end else if (!hold) begin
       id_ex_pc_o        <= if_id_pc_o;
       id_ex_instr_o     <= if_id_instr_o;
       id_ex_rs1_addr_o  <= dec_rs1_addr;
@@ -387,14 +407,14 @@ module riscv_core #(
   // EBREAK stalled behind a load (its rs2 field is 1) would otherwise halt a
   // cycle early, from the bubble, and the real EBREAK would never retire.
   always_ff @(posedge clk_i) begin
-    if (rst_i || stall || redirect || freeze) begin
+    if (rst_i || ((stall || redirect || freeze) && !hold)) begin
       id_ex_rd_we       <= 1'b0;
       id_ex_mem_read    <= 1'b0;
       id_ex_mem_write   <= 1'b0;
       id_ex_branch      <= 1'b0;
       id_ex_jump        <= 1'b0;
       id_ex_halt        <= 1'b0;
-    end else begin
+    end else if (!hold) begin
       id_ex_rd_we       <= dec_rd_we;
       id_ex_mem_read    <= dec_mem_read;
       id_ex_mem_write   <= dec_mem_write;
@@ -555,7 +575,7 @@ module riscv_core #(
 
   // Next-state form, so TMR can vote on it (halt_next_o, below).
   logic halted_d, halt_d;
-  assign halted_d = !rst_i && (halted_q || id_ex_halt || ex_trap);
+  assign halted_d = !rst_i && (halted_q || ((id_ex_halt || ex_trap) && !hold));
 
   always_ff @(posedge clk_i) begin
     halted_q <= VOTED ? vote_halt_i[0] : halted_d;
@@ -598,11 +618,11 @@ module riscv_core #(
   );
 
   logic mem_store;
-  assign mem_store    = id_ex_mem_write && !mem_misaligned && !rst_i;
+  assign mem_store    = id_ex_mem_write && !mem_misaligned && !rst_i && !hold;
   assign dmem_addr_o  = {mem_addr[XLEN-1:2], 2'b00};
   assign dmem_wdata_o = st_wdata;
   assign dmem_we_o    = mem_store;
-  assign dmem_re_o    = id_ex_mem_read && !mem_misaligned && !rst_i;
+  assign dmem_re_o    = id_ex_mem_read && !mem_misaligned && !rst_i && !hold;
   // Gated so a non-store never shows strobes. The memory ignores them while
   // dmem_we_o is low, but rvfi_mem_wmask must read zero for anything that is
   // not a store, and it is tapped here.
@@ -624,7 +644,7 @@ module riscv_core #(
       ex_mem_mem_funct3   <= 3'b000;
       ex_mem_rd_we_o      <= 1'b0;
       ex_mem_halt         <= 1'b0;
-    end else begin
+    end else if (!hold) begin
       ex_mem_pc_o         <= id_ex_pc_o;
       ex_mem_instr_o      <= id_ex_instr_o;
       ex_mem_alu_result_o <= ex_result;
@@ -653,7 +673,7 @@ module riscv_core #(
       mem_wb_rd_addr     <= '0;
       mem_wb_rd_we       <= 1'b0;
       mem_wb_halt        <= 1'b0;
-    end else begin
+    end else if (!hold) begin
       mem_wb_pc_o        <= ex_mem_pc_o;
       mem_wb_instr_o     <= ex_mem_instr_o;
       mem_wb_result      <= ex_mem_mem_read ? load_data : ex_mem_alu_result_o;
@@ -668,7 +688,7 @@ module riscv_core #(
   // Gated by reset for the same reason as the store above. Here it matters
   // less -- RV32I leaves x1-x31 undefined at reset -- but nothing should
   // commit while reset is held, and the rule is simpler with no exception.
-  assign wb_rd_we_o    = mem_wb_rd_we && !rst_i;
+  assign wb_rd_we_o    = mem_wb_rd_we && !rst_i && !hold;
   assign wb_rd_addr_o  = mem_wb_rd_addr;
   assign wb_rd_wdata_o = wb_rd_wdata;
 
@@ -676,7 +696,7 @@ module riscv_core #(
   // it is seen nothing older is still in flight. The halt bit rides the
   // pipeline to get here, rather than halted_q being delayed by hand, so the
   // retirement and the halt are visibly the same instruction -- RVFI marks it.
-  assign halt_d      = !rst_i && (halt_o || mem_wb_halt);
+  assign halt_d      = !rst_i && (halt_o || (mem_wb_halt && !hold));
   assign halt_next_o = {halt_d, halted_d};
 
   always_ff @(posedge clk_i) begin
@@ -698,8 +718,8 @@ module riscv_core #(
   logic if_id_valid, id_ex_valid, ex_mem_valid, mem_wb_valid;
 
   always_ff @(posedge clk_i) begin
-    if (rst_i || redirect) if_id_valid <= 1'b0;
-    else if (!stall)       if_id_valid <= 1'b1;
+    if (rst_i || (redirect && !hold)) if_id_valid <= 1'b0;
+    else if (!stall && !hold)         if_id_valid <= 1'b1;
   end
 
   always_ff @(posedge clk_i) begin
@@ -707,7 +727,7 @@ module riscv_core #(
       id_ex_valid  <= 1'b0;
       ex_mem_valid <= 1'b0;
       mem_wb_valid <= 1'b0;
-    end else begin
+    end else if (!hold) begin
       id_ex_valid  <= if_id_valid && !stall && !redirect && !freeze;
       ex_mem_valid <= id_ex_valid;
       mem_wb_valid <= ex_mem_valid;
@@ -734,15 +754,17 @@ module riscv_core #(
   logic [3:0]        ex_mem_mem_rmask, ex_mem_mem_wmask;
 
   always_ff @(posedge clk_i) begin
-    ex_mem_rs1_addr  <= id_ex_rs1_addr_o;
-    ex_mem_rs2_addr  <= id_ex_rs2_addr_o;
-    ex_mem_rs1_rdata <= ex_rs1;
-    ex_mem_rs2_rdata <= ex_rs2;
-    ex_mem_pc_wdata  <= ex_pc_wdata;
-    ex_mem_mem_addr  <= dmem_addr_o;
-    ex_mem_mem_rmask <= (id_ex_mem_read && !mem_misaligned) ? st_wstrb : 4'b0000;
-    ex_mem_mem_wmask <= dmem_wstrb_o;
-    ex_mem_mem_wdata <= dmem_wdata_o;
+    if (!hold) begin
+      ex_mem_rs1_addr  <= id_ex_rs1_addr_o;
+      ex_mem_rs2_addr  <= id_ex_rs2_addr_o;
+      ex_mem_rs1_rdata <= ex_rs1;
+      ex_mem_rs2_rdata <= ex_rs2;
+      ex_mem_pc_wdata  <= ex_pc_wdata;
+      ex_mem_mem_addr  <= dmem_addr_o;
+      ex_mem_mem_rmask <= (id_ex_mem_read && !mem_misaligned) ? st_wstrb : 4'b0000;
+      ex_mem_mem_wmask <= dmem_wstrb_o;
+      ex_mem_mem_wdata <= dmem_wdata_o;
+    end
   end
 
   // MEM: the load data, as the memory returned it (whole word, all lanes).
@@ -752,16 +774,18 @@ module riscv_core #(
   logic [3:0]        mem_wb_mem_rmask, mem_wb_mem_wmask;
 
   always_ff @(posedge clk_i) begin
-    mem_wb_rs1_addr  <= ex_mem_rs1_addr;
-    mem_wb_rs2_addr  <= ex_mem_rs2_addr;
-    mem_wb_rs1_rdata <= ex_mem_rs1_rdata;
-    mem_wb_rs2_rdata <= ex_mem_rs2_rdata;
-    mem_wb_pc_wdata  <= ex_mem_pc_wdata;
-    mem_wb_mem_addr  <= ex_mem_mem_addr;
-    mem_wb_mem_rmask <= ex_mem_mem_rmask;
-    mem_wb_mem_wmask <= ex_mem_mem_wmask;
-    mem_wb_mem_rdata <= dmem_rdata_i;
-    mem_wb_mem_wdata <= ex_mem_mem_wdata;
+    if (!hold) begin
+      mem_wb_rs1_addr  <= ex_mem_rs1_addr;
+      mem_wb_rs2_addr  <= ex_mem_rs2_addr;
+      mem_wb_rs1_rdata <= ex_mem_rs1_rdata;
+      mem_wb_rs2_rdata <= ex_mem_rs2_rdata;
+      mem_wb_pc_wdata  <= ex_mem_pc_wdata;
+      mem_wb_mem_addr  <= ex_mem_mem_addr;
+      mem_wb_mem_rmask <= ex_mem_mem_rmask;
+      mem_wb_mem_wmask <= ex_mem_mem_wmask;
+      mem_wb_mem_rdata <= dmem_rdata_i;
+      mem_wb_mem_wdata <= ex_mem_mem_wdata;
+    end
   end
 
   // WB: the record. rd reads zero when nothing is written, and rd_wdata reads
@@ -770,10 +794,10 @@ module riscv_core #(
 
   always_ff @(posedge clk_i) begin
     if (rst_i)             order <= '0;
-    else if (mem_wb_valid) order <= order + 64'd1;
+    else if (mem_wb_valid && !hold) order <= order + 64'd1;
   end
 
-  assign rvfi_valid_o     = mem_wb_valid;
+  assign rvfi_valid_o     = mem_wb_valid && !hold;
   assign rvfi_order_o     = order;
   assign rvfi_insn_o      = mem_wb_instr_o;
   // Every trapping instruction sets both, since every trap halts. halt: the
@@ -828,13 +852,18 @@ module riscv_core #(
   logic            f_past_rst, f_past_stall;
   logic [XLEN-1:0] f_past_pc, f_past_if_id_pc, f_past_if_id_instr;
 
+  // A held cycle (MEM_WAIT) is an edge that did not happen, for the
+  // properties as for the pipeline: the "previous cycle" flops hold too, so
+  // after a hold they still describe the cycle before it.
   always_ff @(posedge clk_i) begin
     f_past_valid       <= 1'b1;
-    f_past_rst         <= rst_i;
-    f_past_stall       <= stall;
-    f_past_pc          <= pc;
-    f_past_if_id_pc    <= if_id_pc_o;
-    f_past_if_id_instr <= if_id_instr_o;
+    if (rst_i || !hold) begin
+      f_past_rst         <= rst_i;
+      f_past_stall       <= stall;
+      f_past_pc          <= pc;
+      f_past_if_id_pc    <= if_id_pc_o;
+      f_past_if_id_instr <= if_id_instr_o;
+    end
   end
 
   // The cycle after a load-use stall, with no reset in between -- and the
@@ -842,7 +871,7 @@ module riscv_core #(
   logic f_after_stall, f_after_stall_q;
   assign f_after_stall = f_past_valid && !f_past_rst && f_past_stall;
 
-  always_ff @(posedge clk_i) f_after_stall_q <= f_after_stall && !rst_i;
+  always_ff @(posedge clk_i) if (rst_i || !hold) f_after_stall_q <= f_after_stall && !rst_i;
 
   always_comb begin
     if (f_past_valid) begin
@@ -931,7 +960,9 @@ module riscv_core #(
       if (ex_mem_mem_read)                                    f_arch_known = 1'b0;
       else                                                    f_arch = ex_mem_alu_result_o;
     end
-    else if (wb_rd_we_o && (wb_rd_addr_o == f_reg))           f_arch = wb_rd_wdata;
+    // WB's write, pending: mem_wb_rd_we rather than wb_rd_we_o, which a
+    // hold gates while the value is still what EX forwards
+    else if (mem_wb_rd_we && !rst_i && (wb_rd_addr_o == f_reg)) f_arch = wb_rd_wdata;
     else if (f_shadow_known)                                  f_arch = f_shadow;
     else                                                      f_arch_known = 1'b0;
   end
@@ -1009,7 +1040,7 @@ module riscv_core #(
   logic [XLEN-1:0] f_next_pc;   // the pc the next retirement must have
 
   // A retirement during reset is not one: WB's write is gated off (X1).
-  assign f_retire = mem_wb_valid && !rst_i;
+  assign f_retire = mem_wb_valid && !rst_i && !hold;
 
   always_ff @(posedge clk_i) begin
     if      (rst_i)    f_next_pc <= RESET_VECTOR;
@@ -1018,6 +1049,69 @@ module riscv_core #(
 
   // For a cover: the last retirement transferred control, so the next one
   // is the first after a flush.
+  // H1 (MEM_WAIT): a held cycle is an edge that never happened. Nothing
+  // commits during it, and after it every pipeline register, the pc, the
+  // halt flags and the retirement count are what they were. With this, a
+  // hold of any length is a one-cycle hold followed by cycles that change
+  // nothing -- which is why core.sby's prove_wait may assume one-cycle
+  // holds (docs/formal-properties.md).
+  if (MEM_WAIT) begin : g_f_hold
+    logic            f_held_q, f_s_halt;
+    logic [XLEN-1:0] f_s_pc, f_s_if_id_pc, f_s_if_id_instr, f_s_id_ex_pc;
+    logic [XLEN-1:0] f_s_id_ex_instr, f_s_id_ex_rs1, f_s_id_ex_rs2, f_s_id_ex_imm;
+    logic [XLEN-1:0] f_s_ex_mem_pc, f_s_ex_mem_result, f_s_mem_wb_pc, f_s_mem_wb_result;
+    logic [15:0]     f_s_ctrl;
+    logic [ADDR_W-1:0] f_s_rd_ex, f_s_rd_mem, f_s_rd_wb;
+    logic [15:0]     f_ctrl;
+    assign f_ctrl = {id_ex_rd_we, id_ex_mem_read, id_ex_mem_write, id_ex_branch,
+                     id_ex_jump, id_ex_halt, id_ex_fwd_rs1_ex_mem, id_ex_fwd_rs1_mem_wb,
+                     id_ex_fwd_rs2_ex_mem, id_ex_fwd_rs2_mem_wb, ex_mem_rd_we_o,
+                     ex_mem_mem_read, ex_mem_halt, mem_wb_rd_we, mem_wb_halt,
+                     halted_q};
+
+    always_ff @(posedge clk_i) begin
+      f_held_q          <= hold && !rst_i;
+      f_s_pc            <= pc;
+      f_s_halt          <= halt_o;
+      f_s_if_id_pc      <= if_id_pc_o;
+      f_s_if_id_instr   <= if_id_instr_o;
+      f_s_id_ex_pc      <= id_ex_pc_o;
+      f_s_id_ex_instr   <= id_ex_instr_o;
+      f_s_id_ex_rs1     <= id_ex_rs1_rdata_o;
+      f_s_id_ex_rs2     <= id_ex_rs2_rdata_o;
+      f_s_id_ex_imm     <= id_ex_imm_o;
+      f_s_ex_mem_pc     <= ex_mem_pc_o;
+      f_s_ex_mem_result <= ex_mem_alu_result_o;
+      f_s_mem_wb_pc     <= mem_wb_pc_o;
+      f_s_mem_wb_result <= mem_wb_result;
+      f_s_rd_ex         <= id_ex_rd_addr_o;
+      f_s_rd_mem        <= ex_mem_rd_addr_o;
+      f_s_rd_wb         <= mem_wb_rd_addr;
+      f_s_ctrl          <= f_ctrl;
+    end
+
+    always_comb begin
+      if (hold && !rst_i) begin
+        assert (!dmem_we_o && !dmem_re_o && !wb_rd_we_o);
+`ifdef RISCV_FORMAL
+        assert (!rvfi_valid_o);
+`endif
+      end
+      if (f_past_valid && f_held_q && !rst_i) begin
+        assert (pc == f_s_pc && halt_o == f_s_halt);
+        assert (if_id_pc_o == f_s_if_id_pc && if_id_instr_o == f_s_if_id_instr);
+        assert (id_ex_pc_o == f_s_id_ex_pc && id_ex_instr_o == f_s_id_ex_instr);
+        assert (id_ex_rs1_rdata_o == f_s_id_ex_rs1 && id_ex_rs2_rdata_o == f_s_id_ex_rs2);
+        assert (id_ex_imm_o == f_s_id_ex_imm && id_ex_rd_addr_o == f_s_rd_ex);
+        assert (ex_mem_pc_o == f_s_ex_mem_pc && ex_mem_alu_result_o == f_s_ex_mem_result);
+        assert (ex_mem_rd_addr_o == f_s_rd_mem);
+        assert (mem_wb_pc_o == f_s_mem_wb_pc && mem_wb_result == f_s_mem_wb_result);
+        assert (mem_wb_rd_addr == f_s_rd_wb);
+        assert (f_ctrl == f_s_ctrl);
+      end
+    end
+  end
+
   logic f_retired_taken;
 
   always_ff @(posedge clk_i) begin
@@ -1058,6 +1152,15 @@ module riscv_core #(
       cover (f_after_stall);
       // The stall and a misaligned-load trap in the same cycle.
       cover (stall && freeze);
+      // MEM_WAIT: a hold lands on each kind of pipeline event, so the
+      // properties above are shown to hold across them, not vacuously
+      if (MEM_WAIT) begin
+        cover (hold && stall);
+        cover (hold && redirect);
+        cover (hold && freeze);
+        cover (hold && wb_rd_we_o == 1'b0 && mem_wb_rd_we);
+        cover (f_after_stall && hold);
+      end
       // The instruction that waited out a stall is a taken branch or jump.
       // Not in f_after_stall's cycle: EX then holds the bubble (S3), and the
       // waiting instruction reaches EX one cycle later.

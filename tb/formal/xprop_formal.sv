@@ -72,6 +72,7 @@ module xprop_formal (
       .rst_i_d               (rst_i),          .rst_i_x               (1'b0),
       .imem_rdata_i_d        (imem_rdata_i),   .imem_rdata_i_x        (32'b0),
       .dmem_rdata_i_d        (dmem_rdata_i),   .dmem_rdata_i_x        (32'b0),
+      .dmem_ready_i_d        (1'b1),           .dmem_ready_i_x        (1'b0),
       .f_regs_o_d            (),               .f_regs_o_x            (regs_x),
       .dmem_addr_o_d         (dmem_addr_d),    .dmem_addr_o_x         (dmem_addr_x),
       .dmem_wdata_o_d        (dmem_wdata_d),   .dmem_wdata_o_x        (dmem_wdata_x),
