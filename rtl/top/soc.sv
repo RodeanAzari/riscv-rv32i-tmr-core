@@ -23,8 +23,12 @@
 //                            (sticky; a load from it read 0)   W: clears it
 //   0x2000_0000  AXI      the AXI4-Lite region (Phase G): the DMA engine's
 //                            registers at 0x2000_0000-0x2000_0FFF (DMA-Engine's
-//                            map, rtl/bus/dmaeng.sv). Loads and stores here
-//                            hold the core until the bus answers
+//                            map, rtl/bus/dmaeng.sv); the GEMM accelerator's
+//                            registers at 0x2000_1000-0x2000_1FFF and its
+//                            buffers at 0x2010_0000 (A), 0x2010_4000 (W),
+//                            0x2010_8000 (C) (rtl/accel/gemm_accel.sv; the
+//                            DMA fills and empties them). Loads and stores
+//                            here hold the core until the bus answers
 //                            (core_axil_bridge.sv); RAM and I/O never do.
 //
 // The DMA engine's AXI4 master reaches the RAM through the core's data port
@@ -92,6 +96,8 @@ module soc #(
   localparam logic [2:0] IO_BUSERR  = 3'd6;
   localparam logic [3:0] REGION_AXI = 4'h2;
   localparam int unsigned DMA_OFF_W = 12;      // the DMA's 4 KiB register window
+  localparam int unsigned ACC_OFF_W = 12;      // the accelerator's, likewise
+  localparam int unsigned ACC_BUF   = 16384;   // bytes per buffer (A, W, C)
 
   logic [31:0] imem_addr, imem_rdata;
   logic [31:0] dmem_addr, dmem_wdata, dmem_rdata;
@@ -315,9 +321,13 @@ module soc #(
   // slaves:  0 the RAM, through port B (0x0xxx_xxxx, aliasing as above)
   //          1 the DMA's registers (0x2000_0000-0x2000_0FFF), AXI4-Lite
   //            behind axi_to_axil
+  //          2 the accelerator's registers (0x2000_1000-0x2000_1FFF), likewise
+  //          3 the accelerator's buffers (0x2010_0000, four ACC_BUF slots)
   // anything else in the AXI region answers DECERR, and BUSERR shows it
-  localparam logic [63:0] XBAR_BASE = {32'h2000_0000, 32'h0000_0000};
-  localparam logic [63:0] XBAR_MASK = {32'hFFFF_F000, 32'hF000_0000};
+  localparam logic [127:0] XBAR_BASE = {32'h2010_0000, 32'h2000_1000,
+                                        32'h2000_0000, 32'h0000_0000};
+  localparam logic [127:0] XBAR_MASK = {~(32'(4 * ACC_BUF) - 32'd1), 32'hFFFF_F000,
+                                        32'hFFFF_F000, 32'hF000_0000};
 
   logic [1:0]        xm_arready, xm_awready, xm_wready, xm_rvalid, xm_rlast, xm_bvalid;
   logic [1:0][31:0]  xm_rdata;
@@ -341,11 +351,29 @@ module soc #(
   logic        xreg_awvalid, xreg_awready, xreg_wlast, xreg_wvalid, xreg_wready;
   logic        xreg_bvalid, xreg_bready;
 
+  logic [31:0] xacc_araddr, xacc_awaddr, xacc_wdata, xacc_rdata;
+  logic [7:0]  xacc_arlen, xacc_awlen;
+  logic [2:0]  xacc_arsize, xacc_awsize;
+  logic [1:0]  xacc_arburst, xacc_awburst, xacc_rresp, xacc_bresp;
+  logic [3:0]  xacc_wstrb;
+  logic        xacc_arvalid, xacc_arready, xacc_rlast, xacc_rvalid, xacc_rready;
+  logic        xacc_awvalid, xacc_awready, xacc_wlast, xacc_wvalid, xacc_wready;
+  logic        xacc_bvalid, xacc_bready;
+
+  logic [31:0] xbuf_araddr, xbuf_awaddr, xbuf_wdata, xbuf_rdata;
+  logic [7:0]  xbuf_arlen, xbuf_awlen;
+  logic [2:0]  xbuf_arsize, xbuf_awsize;
+  logic [1:0]  xbuf_arburst, xbuf_awburst, xbuf_rresp, xbuf_bresp;
+  logic [3:0]  xbuf_wstrb;
+  logic        xbuf_arvalid, xbuf_arready, xbuf_rlast, xbuf_rvalid, xbuf_rready;
+  logic        xbuf_awvalid, xbuf_awready, xbuf_wlast, xbuf_wvalid, xbuf_wready;
+  logic        xbuf_bvalid, xbuf_bready;
+
   // its formal-only ports serve tb/formal/axi_xbar_formal.sv, not this top
   /* verilator lint_off PINCONNECTEMPTY */
   axi_xbar #(
       .N      (2),
-      .M      (2),
+      .M      (4),
       .S_BASE (XBAR_BASE),
       .S_MASK (XBAR_MASK)
   ) u_xbar (
@@ -382,31 +410,31 @@ module soc #(
       .m_bresp_o   (xm_bresp),
       .m_bvalid_o  (xm_bvalid),
       .m_bready_i  ({dma_bready,  lite_bready}),
-      .s_araddr_o  ({xreg_araddr,  xram_araddr}),
-      .s_arlen_o   ({xreg_arlen,   xram_arlen}),
-      .s_arsize_o  ({xreg_arsize,  xram_arsize}),
-      .s_arburst_o ({xreg_arburst, xram_arburst}),
-      .s_arvalid_o ({xreg_arvalid, xram_arvalid}),
-      .s_arready_i ({xreg_arready, xram_arready}),
-      .s_rdata_i   ({xreg_rdata,   xram_rdata}),
-      .s_rresp_i   ({xreg_rresp,   xram_rresp}),
-      .s_rlast_i   ({xreg_rlast,   xram_rlast}),
-      .s_rvalid_i  ({xreg_rvalid,  xram_rvalid}),
-      .s_rready_o  ({xreg_rready,  xram_rready}),
-      .s_awaddr_o  ({xreg_awaddr,  xram_awaddr}),
-      .s_awlen_o   ({xreg_awlen,   xram_awlen}),
-      .s_awsize_o  ({xreg_awsize,  xram_awsize}),
-      .s_awburst_o ({xreg_awburst, xram_awburst}),
-      .s_awvalid_o ({xreg_awvalid, xram_awvalid}),
-      .s_awready_i ({xreg_awready, xram_awready}),
-      .s_wdata_o   ({xreg_wdata,   xram_wdata}),
-      .s_wstrb_o   ({xreg_wstrb,   xram_wstrb}),
-      .s_wlast_o   ({xreg_wlast,   xram_wlast}),
-      .s_wvalid_o  ({xreg_wvalid,  xram_wvalid}),
-      .s_wready_i  ({xreg_wready,  xram_wready}),
-      .s_bresp_i   ({xreg_bresp,   xram_bresp}),
-      .s_bvalid_i  ({xreg_bvalid,  xram_bvalid}),
-      .s_bready_o  ({xreg_bready,  xram_bready})
+      .s_araddr_o  ({xbuf_araddr, xacc_araddr, xreg_araddr,  xram_araddr}),
+      .s_arlen_o   ({xbuf_arlen, xacc_arlen, xreg_arlen,   xram_arlen}),
+      .s_arsize_o  ({xbuf_arsize, xacc_arsize, xreg_arsize,  xram_arsize}),
+      .s_arburst_o ({xbuf_arburst, xacc_arburst, xreg_arburst, xram_arburst}),
+      .s_arvalid_o ({xbuf_arvalid, xacc_arvalid, xreg_arvalid, xram_arvalid}),
+      .s_arready_i ({xbuf_arready, xacc_arready, xreg_arready, xram_arready}),
+      .s_rdata_i   ({xbuf_rdata, xacc_rdata, xreg_rdata,   xram_rdata}),
+      .s_rresp_i   ({xbuf_rresp, xacc_rresp, xreg_rresp,   xram_rresp}),
+      .s_rlast_i   ({xbuf_rlast, xacc_rlast, xreg_rlast,   xram_rlast}),
+      .s_rvalid_i  ({xbuf_rvalid, xacc_rvalid, xreg_rvalid,  xram_rvalid}),
+      .s_rready_o  ({xbuf_rready, xacc_rready, xreg_rready,  xram_rready}),
+      .s_awaddr_o  ({xbuf_awaddr, xacc_awaddr, xreg_awaddr,  xram_awaddr}),
+      .s_awlen_o   ({xbuf_awlen, xacc_awlen, xreg_awlen,   xram_awlen}),
+      .s_awsize_o  ({xbuf_awsize, xacc_awsize, xreg_awsize,  xram_awsize}),
+      .s_awburst_o ({xbuf_awburst, xacc_awburst, xreg_awburst, xram_awburst}),
+      .s_awvalid_o ({xbuf_awvalid, xacc_awvalid, xreg_awvalid, xram_awvalid}),
+      .s_awready_i ({xbuf_awready, xacc_awready, xreg_awready, xram_awready}),
+      .s_wdata_o   ({xbuf_wdata, xacc_wdata, xreg_wdata,   xram_wdata}),
+      .s_wstrb_o   ({xbuf_wstrb, xacc_wstrb, xreg_wstrb,   xram_wstrb}),
+      .s_wlast_o   ({xbuf_wlast, xacc_wlast, xreg_wlast,   xram_wlast}),
+      .s_wvalid_o  ({xbuf_wvalid, xacc_wvalid, xreg_wvalid,  xram_wvalid}),
+      .s_wready_i  ({xbuf_wready, xacc_wready, xreg_wready,  xram_wready}),
+      .s_bresp_i   ({xbuf_bresp, xacc_bresp, xreg_bresp,   xram_bresp}),
+      .s_bvalid_i  ({xbuf_bvalid, xacc_bvalid, xreg_bvalid,  xram_bvalid}),
+      .s_bready_o  ({xbuf_bready, xacc_bready, xreg_bready,  xram_bready})
   );
   /* verilator lint_on PINCONNECTEMPTY */
 
@@ -537,6 +565,117 @@ module soc #(
   logic unused_axi;
   assign unused_axi = ^{reg_awaddr[31:DMA_OFF_W], reg_araddr[31:DMA_OFF_W], dma_irq,
                         xm_rlast[0]};
+
+  // slaves 2 and 3: the GEMM accelerator, registers (AXI4-Lite, behind its
+  // own converter) and buffers (AXI4)
+  logic [31:0] acc_awaddr, acc_araddr, acc_wdata, acc_rdata;
+  logic [3:0]  acc_wstrb;
+  logic [1:0]  acc_bresp, acc_rresp;
+  logic        acc_awvalid, acc_awready, acc_wvalid, acc_wready;
+  logic        acc_bvalid, acc_bready, acc_arvalid, acc_arready;
+  logic        acc_rvalid, acc_rready;
+
+  axi_to_axil u_acc_conv (
+      .clk_i       (clk_i),
+      .rst_i       (rst_i),
+      .s_araddr_i  (xacc_araddr),
+      .s_arlen_i   (xacc_arlen),
+      .s_arsize_i  (xacc_arsize),
+      .s_arburst_i (xacc_arburst),
+      .s_arvalid_i (xacc_arvalid),
+      .s_arready_o (xacc_arready),
+      .s_rdata_o   (xacc_rdata),
+      .s_rresp_o   (xacc_rresp),
+      .s_rlast_o   (xacc_rlast),
+      .s_rvalid_o  (xacc_rvalid),
+      .s_rready_i  (xacc_rready),
+      .s_awaddr_i  (xacc_awaddr),
+      .s_awlen_i   (xacc_awlen),
+      .s_awsize_i  (xacc_awsize),
+      .s_awburst_i (xacc_awburst),
+      .s_awvalid_i (xacc_awvalid),
+      .s_awready_o (xacc_awready),
+      .s_wdata_i   (xacc_wdata),
+      .s_wstrb_i   (xacc_wstrb),
+      .s_wlast_i   (xacc_wlast),
+      .s_wvalid_i  (xacc_wvalid),
+      .s_wready_o  (xacc_wready),
+      .s_bresp_o   (xacc_bresp),
+      .s_bvalid_o  (xacc_bvalid),
+      .s_bready_i  (xacc_bready),
+      .m_awaddr_o  (acc_awaddr),
+      .m_awvalid_o (acc_awvalid),
+      .m_awready_i (acc_awready),
+      .m_wdata_o   (acc_wdata),
+      .m_wstrb_o   (acc_wstrb),
+      .m_wvalid_o  (acc_wvalid),
+      .m_wready_i  (acc_wready),
+      .m_bresp_i   (acc_bresp),
+      .m_bvalid_i  (acc_bvalid),
+      .m_bready_o  (acc_bready),
+      .m_araddr_o  (acc_araddr),
+      .m_arvalid_o (acc_arvalid),
+      .m_arready_i (acc_arready),
+      .m_rdata_i   (acc_rdata),
+      .m_rresp_i   (acc_rresp),
+      .m_rvalid_i  (acc_rvalid),
+      .m_rready_o  (acc_rready)
+  );
+
+  gemm_accel #(
+      .ROWS      (16),
+      .COLS      (16),
+      .BUF_BYTES (ACC_BUF),
+      .OFF_W     (ACC_OFF_W)
+  ) u_accel (
+      .clk_i       (clk_i),
+      .rst_i       (rst_i),
+      .s_awaddr_i  (acc_awaddr[ACC_OFF_W-1:0]),
+      .s_awvalid_i (acc_awvalid),
+      .s_awready_o (acc_awready),
+      .s_wdata_i   (acc_wdata),
+      .s_wstrb_i   (acc_wstrb),
+      .s_wvalid_i  (acc_wvalid),
+      .s_wready_o  (acc_wready),
+      .s_bresp_o   (acc_bresp),
+      .s_bvalid_o  (acc_bvalid),
+      .s_bready_i  (acc_bready),
+      .s_araddr_i  (acc_araddr[ACC_OFF_W-1:0]),
+      .s_arvalid_i (acc_arvalid),
+      .s_arready_o (acc_arready),
+      .s_rdata_o   (acc_rdata),
+      .s_rresp_o   (acc_rresp),
+      .s_rvalid_o  (acc_rvalid),
+      .s_rready_i  (acc_rready),
+      .d_araddr_i  (xbuf_araddr),
+      .d_arlen_i   (xbuf_arlen),
+      .d_arsize_i  (xbuf_arsize),
+      .d_arburst_i (xbuf_arburst),
+      .d_arvalid_i (xbuf_arvalid),
+      .d_arready_o (xbuf_arready),
+      .d_rdata_o   (xbuf_rdata),
+      .d_rresp_o   (xbuf_rresp),
+      .d_rlast_o   (xbuf_rlast),
+      .d_rvalid_o  (xbuf_rvalid),
+      .d_rready_i  (xbuf_rready),
+      .d_awaddr_i  (xbuf_awaddr),
+      .d_awlen_i   (xbuf_awlen),
+      .d_awsize_i  (xbuf_awsize),
+      .d_awburst_i (xbuf_awburst),
+      .d_awvalid_i (xbuf_awvalid),
+      .d_awready_o (xbuf_awready),
+      .d_wdata_i   (xbuf_wdata),
+      .d_wstrb_i   (xbuf_wstrb),
+      .d_wlast_i   (xbuf_wlast),
+      .d_wvalid_i  (xbuf_wvalid),
+      .d_wready_o  (xbuf_wready),
+      .d_bresp_o   (xbuf_bresp),
+      .d_bvalid_o  (xbuf_bvalid),
+      .d_bready_i  (xbuf_bready)
+  );
+
+  logic unused_acc;
+  assign unused_acc = ^{acc_awaddr[31:ACC_OFF_W], acc_araddr[31:ACC_OFF_W]};
 
   // the DMA's way into RAM: port B when the core leaves it free
   logic              core_port_busy, dma_ram_en;

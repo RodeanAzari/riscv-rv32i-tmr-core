@@ -2,7 +2,7 @@
  *
  *   0x0000_0000  RAM, 32 KiB: the bootloader below BOOT_END, programs above
  *   0x1000_0000  I/O registers
- *   0x2000_0000  AXI4-Lite region: the DMA engine
+ *   0x2000_0000  AXI region: the DMA engine, the GEMM accelerator
  */
 #ifndef SOC_H
 #define SOC_H
@@ -23,6 +23,8 @@
 
 /* The AXI4-Lite region: loads and stores here wait for the bus. */
 #define DMA_BASE 0x20000000u         /* the DMA engine's registers (sw/lib/dma.h) */
+#define GEMM_BASE 0x20001000u        /* the GEMM accelerator's registers (sw/lib/gemm.h) */
+#define GEMM_BUF  0x20100000u        /* its buffers: A, W, C */
 
 #define UART_TX_READY 1u
 #define UART_RX_VALID 2u

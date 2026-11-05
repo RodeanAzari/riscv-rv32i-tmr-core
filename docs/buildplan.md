@@ -329,7 +329,7 @@ A phase is done when **every** box is checked. No partial credit.
 - [x] Descriptor-based DMA with scatter-gather, to DMA-Engine's spec (§6.3): register package generated from `spec/dmaeng.yaml` and checked against it, a Python model ported from `qemu-device/dmaeng.c` first, `traces/dmaeng-sync.trace` replayed against the RTL, and a bare-metal driver on the core using `dmaeng_regs.h`
 - [x] Interconnect with round-robin arbitration and address decode
 - [x] All §6.2 SVA assertions written and passing (proven on the crossbar, `tb/formal/axi_xbar.sby`; the DMA's own AXI ports are protocol-checked in simulation, `tb/cocotb/axi_mem.py`)
-- [ ] Software on the core configures and launches an accelerator job
+- [x] Software on the core configures and launches an accelerator job (`sw/apps/gemmtest.c` through `sw/lib/gemm.c`: the DMA fills the accelerator's buffers, the core starts the job and polls; `soc:test_gemm`, C checked against the golden model, job cycles equal to the model's)
 - [ ] Release `soc-v1.0` (fpga-coord §5: release test, `CHANGELOG.md`, annotated tag); P4 waits on it
 
 ### Phase H — Integration + DFT

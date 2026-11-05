@@ -15,6 +15,7 @@
 #   make model-test  the C golden model alone, on riscv-tests rv32ui
 #   make gemm-model  the systolic array's golden model alone (Phase F)
 #   make dma-model   the DMA engine's golden model alone (Phase G)
+#   make accel-model the GEMM accelerator's golden model alone (Phase G)
 #   make uvm    UVM regression in XSim against the golden model
 #   make clean
 #
@@ -72,12 +73,14 @@ lint:
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_pe_pair $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module dmaeng_regs $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module dmaeng $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module gemm_accel $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module gemm_accel -GROWS=4 -GCOLS=4 -GBUF_BYTES=2048 $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module axi_xbar -GN=3 -GM=2 $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module axi_xbar -GN=3 -GM=2 -DFORMAL $(RTL)
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim
-sim: gemm-model dma-model
+sim: gemm-model dma-model accel-model
 	$(MAKE) -C tb/cocotb
 
 # The systolic array's golden model (sw/model/gemm_model.py) checks itself
@@ -89,6 +92,13 @@ GEMM_PY := $(if $(wildcard $(HOME)/cocotb-env/bin/python),$(HOME)/cocotb-env/bin
 .PHONY: gemm-model
 gemm-model:
 	$(GEMM_PY) sw/model/gemm_model.py
+
+# The GEMM accelerator's golden model (sw/model/accel_model.py): buffer
+# layouts, registers, tiling, refused shapes and cycle count around
+# gemm_model's arithmetic, checked against gemm() on the unpacked matrices.
+.PHONY: accel-model
+accel-model:
+	$(GEMM_PY) sw/model/accel_model.py
 
 # The DMA engine's golden model (sw/model/dmaeng_model.py, ported from
 # DMA-Engine's QEMU device) replays DMA-Engine's golden trace and runs the
@@ -259,6 +269,18 @@ apps: $(FW_BUILD)/boot_dma_sim.hex
 $(FW_BUILD)/boot_dma_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/dmatest.bin scripts/mkimage.py
 	python3 scripts/mkimage.py $(FW_BUILD)/boot.bin $(FW_BUILD)/apps/dmatest.bin $@
 
+# The GEMM accelerator self-test (sw/apps/gemmtest.c) with its driver
+# (sw/lib/gemm.c), which moves the matrices with the DMA driver.
+$(FW_BUILD)/apps/gemmtest.elf: sw/apps/gemmtest.c sw/lib/gemm.c sw/lib/gemm.h sw/lib/dma.c sw/lib/dma.h $(DMA_INC)/dmaeng_regs.h $(APP_DEPS)
+	@mkdir -p $(@D)
+	$(RISCV_PREFIX)gcc $(APP_CFLAGS) -I$(DMA_INC) -o $@ sw/app/crt0.S sw/lib/io.c sw/lib/dma.c sw/lib/gemm.c $< -lgcc
+
+apps: $(FW_BUILD)/boot_gemm_sim.hex
+
+# For simulation (tb/cocotb/test_gemm.py): the bootloader with gemmtest saved.
+$(FW_BUILD)/boot_gemm_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/gemmtest.bin scripts/mkimage.py
+	python3 scripts/mkimage.py $(FW_BUILD)/boot.bin $(FW_BUILD)/apps/gemmtest.bin $@
+
 # For simulation (tb/cocotb/test_demo.py): the bootloader with the demo reel
 # already loaded and saved, so the test reaches it with one key, r.
 $(FW_BUILD)/boot_demo_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/demo.bin scripts/mkimage.py
@@ -342,6 +364,13 @@ DMA_TOP ?= dmaeng_regs
 synth-dma:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART) $(DMA_TOP)
+
+# The GEMM accelerator alone, out of context (Phase G): the 16x16 array,
+# its buffers, sequencer and bus ports. Reports docs/reports/*_ooc_gemm_accel.*.
+.PHONY: synth-accel
+synth-accel:
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART) gemm_accel
 
 # --- TMR fault injection ---------------------------------------------------
 # The documented campaign (CLAUDE.md 5.7): FAULTS random single-bit flips into

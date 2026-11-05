@@ -62,7 +62,7 @@ and flip-flops. The single core's floorplan, from Phase D, is
 | | D — Hardware bring-up | **Done** |
 | | E — TMR + fault injection, ASIC run #1 | **Done** |
 | **2 — SoC** | F — Systolic array | **Done** (on its own; joined to the core in H) |
-| | G — DMA + AXI interconnect | **In progress**: the DMA engine replays DMA-Engine's golden trace and runs on the SoC under software, through an AXI4 crossbar whose §6.2 properties are proven; the accelerator on the bus and the release remain |
+| | G — DMA + AXI interconnect | **In progress**: the DMA engine replays DMA-Engine's golden trace and runs on the SoC under software, through an AXI4 crossbar whose §6.2 properties are proven; software on the core runs GEMM jobs on the accelerator (the DMA fills its buffers); the `soc-v1.0` release remains |
 | | H — Integration + DFT, ASIC run #2 | Not started |
 
 Full scope and each phase's definition of done: [docs/buildplan.md](docs/buildplan.md).
@@ -546,17 +546,17 @@ its reports are committed with the RTL that produced them.
 |---|---|
 | `rtl/core/` | The pipeline: `riscv_core`, decoder, ALU, branch unit, hazard unit, load/store alignment, register file |
 | `rtl/tmr/` | The 2-of-3 voter and the triplicated core |
-| `rtl/accel/` | The systolic array, its DSP-packed PE pairs, and the single-PE reference |
+| `rtl/accel/` | The systolic array, its DSP-packed PE pairs, and the single-PE reference; the GEMM accelerator around it (`gemm_accel*.sv`: buffers, sequencer, AXI4-Lite registers, AXI4 buffer port) |
 | `rtl/periph/` | UART transmitter and receiver |
 | `rtl/bus/` | The AXI4 crossbar (`axi_xbar.sv`) and AXI4→Lite converter, the DMA engine (`dmaeng*.sv`: registers, descriptor sequencer, AXI4 master), the core's AXI4-Lite bridge and the DMA's port into RAM. The engine implements [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine)'s device: its register package `rtl/dmaeng_pkg.sv`, generated from that repo's `spec/dmaeng.yaml`, is used straight from the submodule |
 | `rtl/top/` | The SoC (`soc.sv`), its RAM, and the Arty A7 top (clocking, reset, pins, optional ILA) |
 | `tb/cocotb/` | Python testbenches and the Python golden model |
 | `tb/uvm/` | UVM environment (XSim), DPI-C bridge to the C model |
 | `tb/formal/` | SymbiYosys jobs, harnesses, riscv-formal config (submodule) |
-| `sw/model/` | C golden model (ISS); the systolic array's NumPy golden model; the DMA's Python model, a port of [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine)'s QEMU device |
+| `sw/model/` | C golden model (ISS); the systolic array's NumPy golden model; the DMA's Python model, a port of [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine)'s QEMU device; the accelerator's model (layouts, registers, cycle count) |
 | `sw/boot/`, `sw/app/`, `sw/lib/` | The serial bootloader; startup and linker script for the programs it loads; their console library |
-| `sw/demo/`, `sw/apps/` | The demo reel; small programs (`echo`, `dmatest`, the DMA self-test) |
-| `sw/lib/dma.{h,c}` | Bare-metal DMA driver, on [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine)'s generated header `include/dmaeng_regs.h` (from the submodule), the same header its Linux driver uses |
+| `sw/demo/`, `sw/apps/` | The demo reel; small programs (`echo`, `dmatest` the DMA self-test, `gemmtest` the accelerator self-test) |
+| `sw/lib/dma.{h,c}` | Bare-metal DMA driver, on [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine)'s generated header `include/dmaeng_regs.h` (from the submodule), the same header its Linux driver uses; `sw/lib/gemm.{h,c}`, the accelerator's driver, built on it |
 | `sw/firstlight/`, `sw/coremark-port/` | Bare-metal firmware and the CoreMark port (CoreMark itself is a submodule) |
 | `sw/dma-engine/` | [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine) (submodule): the DMA's register map and descriptor spec, its QEMU device model and recorded trace, the reference for Phase G |
 | `sw/riscv-tests-env/` | Our environment for the official `riscv-tests` (the suite is a submodule, `sw/riscv-tests/`) |

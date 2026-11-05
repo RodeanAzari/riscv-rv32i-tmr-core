@@ -86,16 +86,21 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          dmaeng_regs:test_dmaeng_regs \
          dmaeng:test_dmaeng \
          axi_xbar:test_axi_xbar \
+         gemm_accel_4x4:test_gemm_accel \
+         gemm_accel_4x8:test_gemm_accel \
+         gemm_accel:test_gemm_accel \
          soc:test_soc \
          soc:test_coremark \
          soc:test_boot \
          soc:test_demo \
          soc:test_dma \
+         soc:test_gemm \
          soc_tmr:test_soc \
          soc_tmr:test_coremark \
          soc_tmr:test_boot \
          soc_tmr:test_demo \
-         soc_tmr:test_dma
+         soc_tmr:test_dma \
+         soc_tmr:test_gemm
 
 # The SoC runs a firmware simulation image from sw/build/, built by `make fw`
 # and `make bench` (the regression below builds both first; a TEST_ONE run of
@@ -117,11 +122,11 @@ ifdef TEST_ONE
     COMPILE_ARGS        += -GTMR=1
   endif
   ifeq ($(TOPLEVEL),soc)
-    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,$(if $(filter test_dma,$(MODULE)),boot_dma_sim,hello_sim))))
+    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,$(if $(filter test_dma,$(MODULE)),boot_dma_sim,$(if $(filter test_gemm,$(MODULE)),boot_gemm_sim,hello_sim)))))
     BUILD_TAG           := soc_$(SOC_IMAGE)$(TMR_SUFFIX)
-    # The demo and DMA tests run the UART at CLK/16: their output is
+    # The demo, DMA and GEMM tests run the UART at CLK/16: their output is
     # thousands of characters.
-    ifneq ($(filter test_demo test_dma,$(MODULE)),)
+    ifneq ($(filter test_demo test_dma test_gemm,$(MODULE)),)
       COMPILE_ARGS      += -GBAUD=3125000
     endif
     ifeq ($(MODULE),test_demo)
@@ -141,6 +146,14 @@ ifdef TEST_ONE
     ARRAY_SHAPE         := $(subst x, ,$(patsubst systolic_array_%,%,$(TOPLEVEL)))
     COMPILE_ARGS        += -GROWS=$(word 1,$(ARRAY_SHAPE)) -GCOLS=$(word 2,$(ARRAY_SHAPE))
     TOPLEVEL            := systolic_array
+  endif
+  # gemm_accel_<ROWS>x<COLS>: the accelerator at a small array, 2 KiB
+  # buffers, so the tests reach every buffer limit quickly. Plain gemm_accel
+  # is the SoC's 16x16 with 16 KiB.
+  ifneq ($(filter gemm_accel_%,$(TOPLEVEL)),)
+    ACCEL_SHAPE         := $(subst x, ,$(patsubst gemm_accel_%,%,$(TOPLEVEL)))
+    COMPILE_ARGS        += -GROWS=$(word 1,$(ACCEL_SHAPE)) -GCOLS=$(word 2,$(ACCEL_SHAPE)) -GBUF_BYTES=2048
+    TOPLEVEL            := gemm_accel
   endif
   # <core>_wait: the core built with MEM_WAIT = 1 (the data-port wait,
   # Phase G), its data port held low a random DMEM_WAIT of the cycles. Only
