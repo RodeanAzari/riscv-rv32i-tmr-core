@@ -2,19 +2,19 @@
 === arty_a7_top (TMR core + 32 KiB RAM + LED + UART), board-level, post-route ===
 part            xc7a100tcsg324-1
 core clock      clk_mmcm, 10.000 ns (100.0 MHz), MMCM from 100 MHz
-WNS (core clk)  0.095 ns
-achieved period 9.905 ns
-Fmax (core clk) 101.0 MHz
-worst setup     0.095 ns (all clocks)
-worst hold      0.119 ns (all clocks)
+WNS (core clk)  0.073 ns
+achieved period 9.927 ns
+Fmax (core clk) 100.7 MHz
+worst setup     0.073 ns (all clocks)
+worst hold      0.036 ns (all clocks)
 
 In-context: real pins, clock tree and BRAM paths. LED, UART and
 button I/O are false-pathed (constr/arty_a7.xdc). Fmax is what the
 core clock could be at this placement, not a measured run there.
 
-LUT       3446 /    63400  ( 5.44%)
-FF        1621 /   126800  ( 1.28%)
+LUT       4488 /    63400  ( 7.08%)
+FF        2404 /   126800  ( 1.90%)
 BRAM         8 /      135  ( 5.93%)
 DSP          0 /      240  ( 0.00%)
-CARRY      205   (no device total)
+CARRY      305   (no device total)
 

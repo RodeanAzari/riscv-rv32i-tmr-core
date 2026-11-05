@@ -19,6 +19,18 @@
 //   0x1000_0014  TMR      R: TMR mismatches since reset (0 without TMR)
 //                            W: fault injection -- the word's set bits are
 //                            flipped in copy B's pc, once (ignored without TMR)
+//   0x1000_0018  BUSERR   R: bit 0 = an AXI access answered SLVERR/DECERR
+//                            (sticky; a load from it read 0)   W: clears it
+//   0x2000_0000  AXI      the AXI4-Lite region (Phase G): the DMA engine's
+//                            registers at 0x2000_0000-0x2000_0FFF (DMA-Engine's
+//                            map, rtl/bus/dmaeng.sv). Loads and stores here
+//                            hold the core until the bus answers
+//                            (core_axil_bridge.sv); RAM and I/O never do.
+//
+// The DMA engine's AXI4 master reaches the RAM through the core's data port
+// (port B) in the cycles the core issues no load or store: the core keeps
+// fixed priority and never waits for the DMA (axi_ram_port.sv). Its
+// interrupt is not connected: the core has none; software polls.
 //
 // The cycle counter is how software times itself (the core has no CSRs, so
 // rdcycle is an illegal instruction). 32 bits wrap after 43 s at 100 MHz;
@@ -77,6 +89,9 @@ module soc #(
   localparam logic [2:0] IO_UART_RX = 3'd3;
   localparam logic [2:0] IO_CYCLE   = 3'd4;
   localparam logic [2:0] IO_TMR     = 3'd5;
+  localparam logic [2:0] IO_BUSERR  = 3'd6;
+  localparam logic [3:0] REGION_AXI = 4'h2;
+  localparam int unsigned DMA_OFF_W = 12;      // the DMA's 4 KiB register window
 
   logic [31:0] imem_addr, imem_rdata;
   logic [31:0] dmem_addr, dmem_wdata, dmem_rdata;
@@ -88,6 +103,7 @@ module soc #(
   // here only.
   logic [31:0] tmr_mismatches;
   logic        io_we;
+  logic        dmem_re, dmem_ready;
 
   /* verilator lint_off PINCONNECTEMPTY */
   if (TMR) begin : g_cpu
@@ -100,7 +116,7 @@ module soc #(
       else       inject_q <= (io_we && (dmem_addr[4:2] == IO_TMR)) ? dmem_wdata : '0;
     end
 
-    riscv_core_tmr u_core (
+    riscv_core_tmr #(.MEM_WAIT(1'b1)) u_core (
         .clk_i               (clk_i),
         .rst_i               (rst_i),
         .imem_addr_o         (imem_addr),
@@ -109,9 +125,9 @@ module soc #(
         .dmem_wdata_o        (dmem_wdata),
         .dmem_wstrb_o        (dmem_wstrb),
         .dmem_we_o           (dmem_we),
-        .dmem_re_o           (),
+        .dmem_re_o           (dmem_re),
         .dmem_rdata_i        (dmem_rdata),
-        .dmem_ready_i        (1'b1),
+        .dmem_ready_i        (dmem_ready),
         .wb_rd_we_o          (dbg_wb_rd_we_o),
         .wb_rd_addr_o        (dbg_wb_rd_addr_o),
         .wb_rd_wdata_o       (dbg_wb_rd_wdata_o),
@@ -160,7 +176,7 @@ module soc #(
         .mem_wb_instr_o      (dbg_mem_wb_instr_o)
     );
   end else begin : g_cpu
-    riscv_core u_core (
+    riscv_core #(.MEM_WAIT(1'b1)) u_core (
         .clk_i               (clk_i),
         .rst_i               (rst_i),
   `ifdef FORMAL
@@ -172,9 +188,9 @@ module soc #(
         .dmem_wdata_o        (dmem_wdata),
         .dmem_wstrb_o        (dmem_wstrb),
         .dmem_we_o           (dmem_we),
-        .dmem_re_o           (),
+        .dmem_re_o           (dmem_re),
         .dmem_rdata_i        (dmem_rdata),
-        .dmem_ready_i        (1'b1),
+        .dmem_ready_i        (dmem_ready),
         .wb_rd_we_o          (dbg_wb_rd_we_o),
         .wb_rd_addr_o        (dbg_wb_rd_addr_o),
         .wb_rd_wdata_o       (dbg_wb_rd_wdata_o),
@@ -237,9 +253,122 @@ module soc #(
   assign unused_addr_bits = ^{imem_addr[31:RAM_AW+2], imem_addr[1:0],
                               dmem_addr[27:RAM_AW+2], dmem_addr[1:0]};
 
-  logic io_sel, ram_sel;
+  logic io_sel, ram_sel, axi_sel;
   assign io_sel  = (dmem_addr[31:28] == REGION_IO);
   assign ram_sel = (dmem_addr[31:28] == REGION_RAM);
+  assign axi_sel = (dmem_addr[31:28] == REGION_AXI);
+
+  // ---- AXI4-Lite region: the bridge, then the DMA engine ----
+  logic        axi_req, bus_err;
+  logic [31:0] axi_rdata;
+  assign axi_req = axi_sel && (dmem_re || dmem_we);
+
+  logic [31:0] lite_awaddr, lite_araddr, lite_wdata, lite_rdata;
+  logic [3:0]  lite_wstrb;
+  logic [1:0]  lite_bresp, lite_rresp;
+  logic        lite_awvalid, lite_awready, lite_wvalid, lite_wready;
+  logic        lite_bvalid, lite_bready, lite_arvalid, lite_arready;
+  logic        lite_rvalid, lite_rready;
+
+  core_axil_bridge u_bridge (
+      .clk_i       (clk_i),
+      .rst_i       (rst_i),
+      .req_i       (axi_req),
+      .we_i        (dmem_we),
+      .addr_i      (dmem_addr),
+      .wdata_i     (dmem_wdata),
+      .wstrb_i     (dmem_wstrb),
+      .ready_o     (dmem_ready),
+      .rdata_o     (axi_rdata),
+      .err_o       (bus_err),
+      .err_clr_i   (io_we && (dmem_addr[4:2] == IO_BUSERR)),
+      .m_awaddr_o  (lite_awaddr),
+      .m_awvalid_o (lite_awvalid),
+      .m_awready_i (lite_awready),
+      .m_wdata_o   (lite_wdata),
+      .m_wstrb_o   (lite_wstrb),
+      .m_wvalid_o  (lite_wvalid),
+      .m_wready_i  (lite_wready),
+      .m_bresp_i   (lite_bresp),
+      .m_bvalid_i  (lite_bvalid),
+      .m_bready_o  (lite_bready),
+      .m_araddr_o  (lite_araddr),
+      .m_arvalid_o (lite_arvalid),
+      .m_arready_i (lite_arready),
+      .m_rdata_i   (lite_rdata),
+      .m_rresp_i   (lite_rresp),
+      .m_rvalid_i  (lite_rvalid),
+      .m_rready_o  (lite_rready)
+  );
+
+  logic [31:0] dma_araddr, dma_awaddr, dma_rdata, dma_wdata;
+  logic [7:0]  dma_arlen, dma_awlen;
+  logic [2:0]  dma_arsize, dma_awsize;
+  logic [1:0]  dma_arburst, dma_awburst, dma_rresp, dma_bresp;
+  logic [3:0]  dma_wstrb;
+  logic        dma_arvalid, dma_arready, dma_rlast, dma_rvalid, dma_rready;
+  logic        dma_awvalid, dma_awready, dma_wlast, dma_wvalid, dma_wready;
+  logic        dma_bvalid, dma_bready, dma_irq;
+
+  dmaeng u_dma (
+      .clk_i       (clk_i),
+      .rst_i       (rst_i),
+      .s_awaddr_i  (lite_awaddr[DMA_OFF_W-1:0]),
+      .s_awvalid_i (lite_awvalid),
+      .s_awready_o (lite_awready),
+      .s_wdata_i   (lite_wdata),
+      .s_wstrb_i   (lite_wstrb),
+      .s_wvalid_i  (lite_wvalid),
+      .s_wready_o  (lite_wready),
+      .s_bresp_o   (lite_bresp),
+      .s_bvalid_o  (lite_bvalid),
+      .s_bready_i  (lite_bready),
+      .s_araddr_i  (lite_araddr[DMA_OFF_W-1:0]),
+      .s_arvalid_i (lite_arvalid),
+      .s_arready_o (lite_arready),
+      .s_rdata_o   (lite_rdata),
+      .s_rresp_o   (lite_rresp),
+      .s_rvalid_o  (lite_rvalid),
+      .s_rready_i  (lite_rready),
+      .m_araddr_o  (dma_araddr),
+      .m_arlen_o   (dma_arlen),
+      .m_arsize_o  (dma_arsize),
+      .m_arburst_o (dma_arburst),
+      .m_arvalid_o (dma_arvalid),
+      .m_arready_i (dma_arready),
+      .m_rdata_i   (dma_rdata),
+      .m_rresp_i   (dma_rresp),
+      .m_rlast_i   (dma_rlast),
+      .m_rvalid_i  (dma_rvalid),
+      .m_rready_o  (dma_rready),
+      .m_awaddr_o  (dma_awaddr),
+      .m_awlen_o   (dma_awlen),
+      .m_awsize_o  (dma_awsize),
+      .m_awburst_o (dma_awburst),
+      .m_awvalid_o (dma_awvalid),
+      .m_awready_i (dma_awready),
+      .m_wdata_o   (dma_wdata),
+      .m_wstrb_o   (dma_wstrb),
+      .m_wlast_o   (dma_wlast),
+      .m_wvalid_o  (dma_wvalid),
+      .m_wready_i  (dma_wready),
+      .m_bresp_i   (dma_bresp),
+      .m_bvalid_i  (dma_bvalid),
+      .m_bready_o  (dma_bready),
+      .irq_o       (dma_irq)
+  );
+
+  // The bridge passes the full address: the region decode above uses
+  // [31:28], the DMA its [11:0]. The interrupt is unused: the core has none.
+  logic unused_axi;
+  assign unused_axi = ^{lite_awaddr[31:DMA_OFF_W], lite_araddr[31:DMA_OFF_W], dma_irq};
+
+  // the DMA's way into RAM: port B when the core leaves it free
+  logic              core_port_busy, dma_ram_en;
+  logic [RAM_AW-1:0] dma_ram_addr;
+  logic [3:0]        dma_ram_we;
+  logic [31:0]       dma_ram_wdata;
+  assign core_port_busy = dmem_re || dmem_we;
 
   // ---- RAM ----
   logic [31:0] ram_rdata;
@@ -251,11 +380,54 @@ module soc #(
       .clk_i     (clk_i),
       .a_addr_i  (imem_addr[RAM_AW+1:2]),
       .a_rdata_o (imem_rdata),
-      .b_addr_i  (dmem_addr[RAM_AW+1:2]),
-      .b_we_i    (dmem_wstrb & {4{dmem_we && ram_sel}}),
-      .b_wdata_i (dmem_wdata),
+      // The DMA's port only in a cycle it uses it (dma_ram_en already means
+      // the core does not): selecting on core_port_busy instead put the
+      // TMR core's voted dmem_we on ~50 mux selects and cost the TMR board
+      // its 100 MHz (WNS -0.047 ns on the I/O write path; +0.073 this way).
+      .b_addr_i  (dma_ram_en ? dma_ram_addr  : dmem_addr[RAM_AW+1:2]),
+      .b_we_i    ((dmem_wstrb & {4{dmem_we && ram_sel}}) | dma_ram_we),
+      .b_wdata_i (dma_ram_en ? dma_ram_wdata : dmem_wdata),
       .b_rdata_o (ram_rdata)
   );
+
+  axi_ram_port #(
+      .WORDS (RAM_WORDS)
+  ) u_dma_port (
+      .clk_i       (clk_i),
+      .rst_i       (rst_i),
+      .s_araddr_i  (dma_araddr),
+      .s_arlen_i   (dma_arlen),
+      .s_arsize_i  (dma_arsize),
+      .s_arburst_i (dma_arburst),
+      .s_arvalid_i (dma_arvalid),
+      .s_arready_o (dma_arready),
+      .s_rdata_o   (dma_rdata),
+      .s_rresp_o   (dma_rresp),
+      .s_rlast_o   (dma_rlast),
+      .s_rvalid_o  (dma_rvalid),
+      .s_rready_i  (dma_rready),
+      .s_awaddr_i  (dma_awaddr),
+      .s_awlen_i   (dma_awlen),
+      .s_awsize_i  (dma_awsize),
+      .s_awburst_i (dma_awburst),
+      .s_awvalid_i (dma_awvalid),
+      .s_awready_o (dma_awready),
+      .s_wdata_i   (dma_wdata),
+      .s_wstrb_i   (dma_wstrb),
+      .s_wlast_i   (dma_wlast),
+      .s_wvalid_i  (dma_wvalid),
+      .s_wready_o  (dma_wready),
+      .s_bresp_o   (dma_bresp),
+      .s_bvalid_o  (dma_bvalid),
+      .s_bready_i  (dma_bready),
+      .core_busy_i (core_port_busy),
+      .ram_en_o    (dma_ram_en),
+      .ram_addr_o  (dma_ram_addr),
+      .ram_we_o    (dma_ram_we),
+      .ram_wdata_o (dma_ram_wdata),
+      .ram_rdata_i (ram_rdata)
+  );
+
 
   // ---- I/O writes ----
   logic uart_ready;
@@ -304,26 +476,32 @@ module soc #(
   end
 
   // ---- I/O reads: registered, to arrive in WB like a block RAM's data ----
-  logic        io_rsel_q;
+  // The selects follow the access the core takes into MEM, so they move only
+  // at an edge where the core advances (dmem_ready): while an AXI access
+  // holds it in MEM, EX's address is the next instruction's.
+  logic        io_rsel_q, axi_rsel_q;
   logic [31:0] io_rdata_q;
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
       io_rsel_q  <= 1'b0;
+      axi_rsel_q <= 1'b0;
       io_rdata_q <= '0;
-    end else begin
-      io_rsel_q <= io_sel;
+    end else if (dmem_ready) begin
+      io_rsel_q  <= io_sel;
+      axi_rsel_q <= axi_sel;
       case (dmem_addr[4:2])
         IO_LED:     io_rdata_q <= {28'b0, led_o};
         IO_UART_ST: io_rdata_q <= {28'b0, rx_frame_err, rx_overrun, rx_valid, uart_ready};
         IO_UART_RX: io_rdata_q <= {24'b0, rx_data};
         IO_CYCLE:   io_rdata_q <= cycle_q;
         IO_TMR:     io_rdata_q <= tmr_mismatches;
+        IO_BUSERR:  io_rdata_q <= {31'b0, bus_err};
         default:    io_rdata_q <= '0;
       endcase
     end
   end
 
-  assign dmem_rdata = io_rsel_q ? io_rdata_q : ram_rdata;
+  assign dmem_rdata = axi_rsel_q ? axi_rdata : io_rsel_q ? io_rdata_q : ram_rdata;
 
 endmodule

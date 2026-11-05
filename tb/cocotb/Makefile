@@ -89,10 +89,12 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          soc:test_coremark \
          soc:test_boot \
          soc:test_demo \
+         soc:test_dma \
          soc_tmr:test_soc \
          soc_tmr:test_coremark \
          soc_tmr:test_boot \
-         soc_tmr:test_demo
+         soc_tmr:test_demo \
+         soc_tmr:test_dma
 
 # The SoC runs a firmware simulation image from sw/build/, built by `make fw`
 # and `make bench` (the regression below builds both first; a TEST_ONE run of
@@ -114,11 +116,14 @@ ifdef TEST_ONE
     COMPILE_ARGS        += -GTMR=1
   endif
   ifeq ($(TOPLEVEL),soc)
-    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,hello_sim)))
+    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,$(if $(filter test_dma,$(MODULE)),boot_dma_sim,hello_sim))))
     BUILD_TAG           := soc_$(SOC_IMAGE)$(TMR_SUFFIX)
-    # The demo test runs the UART at CLK/16: its output is thousands of characters.
-    ifeq ($(MODULE),test_demo)
+    # The demo and DMA tests run the UART at CLK/16: their output is
+    # thousands of characters.
+    ifneq ($(filter test_demo test_dma,$(MODULE)),)
       COMPILE_ARGS      += -GBAUD=3125000
+    endif
+    ifeq ($(MODULE),test_demo)
       # On TMR, the fault-injection demo only: the other six are the plain
       # SoC's tests, and would add twenty minutes for nothing TMR-specific.
       # It injects faults, so no in-RTL assertions (see test_tmr_faults below).

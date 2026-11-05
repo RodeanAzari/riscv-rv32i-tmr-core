@@ -2,6 +2,7 @@
  *
  *   0x0000_0000  RAM, 32 KiB: the bootloader below BOOT_END, programs above
  *   0x1000_0000  I/O registers
+ *   0x2000_0000  AXI4-Lite region: the DMA engine
  */
 #ifndef SOC_H
 #define SOC_H
@@ -17,6 +18,11 @@
 #define CYCLE    REG(0x10000010u)    /* R: core cycles since reset, mod 2^32 */
 #define TMR      REG(0x10000014u)    /* R: TMR mismatches since reset (0 without TMR)
                                         W: bits to flip in copy B's pc, once */
+#define BUSERR   REG(0x10000018u)    /* R: bit 0 = an AXI access failed (sticky)
+                                        W: clears it */
+
+/* The AXI4-Lite region: loads and stores here wait for the bus. */
+#define DMA_BASE 0x20000000u         /* the DMA engine's registers (sw/lib/dma.h) */
 
 #define UART_TX_READY 1u
 #define UART_RX_VALID 2u

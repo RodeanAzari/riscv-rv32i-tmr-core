@@ -242,6 +242,21 @@ $(FW_BUILD)/apps/demo.elf: $(DEMO_SRCS) sw/demo/demo.h $(APP_DEPS)
 
 apps: $(FW_BUILD)/apps/demo.bin $(FW_BUILD)/boot_demo_sim.hex
 
+# The DMA self-test (sw/apps/dmatest.c) with the bare-metal driver
+# (sw/lib/dma.c) on DMA-Engine's generated header, read from the submodule.
+DMA_INC := sw/dma-engine/include
+
+$(FW_BUILD)/apps/dmatest.elf: sw/apps/dmatest.c sw/lib/dma.c sw/lib/dma.h $(DMA_INC)/dmaeng_regs.h $(APP_DEPS)
+	@mkdir -p $(@D)
+	$(RISCV_PREFIX)gcc $(APP_CFLAGS) -I$(DMA_INC) -o $@ sw/app/crt0.S sw/lib/io.c sw/lib/dma.c $< -lgcc
+
+apps: $(FW_BUILD)/boot_dma_sim.hex
+
+# For simulation (tb/cocotb/test_dma.py): the bootloader with the DMA
+# self-test saved, reached with r.
+$(FW_BUILD)/boot_dma_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/dmatest.bin scripts/mkimage.py
+	python3 scripts/mkimage.py $(FW_BUILD)/boot.bin $(FW_BUILD)/apps/dmatest.bin $@
+
 # For simulation (tb/cocotb/test_demo.py): the bootloader with the demo reel
 # already loaded and saved, so the test reaches it with one key, r.
 $(FW_BUILD)/boot_demo_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/demo.bin scripts/mkimage.py
