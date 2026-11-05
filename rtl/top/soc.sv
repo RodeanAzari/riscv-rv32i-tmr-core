@@ -258,7 +258,7 @@ module soc #(
   assign ram_sel = (dmem_addr[31:28] == REGION_RAM);
   assign axi_sel = (dmem_addr[31:28] == REGION_AXI);
 
-  // ---- AXI4-Lite region: the bridge, then the DMA engine ----
+  // ---- AXI region: the core's bridge, the crossbar, the DMA engine ----
   logic        axi_req, bus_err;
   logic [31:0] axi_rdata;
   assign axi_req = axi_sel && (dmem_re || dmem_we);
@@ -310,26 +310,199 @@ module soc #(
   logic        dma_awvalid, dma_awready, dma_wlast, dma_wvalid, dma_wready;
   logic        dma_bvalid, dma_bready, dma_irq;
 
+  // ---- the AXI4 interconnect ----
+  // masters: 0 the core's bridge (single beats), 1 the DMA engine
+  // slaves:  0 the RAM, through port B (0x0xxx_xxxx, aliasing as above)
+  //          1 the DMA's registers (0x2000_0000-0x2000_0FFF), AXI4-Lite
+  //            behind axi_to_axil
+  // anything else in the AXI region answers DECERR, and BUSERR shows it
+  localparam logic [63:0] XBAR_BASE = {32'h2000_0000, 32'h0000_0000};
+  localparam logic [63:0] XBAR_MASK = {32'hFFFF_F000, 32'hF000_0000};
+
+  logic [1:0]        xm_arready, xm_awready, xm_wready, xm_rvalid, xm_rlast, xm_bvalid;
+  logic [1:0][31:0]  xm_rdata;
+  logic [1:0][1:0]   xm_rresp, xm_bresp;
+
+  logic [31:0] xram_araddr, xram_awaddr, xram_wdata, xram_rdata;
+  logic [7:0]  xram_arlen, xram_awlen;
+  logic [2:0]  xram_arsize, xram_awsize;
+  logic [1:0]  xram_arburst, xram_awburst, xram_rresp, xram_bresp;
+  logic [3:0]  xram_wstrb;
+  logic        xram_arvalid, xram_arready, xram_rlast, xram_rvalid, xram_rready;
+  logic        xram_awvalid, xram_awready, xram_wlast, xram_wvalid, xram_wready;
+  logic        xram_bvalid, xram_bready;
+
+  logic [31:0] xreg_araddr, xreg_awaddr, xreg_wdata, xreg_rdata;
+  logic [7:0]  xreg_arlen, xreg_awlen;
+  logic [2:0]  xreg_arsize, xreg_awsize;
+  logic [1:0]  xreg_arburst, xreg_awburst, xreg_rresp, xreg_bresp;
+  logic [3:0]  xreg_wstrb;
+  logic        xreg_arvalid, xreg_arready, xreg_rlast, xreg_rvalid, xreg_rready;
+  logic        xreg_awvalid, xreg_awready, xreg_wlast, xreg_wvalid, xreg_wready;
+  logic        xreg_bvalid, xreg_bready;
+
+  // its formal-only ports serve tb/formal/axi_xbar_formal.sv, not this top
+  /* verilator lint_off PINCONNECTEMPTY */
+  axi_xbar #(
+      .N      (2),
+      .M      (2),
+      .S_BASE (XBAR_BASE),
+      .S_MASK (XBAR_MASK)
+  ) u_xbar (
+      .clk_i       (clk_i),
+      .rst_i       (rst_i),
+`ifdef FORMAL
+      .f_rb_o      (),
+      .f_wb_o      (),
+      .f_wl_o      (),
+`endif
+      // the bridge is AXI4-Lite: single full-width INCR beats, WLAST high
+      .m_araddr_i  ({dma_araddr,  lite_araddr}),
+      .m_arlen_i   ({dma_arlen,   8'd0}),
+      .m_arsize_i  ({dma_arsize,  3'd2}),
+      .m_arburst_i ({dma_arburst, 2'b01}),
+      .m_arvalid_i ({dma_arvalid, lite_arvalid}),
+      .m_arready_o (xm_arready),
+      .m_rdata_o   (xm_rdata),
+      .m_rresp_o   (xm_rresp),
+      .m_rlast_o   (xm_rlast),
+      .m_rvalid_o  (xm_rvalid),
+      .m_rready_i  ({dma_rready,  lite_rready}),
+      .m_awaddr_i  ({dma_awaddr,  lite_awaddr}),
+      .m_awlen_i   ({dma_awlen,   8'd0}),
+      .m_awsize_i  ({dma_awsize,  3'd2}),
+      .m_awburst_i ({dma_awburst, 2'b01}),
+      .m_awvalid_i ({dma_awvalid, lite_awvalid}),
+      .m_awready_o (xm_awready),
+      .m_wdata_i   ({dma_wdata,   lite_wdata}),
+      .m_wstrb_i   ({dma_wstrb,   lite_wstrb}),
+      .m_wlast_i   ({dma_wlast,   1'b1}),
+      .m_wvalid_i  ({dma_wvalid,  lite_wvalid}),
+      .m_wready_o  (xm_wready),
+      .m_bresp_o   (xm_bresp),
+      .m_bvalid_o  (xm_bvalid),
+      .m_bready_i  ({dma_bready,  lite_bready}),
+      .s_araddr_o  ({xreg_araddr,  xram_araddr}),
+      .s_arlen_o   ({xreg_arlen,   xram_arlen}),
+      .s_arsize_o  ({xreg_arsize,  xram_arsize}),
+      .s_arburst_o ({xreg_arburst, xram_arburst}),
+      .s_arvalid_o ({xreg_arvalid, xram_arvalid}),
+      .s_arready_i ({xreg_arready, xram_arready}),
+      .s_rdata_i   ({xreg_rdata,   xram_rdata}),
+      .s_rresp_i   ({xreg_rresp,   xram_rresp}),
+      .s_rlast_i   ({xreg_rlast,   xram_rlast}),
+      .s_rvalid_i  ({xreg_rvalid,  xram_rvalid}),
+      .s_rready_o  ({xreg_rready,  xram_rready}),
+      .s_awaddr_o  ({xreg_awaddr,  xram_awaddr}),
+      .s_awlen_o   ({xreg_awlen,   xram_awlen}),
+      .s_awsize_o  ({xreg_awsize,  xram_awsize}),
+      .s_awburst_o ({xreg_awburst, xram_awburst}),
+      .s_awvalid_o ({xreg_awvalid, xram_awvalid}),
+      .s_awready_i ({xreg_awready, xram_awready}),
+      .s_wdata_o   ({xreg_wdata,   xram_wdata}),
+      .s_wstrb_o   ({xreg_wstrb,   xram_wstrb}),
+      .s_wlast_o   ({xreg_wlast,   xram_wlast}),
+      .s_wvalid_o  ({xreg_wvalid,  xram_wvalid}),
+      .s_wready_i  ({xreg_wready,  xram_wready}),
+      .s_bresp_i   ({xreg_bresp,   xram_bresp}),
+      .s_bvalid_i  ({xreg_bvalid,  xram_bvalid}),
+      .s_bready_o  ({xreg_bready,  xram_bready})
+  );
+  /* verilator lint_on PINCONNECTEMPTY */
+
+  assign lite_arready = xm_arready[0];
+  assign lite_awready = xm_awready[0];
+  assign lite_wready  = xm_wready[0];
+  assign lite_rvalid  = xm_rvalid[0];
+  assign lite_rdata   = xm_rdata[0];
+  assign lite_rresp   = xm_rresp[0];
+  assign lite_bvalid  = xm_bvalid[0];
+  assign lite_bresp   = xm_bresp[0];
+  assign dma_arready  = xm_arready[1];
+  assign dma_awready  = xm_awready[1];
+  assign dma_wready   = xm_wready[1];
+  assign dma_rvalid   = xm_rvalid[1];
+  assign dma_rdata    = xm_rdata[1];
+  assign dma_rresp    = xm_rresp[1];
+  assign dma_rlast    = xm_rlast[1];
+  assign dma_bvalid   = xm_bvalid[1];
+  assign dma_bresp    = xm_bresp[1];
+
+  // slave 1: the DMA's AXI4-Lite registers
+  logic [31:0] reg_awaddr, reg_araddr, reg_wdata, reg_rdata;
+  logic [3:0]  reg_wstrb;
+  logic [1:0]  reg_bresp, reg_rresp;
+  logic        reg_awvalid, reg_awready, reg_wvalid, reg_wready;
+  logic        reg_bvalid, reg_bready, reg_arvalid, reg_arready;
+  logic        reg_rvalid, reg_rready;
+
+  axi_to_axil u_reg_conv (
+      .clk_i       (clk_i),
+      .rst_i       (rst_i),
+      .s_araddr_i  (xreg_araddr),
+      .s_arlen_i   (xreg_arlen),
+      .s_arsize_i  (xreg_arsize),
+      .s_arburst_i (xreg_arburst),
+      .s_arvalid_i (xreg_arvalid),
+      .s_arready_o (xreg_arready),
+      .s_rdata_o   (xreg_rdata),
+      .s_rresp_o   (xreg_rresp),
+      .s_rlast_o   (xreg_rlast),
+      .s_rvalid_o  (xreg_rvalid),
+      .s_rready_i  (xreg_rready),
+      .s_awaddr_i  (xreg_awaddr),
+      .s_awlen_i   (xreg_awlen),
+      .s_awsize_i  (xreg_awsize),
+      .s_awburst_i (xreg_awburst),
+      .s_awvalid_i (xreg_awvalid),
+      .s_awready_o (xreg_awready),
+      .s_wdata_i   (xreg_wdata),
+      .s_wstrb_i   (xreg_wstrb),
+      .s_wlast_i   (xreg_wlast),
+      .s_wvalid_i  (xreg_wvalid),
+      .s_wready_o  (xreg_wready),
+      .s_bresp_o   (xreg_bresp),
+      .s_bvalid_o  (xreg_bvalid),
+      .s_bready_i  (xreg_bready),
+      .m_awaddr_o  (reg_awaddr),
+      .m_awvalid_o (reg_awvalid),
+      .m_awready_i (reg_awready),
+      .m_wdata_o   (reg_wdata),
+      .m_wstrb_o   (reg_wstrb),
+      .m_wvalid_o  (reg_wvalid),
+      .m_wready_i  (reg_wready),
+      .m_bresp_i   (reg_bresp),
+      .m_bvalid_i  (reg_bvalid),
+      .m_bready_o  (reg_bready),
+      .m_araddr_o  (reg_araddr),
+      .m_arvalid_o (reg_arvalid),
+      .m_arready_i (reg_arready),
+      .m_rdata_i   (reg_rdata),
+      .m_rresp_i   (reg_rresp),
+      .m_rvalid_i  (reg_rvalid),
+      .m_rready_o  (reg_rready)
+  );
+
   dmaeng u_dma (
       .clk_i       (clk_i),
       .rst_i       (rst_i),
-      .s_awaddr_i  (lite_awaddr[DMA_OFF_W-1:0]),
-      .s_awvalid_i (lite_awvalid),
-      .s_awready_o (lite_awready),
-      .s_wdata_i   (lite_wdata),
-      .s_wstrb_i   (lite_wstrb),
-      .s_wvalid_i  (lite_wvalid),
-      .s_wready_o  (lite_wready),
-      .s_bresp_o   (lite_bresp),
-      .s_bvalid_o  (lite_bvalid),
-      .s_bready_i  (lite_bready),
-      .s_araddr_i  (lite_araddr[DMA_OFF_W-1:0]),
-      .s_arvalid_i (lite_arvalid),
-      .s_arready_o (lite_arready),
-      .s_rdata_o   (lite_rdata),
-      .s_rresp_o   (lite_rresp),
-      .s_rvalid_o  (lite_rvalid),
-      .s_rready_i  (lite_rready),
+      .s_awaddr_i  (reg_awaddr[DMA_OFF_W-1:0]),
+      .s_awvalid_i (reg_awvalid),
+      .s_awready_o (reg_awready),
+      .s_wdata_i   (reg_wdata),
+      .s_wstrb_i   (reg_wstrb),
+      .s_wvalid_i  (reg_wvalid),
+      .s_wready_o  (reg_wready),
+      .s_bresp_o   (reg_bresp),
+      .s_bvalid_o  (reg_bvalid),
+      .s_bready_i  (reg_bready),
+      .s_araddr_i  (reg_araddr[DMA_OFF_W-1:0]),
+      .s_arvalid_i (reg_arvalid),
+      .s_arready_o (reg_arready),
+      .s_rdata_o   (reg_rdata),
+      .s_rresp_o   (reg_rresp),
+      .s_rvalid_o  (reg_rvalid),
+      .s_rready_i  (reg_rready),
       .m_araddr_o  (dma_araddr),
       .m_arlen_o   (dma_arlen),
       .m_arsize_o  (dma_arsize),
@@ -358,10 +531,12 @@ module soc #(
       .irq_o       (dma_irq)
   );
 
-  // The bridge passes the full address: the region decode above uses
-  // [31:28], the DMA its [11:0]. The interrupt is unused: the core has none.
+  // The register window is the address's [11:0] (the crossbar decoded the
+  // rest); the bridge's single beats need no RLAST. The interrupt is unused:
+  // the core has none.
   logic unused_axi;
-  assign unused_axi = ^{lite_awaddr[31:DMA_OFF_W], lite_araddr[31:DMA_OFF_W], dma_irq};
+  assign unused_axi = ^{reg_awaddr[31:DMA_OFF_W], reg_araddr[31:DMA_OFF_W], dma_irq,
+                        xm_rlast[0]};
 
   // the DMA's way into RAM: port B when the core leaves it free
   logic              core_port_busy, dma_ram_en;
@@ -395,31 +570,31 @@ module soc #(
   ) u_dma_port (
       .clk_i       (clk_i),
       .rst_i       (rst_i),
-      .s_araddr_i  (dma_araddr),
-      .s_arlen_i   (dma_arlen),
-      .s_arsize_i  (dma_arsize),
-      .s_arburst_i (dma_arburst),
-      .s_arvalid_i (dma_arvalid),
-      .s_arready_o (dma_arready),
-      .s_rdata_o   (dma_rdata),
-      .s_rresp_o   (dma_rresp),
-      .s_rlast_o   (dma_rlast),
-      .s_rvalid_o  (dma_rvalid),
-      .s_rready_i  (dma_rready),
-      .s_awaddr_i  (dma_awaddr),
-      .s_awlen_i   (dma_awlen),
-      .s_awsize_i  (dma_awsize),
-      .s_awburst_i (dma_awburst),
-      .s_awvalid_i (dma_awvalid),
-      .s_awready_o (dma_awready),
-      .s_wdata_i   (dma_wdata),
-      .s_wstrb_i   (dma_wstrb),
-      .s_wlast_i   (dma_wlast),
-      .s_wvalid_i  (dma_wvalid),
-      .s_wready_o  (dma_wready),
-      .s_bresp_o   (dma_bresp),
-      .s_bvalid_o  (dma_bvalid),
-      .s_bready_i  (dma_bready),
+      .s_araddr_i  (xram_araddr),
+      .s_arlen_i   (xram_arlen),
+      .s_arsize_i  (xram_arsize),
+      .s_arburst_i (xram_arburst),
+      .s_arvalid_i (xram_arvalid),
+      .s_arready_o (xram_arready),
+      .s_rdata_o   (xram_rdata),
+      .s_rresp_o   (xram_rresp),
+      .s_rlast_o   (xram_rlast),
+      .s_rvalid_o  (xram_rvalid),
+      .s_rready_i  (xram_rready),
+      .s_awaddr_i  (xram_awaddr),
+      .s_awlen_i   (xram_awlen),
+      .s_awsize_i  (xram_awsize),
+      .s_awburst_i (xram_awburst),
+      .s_awvalid_i (xram_awvalid),
+      .s_awready_o (xram_awready),
+      .s_wdata_i   (xram_wdata),
+      .s_wstrb_i   (xram_wstrb),
+      .s_wlast_i   (xram_wlast),
+      .s_wvalid_i  (xram_wvalid),
+      .s_wready_o  (xram_wready),
+      .s_bresp_o   (xram_bresp),
+      .s_bvalid_o  (xram_bvalid),
+      .s_bready_i  (xram_bready),
       .core_busy_i (core_port_busy),
       .ram_en_o    (dma_ram_en),
       .ram_addr_o  (dma_ram_addr),

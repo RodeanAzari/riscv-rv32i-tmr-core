@@ -1,0 +1,37 @@
+# axi_xbar's properties (buildplan 6.2) under the AXI-rules environment in
+# axi_xbar_formal.sv. prove: k-induction; cover: each event is reachable.
+# The structural half of deadlock freedom (X2) is checked on the netlist
+# below, `select -assert-none` per source: no master VALID input reaches a
+# master READY output, and no READY input reaches any VALID output, except
+# through a flop. Either direction alone breaks a ready/valid loop; both
+# hold. (Each `%u` joins only the top two selections.)
+
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+cover: mode cover
+prove: depth 8
+cover: depth 16
+
+[engines]
+smtbmc yices
+
+[script]
+read_verilog -sv -formal axi_xbar.sv axi_xbar_formal.sv
+prep -top axi_xbar_formal
+flatten
+select -assert-none w:m_arvalid_i %co*:-$dff,$sdff,$sdffe,$dffe,$sdffce w:u_xbar.m_arready_o w:u_xbar.m_awready_o %u w:u_xbar.m_wready_o %u %i
+select -assert-none w:m_awvalid_i %co*:-$dff,$sdff,$sdffe,$dffe,$sdffce w:u_xbar.m_arready_o w:u_xbar.m_awready_o %u w:u_xbar.m_wready_o %u %i
+select -assert-none w:m_wvalid_i %co*:-$dff,$sdff,$sdffe,$dffe,$sdffce w:u_xbar.m_arready_o w:u_xbar.m_awready_o %u w:u_xbar.m_wready_o %u %i
+select -assert-none w:s_arready_i %co*:-$dff,$sdff,$sdffe,$dffe,$sdffce w:u_xbar.s_arvalid_o w:u_xbar.s_awvalid_o %u w:u_xbar.s_wvalid_o %u w:u_xbar.m_rvalid_o %u w:u_xbar.m_bvalid_o %u %i
+select -assert-none w:s_awready_i %co*:-$dff,$sdff,$sdffe,$dffe,$sdffce w:u_xbar.s_arvalid_o w:u_xbar.s_awvalid_o %u w:u_xbar.s_wvalid_o %u w:u_xbar.m_rvalid_o %u w:u_xbar.m_bvalid_o %u %i
+select -assert-none w:s_wready_i %co*:-$dff,$sdff,$sdffe,$dffe,$sdffce w:u_xbar.s_arvalid_o w:u_xbar.s_awvalid_o %u w:u_xbar.s_wvalid_o %u w:u_xbar.m_rvalid_o %u w:u_xbar.m_bvalid_o %u %i
+select -assert-none w:m_rready_i %co*:-$dff,$sdff,$sdffe,$dffe,$sdffce w:u_xbar.s_arvalid_o w:u_xbar.s_awvalid_o %u w:u_xbar.s_wvalid_o %u w:u_xbar.m_rvalid_o %u w:u_xbar.m_bvalid_o %u %i
+select -assert-none w:m_bready_i %co*:-$dff,$sdff,$sdffe,$dffe,$sdffce w:u_xbar.s_arvalid_o w:u_xbar.s_awvalid_o %u w:u_xbar.s_wvalid_o %u w:u_xbar.m_rvalid_o %u w:u_xbar.m_bvalid_o %u %i
+
+[files]
+../../rtl/bus/axi_xbar.sv
+axi_xbar_formal.sv

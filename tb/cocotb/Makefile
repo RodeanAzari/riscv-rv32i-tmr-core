@@ -85,6 +85,7 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          systolic_array_4x8:test_systolic_array \
          dmaeng_regs:test_dmaeng_regs \
          dmaeng:test_dmaeng \
+         axi_xbar:test_axi_xbar \
          soc:test_soc \
          soc:test_coremark \
          soc:test_boot \
@@ -152,6 +153,11 @@ ifdef TEST_ONE
     export DMEM_WAIT    ?= 0.3
     # quoted: cocotb puts it on a shell command line as is
     export COCOTB_TEST_FILTER := 'test_hold|test_random|test_rv32ui'
+  endif
+  # The crossbar at the test's map: 3 masters, slave 0 at 0x0xxx_xxxx (the
+  # RAM's region), slave 1 at 0x2000_0000-0x2000_0FFF; the rest DECERR.
+  ifeq ($(TOPLEVEL),axi_xbar)
+    COMPILE_ARGS        += -GN=3 -GM=2 -GS_BASE=64\'h2000000000000000 -GS_MASK=64\'hFFFFF000F0000000
   endif
   # The fault campaign breaks the pipeline's invariants on purpose, so the
   # core's in-RTL properties (FORMAL, --assert) would stop it at the first

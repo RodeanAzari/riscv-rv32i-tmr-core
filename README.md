@@ -62,7 +62,7 @@ and flip-flops. The single core's floorplan, from Phase D, is
 | | D — Hardware bring-up | **Done** |
 | | E — TMR + fault injection, ASIC run #1 | **Done** |
 | **2 — SoC** | F — Systolic array | **Done** (on its own; joined to the core in H) |
-| | G — DMA + AXI interconnect | **In progress**: the DMA engine replays DMA-Engine's golden trace and runs on the SoC under software; the interconnect is next |
+| | G — DMA + AXI interconnect | **In progress**: the DMA engine replays DMA-Engine's golden trace and runs on the SoC under software, through an AXI4 crossbar whose §6.2 properties are proven; the accelerator on the bus and the release remain |
 | | H — Integration + DFT, ASIC run #2 | Not started |
 
 Full scope and each phase's definition of done: [docs/buildplan.md](docs/buildplan.md).
@@ -548,7 +548,7 @@ its reports are committed with the RTL that produced them.
 | `rtl/tmr/` | The 2-of-3 voter and the triplicated core |
 | `rtl/accel/` | The systolic array, its DSP-packed PE pairs, and the single-PE reference |
 | `rtl/periph/` | UART transmitter and receiver |
-| `rtl/bus/` | The DMA engine (`dmaeng*.sv`: registers, descriptor sequencer, AXI4 master), the core's AXI4-Lite bridge and the DMA's port into RAM. The engine implements [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine)'s device: its register package `rtl/dmaeng_pkg.sv`, generated from that repo's `spec/dmaeng.yaml`, is used straight from the submodule |
+| `rtl/bus/` | The AXI4 crossbar (`axi_xbar.sv`) and AXI4→Lite converter, the DMA engine (`dmaeng*.sv`: registers, descriptor sequencer, AXI4 master), the core's AXI4-Lite bridge and the DMA's port into RAM. The engine implements [DMA-Engine](https://github.com/RodeanAzari/DMA-Engine)'s device: its register package `rtl/dmaeng_pkg.sv`, generated from that repo's `spec/dmaeng.yaml`, is used straight from the submodule |
 | `rtl/top/` | The SoC (`soc.sv`), its RAM, and the Arty A7 top (clocking, reset, pins, optional ILA) |
 | `tb/cocotb/` | Python testbenches and the Python golden model |
 | `tb/uvm/` | UVM environment (XSim), DPI-C bridge to the C model |

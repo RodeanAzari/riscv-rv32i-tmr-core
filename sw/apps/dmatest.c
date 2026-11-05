@@ -10,6 +10,8 @@
  *   4. an error (len 0): status BAD_LEN, the engine stops; reset, and the
  *      next copy works
  *   5. 4 KiB copied by the engine and by the core, cycles for each
+ *   6. a load from an unmapped address in the AXI region: the crossbar
+ *      answers DECERR, the load reads 0 and BUSERR is set; writing clears it
  *
  * Prints one line per part and a summary; the test reads "dmatest: N/N ok"
  * and the 4 KiB copy's addresses, and checks that copy in RAM itself.
@@ -153,6 +155,17 @@ static void timing(void)
             (uint32_t)(uintptr_t)src, (uint32_t)(uintptr_t)dst, t_dma, t_cpu);
 }
 
+static void decode_error(void)
+{
+    uint32_t before = passed;
+    check(BUSERR == 0, "no bus error yet");
+    uint32_t v = REG(DMA_BASE + 0x1000u);            /* past the DMA's 4 KiB */
+    check(v == 0 && (BUSERR & 1u), "unmapped load: DECERR");
+    BUSERR = 0;
+    check(BUSERR == 0, "BUSERR cleared");
+    printf_("dmatest: decode error %u/3\r\n", passed - before);
+}
+
 int main(void)
 {
     BUSERR = 0;
@@ -167,6 +180,7 @@ int main(void)
     error_and_reset();
     timing();
     check(BUSERR == 0, "no bus errors");
+    decode_error();
     printf_("dmatest: %u/%u ok\r\n", passed, total);
     return 0;
 }

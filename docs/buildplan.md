@@ -324,11 +324,11 @@ A phase is done when **every** box is checked. No partial credit.
 - [x] Synthesis report confirms expected DSP usage
 
 ### Phase G — DMA + interconnect
-- [ ] AXI4-Lite control interface
-- [ ] AXI4 data interface
-- [ ] Descriptor-based DMA with scatter-gather, to DMA-Engine's spec (§6.3): register package generated from `spec/dmaeng.yaml` and checked against it, a Python model ported from `qemu-device/dmaeng.c` first, `traces/dmaeng-sync.trace` replayed against the RTL, and a bare-metal driver on the core using `dmaeng_regs.h`
-- [ ] Interconnect with round-robin arbitration and address decode
-- [ ] All §6.2 SVA assertions written and passing
+- [x] AXI4-Lite control interface
+- [x] AXI4 data interface
+- [x] Descriptor-based DMA with scatter-gather, to DMA-Engine's spec (§6.3): register package generated from `spec/dmaeng.yaml` and checked against it, a Python model ported from `qemu-device/dmaeng.c` first, `traces/dmaeng-sync.trace` replayed against the RTL, and a bare-metal driver on the core using `dmaeng_regs.h`
+- [x] Interconnect with round-robin arbitration and address decode
+- [x] All §6.2 SVA assertions written and passing (proven on the crossbar, `tb/formal/axi_xbar.sby`; the DMA's own AXI ports are protocol-checked in simulation, `tb/cocotb/axi_mem.py`)
 - [ ] Software on the core configures and launches an accelerator job
 - [ ] Release `soc-v1.0` (fpga-coord §5: release test, `CHANGELOG.md`, annotated tag); P4 waits on it
 
