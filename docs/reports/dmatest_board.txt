@@ -1,0 +1,20 @@
+# dmatest on the Arty A7-100T, single core, 100 MHz, bitstream from f873d7d (make impl), loaded with scripts/load.py, 2026-11-05
+dmatest: ID 0x444d4131 VERSION 0x10000 MAX_XFER 65536
+dmatest: alignments 176/176
+dmatest: batch 2/2, head 3
+dmatest: error and reset 3/3
+dmatest: 4096 B 0x411c -> 0x310c: dma 4888 cycles, core 7172 cycles
+dmatest: decode error 3/3
+dmatest: 186/186 ok
+
+rv32i bootloader:
+# dmatest on the Arty A7-100T, TMR (three voted cores), 100 MHz, bitstream from f873d7d (make impl TMR=1), 2026-11-05
+dmatest: ID 0x444d4131 VERSION 0x10000 MAX_XFER 65536
+dmatest: alignments 176/176
+dmatest: batch 2/2, head 3
+dmatest: error and reset 3/3
+dmatest: 4096 B 0x411c -> 0x310c: dma 4888 cycles, core 7172 cycles
+dmatest: decode error 3/3
+dmatest: 186/186 ok
+
+rv32i bootloader: send a program (scripts/load.py), or r to rerun the last one

@@ -33,5 +33,8 @@ Accesses there hold the core until the bus answers; RAM and I/O never do.
 **Limits consumers should know:** RV32I only (no M; `*` `/` `%` are libgcc
 calls); no interrupts (poll the DMA and the accelerator); every trap halts the
 core; `clk_array` is the core clock (its own domain comes in `soc-v2.0`).
-Board: 100 MHz met, single core and TMR. `dmatest` and `gemmtest` have run in
-simulation only, not yet on the board.
+Board: 100 MHz met, single core and TMR. At the tag, `dmatest` and `gemmtest`
+had run in simulation only. **Later the same day (no RTL change):** both pass on
+the board, single core and TMR, with cycle counts equal to simulation's
+([dmatest_board.txt](docs/reports/dmatest_board.txt),
+[gemmtest_board.txt](docs/reports/gemmtest_board.txt)).

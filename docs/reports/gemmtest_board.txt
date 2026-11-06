@@ -1,0 +1,25 @@
+# gemmtest on the Arty A7-100T, single core, 100 MHz, bitstream from f873d7d (make impl), loaded with scripts/load.py, 2026-11-05
+gemmtest: 16x16 array, 16384-byte buffers, status 0x0
+gemmtest: 1x1x1 ok, job 46 cycles, call 745, core 129
+gemmtest: 16x16x16 ok, job 61 cycles, call 2629, core 290576
+gemmtest: 5x7x9 ok, job 50 cycles, call 2477, core 23351
+gemmtest: 3x33x17 ok, job 273 cycles, call 5923, core 119359
+gemmtest: 2x40x3 ok, job 135 cycles, call 5690, core 17202
+gemmtest: 24x20x24 ok, job 267 cycles, call 11704, core 822328
+gemmtest: last a 0x310c w 0x34cc c 0x418c
+gemmtest: 11/11 ok
+
+rv32i bootloader: send a program (scripts/load.py), or r to rerun the last one
+
+# gemmtest on the Arty A7-100T, TMR (three voted cores), 100 MHz, bitstream from f873d7d (make impl TMR=1), 2026-11-05
+gemmtest: 16x16 array, 16384-byte buffers, status 0x0
+gemmtest: 1x1x1 ok, job 46 cycles, call 745, core 129
+gemmtest: 16x16x16 ok, job 61 cycles, call 2629, core 290576
+gemmtest: 5x7x9 ok, job 50 cycles, call 2477, core 23351
+gemmtest: 3x33x17 ok, job 273 cycles, call 5923, core 119359
+gemmtest: 2x40x3 ok, job 135 cycles, call 5690, core 17202
+gemmtest: 24x20x24 ok, job 267 cycles, call 11704, core 822328
+gemmtest: last a 0x310c w 0x34cc c 0x418c
+gemmtest: 11/11 ok
+
+rv32i bootloader: send a program (scripts/load.py), or r to rerun the last one
