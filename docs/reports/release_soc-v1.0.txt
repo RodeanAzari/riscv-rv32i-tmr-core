@@ -1,0 +1,40 @@
+soc-v1.0 release test (fpga-coord: "Phase G: AXI interconnect + DMA; AXI SVA properties proven")
+date: 2026-11-05  commit: 3992452  host: local, Verilator 5.050, Yosys 0.69+208
+
+step exit codes:
+lint rc=0
+dma-model rc=0
+sim rc=0
+formal rc=0
+
+make dma-model (tail):
+PASS: planted BugHeadStaysOnError caught by check_head_on_errors
+PASS: planted BugResetKeepsMask caught by check_reset_clears_all
+PASS: planted BugNoW1C caught by trace step 18
+PASS: planted BugHeadNoWrap caught by trace step 780
+
+cocotb:
+=== dmaeng_regs:test_dmaeng_regs ===
+** TESTS=6 PASS=6 FAIL=0 SKIP=0 269120.01 0.89 300807.75 **
+=== dmaeng:test_dmaeng ===
+** TESTS=8 PASS=8 FAIL=0 SKIP=0 3014530.01 43.91 68645.04 **
+=== axi_xbar:test_axi_xbar ===
+** TESTS=2 PASS=2 FAIL=0 SKIP=0 500030.00 22.55 22174.84 **
+=== soc:test_dma ===
+** TESTS=1 PASS=1 FAIL=0 SKIP=0 18883280.00 56.12 336452.69 **
+=== soc_tmr:test_dma ===
+** TESTS=1 PASS=1 FAIL=0 SKIP=0 18883280.00 59.87 315383.69 **
+
+SymbiYosys tb/formal/axi_xbar.sby:
+[axi_xbar_cover] summary: engine_0 (smtbmc yices) returned pass
+[axi_xbar_cover] summary:   reached cover statement axi_xbar_formal._witness_.check_cover_axi_xbar_formal_sv_146_1125 at axi_xbar_formal.sv:146.7-147.61 step 1
+[axi_xbar_cover] summary:   reached cover statement axi_xbar_formal._witness_.check_cover_axi_xbar_formal_sv_145_1121 at axi_xbar_formal.sv:145.7-145.83 step 2
+[axi_xbar_cover] summary:   reached cover statement axi_xbar_formal._witness_.check_cover_axi_xbar_formal_sv_143_1112 at axi_xbar_formal.sv:143.7-143.86 step 3
+[axi_xbar_cover] summary:   reached cover statement axi_xbar_formal._witness_.check_cover_axi_xbar_formal_sv_144_1117 at axi_xbar_formal.sv:144.7-144.70 step 4
+[axi_xbar_cover] DONE (PASS, rc=0)
+[axi_xbar_prove] summary: engine_0 (smtbmc yices) returned pass for basecase
+[axi_xbar_prove] summary: engine_0 (smtbmc yices) returned pass for induction
+[axi_xbar_prove] summary: successful proof by k-induction.
+[axi_xbar_prove] DONE (PASS, rc=0)
+
+CI on the same RTL (full lint + sim + formal): run 42103046882 at bbb36ca, success; run 42134563039 at 3992452, success
