@@ -69,6 +69,9 @@ lint:
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core -GMEM_WAIT=1 $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core -GMEM_WAIT=1 -DRISCV_FORMAL -DFORMAL $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr -GMEM_WAIT=1 -DRISCV_FORMAL -DFORMAL $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_muldiv $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_muldiv -DFORMAL -DMULDIV_ARITH $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_muldiv -GXLEN=8 -DFORMAL -DMULDIV_ARITH $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_pe $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_array $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module systolic_pe_pair $(RTL)
@@ -395,6 +398,13 @@ synth-dma:
 synth-accel:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART) gemm_accel
+
+# The M-extension unit alone, out of context (Phase H): what MUL/DIV cost
+# before they are in the core. Reports docs/reports/*_ooc_riscv_muldiv.*.
+.PHONY: synth-muldiv
+synth-muldiv:
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_muldiv
 
 # --- TMR fault injection ---------------------------------------------------
 # The documented campaign (CLAUDE.md 5.7): FAULTS random single-bit flips into

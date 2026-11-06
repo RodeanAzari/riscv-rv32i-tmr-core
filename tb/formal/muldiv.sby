@@ -1,0 +1,45 @@
+# The M-extension unit -- properties in rtl/core/riscv_muldiv.sv, environment
+# (a reset in the first cycle, nothing else) in muldiv_formal.sv.
+#
+#   prove  k-induction of every property, arithmetic included (MULDIV_ARITH),
+#          at XLEN = 8. A 32 x 32 multiplier checked against `*` is beyond a
+#          SAT solver, and so is a 32-bit divide; the RTL is parameterized by
+#          XLEN, so XLEN = 8 proves the same structure (4-bit halves, 8
+#          restoring steps, the same sign and corner-case logic) for every
+#          input, every op, every handshake. At XLEN = 32 the unit is checked
+#          in simulation instead: spike's 10,592 vectors and random ops
+#          (tb/cocotb/test_muldiv.py), with the latency properties live.
+#   cover  reachability: each op completes, both corner cases, a held result,
+#          a back-to-back start.
+#
+# Depth. prove: 3. The datapath invariants in the RTL say what every register
+# holds at every step, so the induction closes in a few cycles and the base
+# case need not span a whole operation; every extra step is another copy of
+# the multiplier and divider for the solver. cover: 12, as one DIV is
+# XLEN + 2 = 10 cycles in EX, plus reset.
+#
+# Engine: bitwuzla. yices sat on the first multiply result (base case step
+# 3, XLEN = 8) for minutes; bitwuzla took 29 s with every step's arithmetic.
+
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+cover: mode cover
+prove: depth 3
+cover: depth 12
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+read_verilog -sv -formal -DMULDIV_ARITH riscv_muldiv.sv
+read_verilog -sv -formal muldiv_formal.sv
+chparam -set XLEN 8 muldiv_formal
+prep -top muldiv_formal
+
+[files]
+../../rtl/core/riscv_muldiv.sv
+muldiv_formal.sv

@@ -71,6 +71,7 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_core_wait:test_core,test_riscv_tests \
          riscv_core_tmr_wait:test_core,test_riscv_tests \
          riscv_alu:test_alu \
+         riscv_muldiv:test_muldiv \
          riscv_regfile:test_regfile \
          riscv_decoder:test_decoder \
          riscv_mem_align:test_mem_align \
