@@ -12,7 +12,8 @@
 #   make bench  CoreMark for the board SoC (board and simulation images)
 #   make impl   board-level bitstream for the Arty A7;  make prog  program it
 #   make ila    program an ILA=1 build and capture the pipeline registers
-#   make model-test  the C golden model alone, on riscv-tests rv32ui
+#   make model-test  the golden models alone: C on riscv-tests rv32ui and
+#                    rv32um, C and Python M against spike's vectors
 #   make gemm-model  the systolic array's golden model alone (Phase F)
 #   make dma-model   the DMA engine's golden model alone (Phase G)
 #   make accel-model the GEMM accelerator's golden model alone (Phase G)
@@ -307,9 +308,32 @@ RV32UI_SKIP := fence_i ma_data
 RV32UI      := $(filter-out $(RV32UI_SKIP), \
                  $(basename $(notdir $(wildcard sw/riscv-tests/isa/rv32ui/*.S))))
 
-.PHONY: model-test
-model-test: $(MODEL_BUILD)/rv32ui_check $(RV32UI:%=$(MODEL_BUILD)/rv32ui/%.bin)
+# The M extension: rv32um on the C model with M on, then both models against
+# sw/model/m_vectors.txt, spike's results (regenerate with make m-vectors,
+# which needs spike; the file is committed so this check does not).
+RV32UM      := $(basename $(notdir $(wildcard sw/riscv-tests/isa/rv32um/*.S)))
+
+.PHONY: model-test m-vectors
+model-test: $(MODEL_BUILD)/rv32ui_check $(MODEL_BUILD)/m_check \
+            $(RV32UI:%=$(MODEL_BUILD)/rv32ui/%.bin) $(RV32UM:%=$(MODEL_BUILD)/rv32um/%.bin)
 	$(MODEL_BUILD)/rv32ui_check $(RV32UI:%=$(MODEL_BUILD)/rv32ui/%.bin)
+	$(MODEL_BUILD)/rv32ui_check -m $(RV32UM:%=$(MODEL_BUILD)/rv32um/%.bin)
+	$(MODEL_BUILD)/m_check $(MODEL_DIR)/m_vectors.txt
+	python3 $(MODEL_DIR)/m_check.py $(MODEL_DIR)/m_vectors.txt
+
+m-vectors:
+	python3 scripts/m_vectors.py $(MODEL_DIR)/m_vectors.txt
+
+$(MODEL_BUILD)/m_check: $(MODEL_DIR)/m_check.c $(MODEL_DIR)/rv32i_iss.c $(MODEL_DIR)/rv32i_iss.h
+	@mkdir -p $(@D)
+	cc -std=c11 -O2 -Wall -Wextra -Werror -o $@ $(MODEL_DIR)/m_check.c $(MODEL_DIR)/rv32i_iss.c
+
+$(MODEL_BUILD)/rv32um/%.bin: sw/riscv-tests/isa/rv32um/%.S
+	@mkdir -p $(@D)
+	$(RISCV_PREFIX)gcc -march=rv32im -mabi=ilp32 -static -nostdlib -nostartfiles \
+		-Isw/riscv-tests-env -Isw/riscv-tests/isa/macros/scalar \
+		-Tsw/riscv-tests-env/link.ld -o $(@:.bin=.elf) $<
+	$(RISCV_PREFIX)objcopy -O binary $(@:.bin=.elf) $@
 
 $(MODEL_BUILD)/rv32ui_check: $(MODEL_DIR)/rv32ui_check.c $(MODEL_DIR)/rv32i_iss.c $(MODEL_DIR)/rv32i_iss.h
 	@mkdir -p $(@D)

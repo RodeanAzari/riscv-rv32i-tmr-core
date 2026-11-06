@@ -1,7 +1,9 @@
-/* Run riscv-tests rv32ui binaries on the golden model alone, before it is
- * trusted to judge the RTL.
+/* Run riscv-tests rv32ui (or, with -m, rv32um) binaries on the golden model
+ * alone, before it is trusted to judge the RTL.
  *
- *   rv32ui_check <test.bin>...
+ *   rv32ui_check [-m] <test.bin>...
+ *
+ * -m turns the model's M extension on.
  *
  * Each flat binary is loaded at address 0 and run until it halts. The
  * environment (sw/riscv-tests-env/riscv_test.h) ends every test in ECALL with
@@ -9,6 +11,7 @@
  * is the number of tests that did not pass.
  */
 #include <stdio.h>
+#include <string.h>
 
 #include "rv32i_iss.h"
 
@@ -53,9 +56,13 @@ static int run(const char *path)
 
 int main(int argc, char **argv)
 {
-    int fails = 0;
-    for (int i = 1; i < argc; i++)
+    int fails = 0, first = 1;
+    if (argc > 1 && strcmp(argv[1], "-m") == 0) {
+        rv_set_m(1);
+        first = 2;
+    }
+    for (int i = first; i < argc; i++)
         fails += run(argv[i]);
-    printf("%d / %d passed\n", argc - 1 - fails, argc - 1);
+    printf("%d / %d passed\n", argc - first - fails, argc - first);
     return fails;
 }

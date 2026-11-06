@@ -1,5 +1,6 @@
-/* RV32I golden model for the UVM environment (Phase C): an instruction-set
- * simulator, one instruction per call, no pipeline and no timing.
+/* RV32I golden model for the UVM environment (Phase C), optionally RV32IM
+ * (rv_set_m): an instruction-set simulator, one instruction per call, no
+ * pipeline and no timing.
  *
  * Written from the ISA specification, independently of the RTL and of the
  * Python model the cocotb tests use, so that it can disagree with both. It
@@ -8,12 +9,15 @@
  *
  *   - Every exception halts: ECALL, EBREAK, an illegal instruction (any word
  *     that is not one of the 40 RV32I encodings, CSR accesses, MRET, WFI and
- *     FENCE.I included), a load or store whose address is not a multiple of
+ *     FENCE.I included; the 8 M encodings too unless rv_set_m(1)), a load or store whose address is not a multiple of
  *     its size, and a taken branch or jump to a target that is not 4-byte
  *     aligned (JALR clears bit 0 first). A trapping instruction retires with
  *     trap = halt = 1, no register write and no memory access, and nothing
  *     after it executes.
  *   - FENCE is a NOP.
+ *   - M, when on, follows the spec's table for the cases that do not trap:
+ *     x / 0 gives DIV/DIVU all ones and REM/REMU the dividend; INT_MIN / -1
+ *     gives DIV INT_MIN and REM 0.
  *
  * Each step fills an RVFI-shaped record, in the core's conventions: rs1/rs2
  * are the instruction's register fields whether it reads them or not; rd_addr
@@ -48,6 +52,7 @@ typedef struct {
 } rv_rec_t;
 
 void     rv_reset(uint32_t pc);                      /* registers undefined, memory kept */
+void     rv_set_m(int on);                           /* RV32IM if on; off by default, kept across rv_reset */
 void     rv_mem_clear(void);
 void     rv_mem_write32(uint32_t addr, uint32_t word); /* addr word-aligned */
 uint32_t rv_mem_read32(uint32_t addr);

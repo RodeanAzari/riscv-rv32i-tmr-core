@@ -15,6 +15,7 @@ static uint32_t x[32];
 static uint32_t defined;      /* bit r: x[r] written since reset (x0 always) */
 static uint32_t pc;
 static int      halted;
+static int      m_ext;        /* RV32IM: M encodings execute instead of trapping */
 static uint8_t  mem[RV_MEM_BYTES];
 
 static int32_t sext(uint32_t v, int bits)
@@ -30,6 +31,30 @@ void rv_reset(uint32_t start_pc)
     defined = 1u;
     pc = start_pc;
     halted = 0;
+}
+
+void rv_set_m(int on) { m_ext = on != 0; }
+
+/* MUL MULH MULHSU MULHU DIV DIVU REM REMU, by funct3. */
+static uint32_t muldiv(uint32_t f3, uint32_t a, uint32_t b)
+{
+    int32_t sa = (int32_t)a, sb = (int32_t)b;
+    switch (f3) {
+    case 0: return a * b;
+    case 1: return (uint32_t)((uint64_t)((int64_t)sa * sb) >> 32);
+    case 2: return (uint32_t)((uint64_t)((int64_t)sa * (int64_t)b) >> 32);
+    case 3: return (uint32_t)(((uint64_t)a * b) >> 32);
+    case 4:
+        if (b == 0) return 0xFFFFFFFFu;
+        if (a == 0x80000000u && b == 0xFFFFFFFFu) return a;   /* overflow, UB in C */
+        return (uint32_t)(sa / sb);
+    case 5: return b == 0 ? 0xFFFFFFFFu : a / b;
+    case 6:
+        if (b == 0) return a;
+        if (a == 0x80000000u && b == 0xFFFFFFFFu) return 0;
+        return (uint32_t)(sa % sb);
+    default: return b == 0 ? a : a % b;
+    }
 }
 
 void rv_mem_clear(void) { memset(mem, 0, sizeof mem); }
@@ -219,6 +244,8 @@ int rv_step(rv_rec_t *r)
             case 6: v = v1 | v2; break;
             default: v = v1 & v2; break;
             }
+        } else if (f7 == 0x01 && m_ext) {
+            v = muldiv(f3, v1, v2);
         } else if (f7 == 0x20 && f3 == 0) {
             v = v1 - v2;
         } else if (f7 == 0x20 && f3 == 5) {

@@ -1,4 +1,5 @@
-"""RV32I golden model: one instruction at a time, no pipeline, no timing.
+"""RV32I golden model, optionally RV32IM: one instruction at a time, no
+pipeline, no timing.
 
 Written from the ISA specification, not from the RTL, so it can disagree with
 the core -- that is the point (CLAUDE.md 11, golden model before RTL). It has no
@@ -11,7 +12,8 @@ machinery is in scope), so it halts -- one rule, followed here
 
 - ECALL and EBREAK.
 - An illegal instruction: any word that is not one of the 40 RV32I encodings
-  (CSR accesses, MRET, WFI, FENCE.I and the all-zero word included).
+  (CSR accesses, MRET, WFI, FENCE.I and the all-zero word included), plus the
+  8 M encodings when the model is built with m_ext.
 - A load or store whose address is not a multiple of its size.
 - A taken branch or jump whose target is not 4-byte aligned. (JALR clears
   bit 0 first, as the spec says; a branch that is not taken never traps.)
@@ -20,6 +22,12 @@ A trapping instruction retires marked trap and halt, as RVFI defines them,
 with no register write and no memory access, and nothing after it executes.
 
 FENCE is a NOP, which is the spec's own meaning for one hart with no caches.
+
+The M extension (m_ext=True) follows the spec's own table for the two cases
+that do not trap in RISC-V: division by zero gives DIV/DIVU all ones and
+REM/REMU the dividend; signed overflow (INT_MIN / -1) gives DIV INT_MIN and
+REM 0. With m_ext off (the default) the M encodings are illegal, as they are
+for the RV32I core.
 
 Each step also leaves an RVFI-shaped record of what the instruction did in
 self.trace, for per-retirement comparison against the core's RVFI port.
@@ -33,6 +41,7 @@ LOAD, STORE = 0b0000011, 0b0100011
 BRANCH, JAL, JALR = 0b1100011, 0b1101111, 0b1100111
 MISC_MEM = 0b0001111
 ECALL, EBREAK = 0x0000_0073, 0x0010_0073
+MULDIV = 0x01                   # funct7 of every M instruction (opcode OP)
 
 
 def sext(value, bits):
@@ -63,8 +72,34 @@ def alu(funct3, alt, a, b):
     return a & b
 
 
-def legal(instr):
-    """True for exactly the 40 RV32I encodings; anything else traps."""
+def muldiv(funct3, a, b):
+    """MUL MULH MULHSU MULHU DIV DIVU REM REMU, by funct3, from the spec's
+    definitions in unbounded integers: no carry tricks to get wrong."""
+    sa, sb = signed(a), signed(b)
+    if funct3 == 0b000:
+        return (a * b) & MASK32
+    if funct3 == 0b001:
+        return ((sa * sb) >> 32) & MASK32
+    if funct3 == 0b010:
+        return ((sa * b) >> 32) & MASK32
+    if funct3 == 0b011:
+        return (a * b) >> 32
+    if funct3 & 0b001:                              # unsigned: DIVU, REMU
+        if b == 0:
+            return MASK32 if funct3 == 0b101 else a
+        return a // b if funct3 == 0b101 else a % b
+    if b == 0:                                      # signed: DIV, REM
+        return MASK32 if funct3 == 0b100 else a
+    # Python's // floors; RISC-V truncates toward zero.
+    q = abs(sa) // abs(sb) * (1 if (sa < 0) == (sb < 0) else -1)
+    if funct3 == 0b100:
+        return q & MASK32                           # INT_MIN / -1 wraps to INT_MIN
+    return (sa - q * sb) & MASK32                   # remainder takes the dividend's sign
+
+
+def legal(instr, m_ext=False):
+    """True for exactly the 40 RV32I encodings, plus the 8 M encodings if
+    m_ext; anything else traps."""
     opcode, funct3, funct7 = instr & 0x7F, (instr >> 12) & 0x7, instr >> 25
     if opcode in (LUI, AUIPC, JAL):
         return True
@@ -77,7 +112,8 @@ def legal(instr):
     if opcode == STORE:
         return funct3 in (0b000, 0b001, 0b010)
     if opcode == OP:
-        return funct7 == 0 or (funct7 == 0x20 and funct3 in (0b000, 0b101))
+        return (funct7 == 0 or (funct7 == 0x20 and funct3 in (0b000, 0b101))
+                or (m_ext and funct7 == MULDIV))
     if opcode == OP_IMM:
         return (funct3 not in (0b001, 0b101) or funct7 == 0
                 or (funct7 == 0x20 and funct3 == 0b101))
@@ -100,7 +136,8 @@ class RV32I:
     mem maps word-aligned byte addresses to 32-bit words; absent reads as 0.
     """
 
-    def __init__(self, mem=None):
+    def __init__(self, mem=None, m_ext=False):
+        self.m_ext = m_ext
         self.pc = 0
         self.x = [0] * 32
         self.mem = dict(mem or {})
@@ -185,7 +222,7 @@ class RV32I:
         imm_j = sext((((instr >> 31) & 1) << 20) | (((instr >> 12) & 0xFF) << 12)
                      | (((instr >> 20) & 1) << 11) | (((instr >> 21) & 0x3FF) << 1), 21)
 
-        if instr in (ECALL, EBREAK) or not legal(instr):
+        if instr in (ECALL, EBREAK) or not legal(instr, self.m_ext):
             return self._trap()
         if opcode == MISC_MEM and funct3 == 0b000:      # FENCE
             self.pc += 4
@@ -204,7 +241,9 @@ class RV32I:
             self._write(rd, link)      # after reading rs1: jalr x1, 0(x1) is legal
             return rd, link
 
-        if opcode == OP:
+        if opcode == OP and instr >> 25 == MULDIV:
+            result = muldiv(funct3, rs1, rs2)
+        elif opcode == OP:
             result = alu(funct3, (instr >> 30) & 1, rs1, rs2)
         elif opcode == OP_IMM:
             # instr[30] is a mode bit only for the shifts; elsewhere it is imm[10]
@@ -242,12 +281,13 @@ class RV32I:
         return rd, result & MASK32
 
 
-def run_model(program, mem=None, max_steps=100_000, traces=None):
+def run_model(program, mem=None, max_steps=100_000, traces=None, m_ext=False):
     """Run program from address 0 until it halts or the pc leaves it -- past
     the end, as a forward jump can. Returns (writebacks, model). max_steps stops a program
     that loops forever from hanging the test instead of failing it. Pass a
-    list as traces to collect every retirement's RVFI record."""
-    model = RV32I(mem)
+    list as traces to collect every retirement's RVFI record. m_ext=True
+    models RV32IM."""
+    model = RV32I(mem, m_ext)
     writebacks = []
     for _ in range(max_steps):
         if model.pc // 4 >= len(program):

@@ -194,7 +194,8 @@ riscv-formal found on its first run (see Decisions).
 | `make floorplan` | exports placement + routing from the routed checkpoint (`syn/floorplan_export.tcl`) and draws `docs/img/floorplan_board{,_core}.svg` (`scripts/floorplan.py`); refuses an ILA build | working |
 | `make faults` | the documented TMR fault campaign, `FAULTS` (10000) trials, `SEED`; summary to `docs/reports/tmr_faults.txt`. The regression runs 1000 | working |
 | `make formal` | SymbiYosys over every `tb/formal/*.sby`, all tasks, then `scripts/riscv-formal.sh` (checks + covers, verdicts read from status files); appends OSS CAD Suite's `bin/` to PATH itself; `FORMAL_JOBS=n` | working |
-| `make model-test` | C golden model on rv32ui (host cc + RISC-V gcc) | working |
+| `make model-test` | golden models alone: C on rv32ui and rv32um (`-m`), C and Python M against `sw/model/m_vectors.txt` (host cc + RISC-V gcc) | working |
+| `make m-vectors` | regenerate `sw/model/m_vectors.txt` from spike `--isa=rv32im` (10,592 vectors: edge pairs + seeded random) | working |
 | `make uvm` | UVM regression in XSim (`tb/uvm/run.sh`): `SEED`, `PROGRAMS` (300), `COV_MIN` (95); fails on any UVM error or coverage below `COV_MIN` | working; local only (Vivado), like `make synth` |
 | `make asic` | LibreLane run in its nix-shell (`LIBRELANE_DIR`, default `~/librelane`), `syn/asic_config.yaml`, every .sv under rtl/ passed as `VERILOG_FILES`; run in `syn/build/asic/runs/asic/` (~15 min); then `scripts/asic_summary.py` writes `docs/reports/summary_asic.txt`, `sta_asic.rpt`, `manufacturability_asic.rpt` and `docs/img/asic_layout.png`. Nix's shell: `nix-shell ~/librelane/shell.nix`; open the run with `librelane --last-run --flow openinklayout` (or `openinopenroad`) from `syn/build/asic` | working |
 
