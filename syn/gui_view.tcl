@@ -149,7 +149,14 @@ if {[llength [get_cells -quiet $core/u_core_a]]} {
 lappend modules \
     u_soc/u_ram      {255 255 255}  "32 KiB RAM (block RAM)" \
     u_soc/u_uart_tx  {255   0   0}  "UART transmitter" \
-    u_soc/u_uart_rx  {255 144 144}  "UART receiver"
+    u_soc/u_uart_rx  {255 144 144}  "UART receiver" \
+    u_soc/u_accel    { 64  96 255}  "GEMM accelerator: 16x16 array, A/W/C buffers" \
+    u_soc/u_dma      {192 128  64}  "DMA engine" \
+    u_soc/u_xbar     {  0 160 128}  "AXI: crossbar, core bridge, converters, DMA RAM port" \
+    u_soc/u_bridge   {  0 160 128}  "" \
+    u_soc/u_reg_conv {  0 160 128}  "" \
+    u_soc/u_acc_conv {  0 160 128}  "" \
+    u_soc/u_dma_port {  0 160 128}  ""
 array set taken {}
 set leaves [get_cells -hier -filter {IS_PRIMITIVE}]
 puts "\n--- Device view colors ---"

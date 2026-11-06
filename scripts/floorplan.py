@@ -30,6 +30,10 @@ SOC_REST = [
     ("u_soc/u_ram/",            "#f0f0f0", "32 KiB RAM (block RAM)"),
     ("u_soc/u_uart_tx/",        "#ff3030", "UART transmitter"),
     ("u_soc/u_uart_rx/",        "#ff9090", "UART receiver"),
+    ("u_soc/u_accel/",          "#4060ff", "GEMM accelerator: 16x16 array, A/W/C buffers"),
+    ("u_soc/u_dma/",            "#c08040", "DMA engine"),
+    (("u_soc/u_xbar/", "u_soc/u_bridge/", "u_soc/u_reg_conv/", "u_soc/u_acc_conv/",
+      "u_soc/u_dma_port/"),     "#00a080", "AXI: crossbar, core bridge, converters, DMA RAM port"),
     ("",                        "#a0a0a0", "SoC glue and board top: I/O registers, clocking, reset"),
 ]
 MODULES_CORE = [
@@ -59,6 +63,9 @@ TILE_STYLE = [
 
 
 def read(path):
+    # A high-fanout net's routing (the SoC reset, ~370 KB since Phase G) is one field
+    # far past csv's 128 KiB default.
+    csv.field_size_limit(sys.maxsize)
     with open(path, newline="") as f:
         return list(csv.DictReader(f, delimiter="\t"))
 

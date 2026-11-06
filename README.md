@@ -22,15 +22,19 @@ Every number below is transcribed from a report committed in
 [`docs/reports/`](docs/reports/), produced by a `make` target, with its
 measurement conditions stated. Dashes mean not measured yet.
 
-[![Floorplan of the TMR core on the FPGA](docs/img/floorplan_board_core.svg)](docs/img/floorplan_board_core.svg)
+[![Floorplan of the SoC on the FPGA](docs/img/floorplan_board_core.svg)](docs/img/floorplan_board_core.svg)
 
-*The fault-tolerant core as placed and routed on the Artix-7: three copies of
-the CPU (orange, green, cyan) and the voter between them (magenta), beside
-the block-RAM memory (white) and the UART (red), with the critical path in
-yellow. Generated from the routed design by `make floorplan`. Click to open
-it, or download it and open it in a browser to zoom in to individual LUTs
-and flip-flops. The single core's floorplan, from Phase D, is
-[here](docs/img/vivado/phase-d/floorplan_board_core.svg).*
+*The whole SoC as placed and routed on the Artix-7 (Phase G): the GEMM
+accelerator (blue, its 16×16 array on the DSP columns), the DMA engine
+(brown) and the AXI crossbar, bridges and converters (teal), beside the
+single RV32I core (ALU orange, branch unit magenta, register file cyan, the
+rest green), the block-RAM memory (white) and the UART (red), with the
+critical path in yellow. Generated from the routed design by `make
+floorplan`. Click to open it, or download it and open it in a browser to
+zoom in to individual LUTs and flip-flops (16.5 MB). Earlier floorplans: the
+single core from Phase D
+[here](docs/img/vivado/phase-d/floorplan_board_core.svg), the fault-tolerant
+TMR core from Phase E [here](docs/img/vivado/phase-e/floorplan_board_core.svg).*
 
 ## At a glance
 
