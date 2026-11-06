@@ -392,6 +392,24 @@ board builds above. 10 ns constraint, WNS +0.431 ns, 128 DSP48E1.
 | ![Worst path on the device, array](docs/img/vivado/phase-f/worstpathdevice.png) The worst setup path on the die | ![Worst path schematic, array](docs/img/vivado/phase-f/worstpath.png) The worst path: row 15, pair 0's DSP multiply → lane split and psum adder (CARRY4 chains; one LUT is row 14's psum coming down) → the output deskew shift register (Vivado folded the bottom psum register into an SRL16E) |
 | ![Timing summary, array](docs/img/vivado/phase-f/timing.png) Timing: met at 100 MHz out of context, WNS +0.431 ns, WHS +0.097 ns | ![Utilization by hierarchy, array](docs/img/vivado/phase-f/utilization-hierarchy.png) 128 pairs (16 rows × 8), one DSP each. 7,645 physical slice LUTs here; the 7,681 elsewhere are LUT cells |
 
+
+### Phase G, the whole SoC
+
+The SoC with the accelerator, DMA engine and AXI crossbar on the bus
+([`phase-g/`](docs/img/vivado/phase-g/)): the single-core board build of
+2026-11-05 (`make impl` from `f873d7d`, the `soc-v1.0` RTL), 100 MHz, WNS
++0.288 ns. Its floorplan is the one at the top ([whole
+die](docs/img/vivado/phase-g/floorplan_board.svg)).
+
+| Placed and routed | Elaborated RTL |
+|---|---|
+| ![Device view, SoC](docs/img/vivado/phase-g/device.png) Device view: the accelerator (blue) spreads over most of the used die, down the DSP and block-RAM columns; the core (orange, magenta, cyan, green) is the small patch in the middle, the DMA (brown) and AXI glue (teal) beside it | ![RTL schematic of the SoC](docs/img/vivado/phase-g/rtl-soc.png) The SoC's blocks and the buses between them: core, bridge, crossbar, DMA, accelerator, converters, RAM |
+| ![One slice](docs/img/vivado/phase-g/devicezoom.png) One slice (`SLICE_X42Y45`, a SLICEM): four LUTs, a CARRY4 and flip-flops, with routing | ![RTL schematic of the DMA engine](docs/img/vivado/phase-g/soc-dma.png) The DMA engine opened up: the register slave (`dmaeng_regs`), the descriptor sequencer (`dmaeng_desc`) and the AXI4 master (`dmaeng_axi`) |
+| ![Worst path on the device, SoC](docs/img/vivado/phase-g/deviceworstpath.png) The worst setup path (selected, white) on the die, inside the array | ![RTL schematic of the crossbar](docs/img/vivado/phase-g/rtl-xbar.png) The AXI crossbar as elaborated logic: decode, round-robin grants and the channel muxes (768 cells) |
+| ![Worst path schematic, SoC](docs/img/vivado/phase-g/worstpathschematic.png) The worst path, in a PE pair of the array: DSP product → lane split → psum add → deskew, 10 levels | ![RTL schematic of the accelerator](docs/img/vivado/phase-g/rtl-accel.png) The accelerator's top level as elaborated logic: registers, sequencer, buffers and the array |
+| ![Timing summary, SoC](docs/img/vivado/phase-g/timing.png) Timing: met at 100 MHz, WNS +0.288 ns, WHS +0.016 ns, 37,907 endpoints | ![Power estimate, SoC](docs/img/vivado/phase-g/power.png) Power: 0.758 W, Vivado's **vectorless estimate**, not a measurement; DSP 18% and block RAM 20% of the dynamic part |
+| ![Utilization by hierarchy, SoC](docs/img/vivado/phase-g/utilization.png) Utilization by module (slice LUTs; the trend tables count LUT cells, 13,204): accelerator 9,642 LUT, 10,951 FF, 24 BRAM, all 131 DSP; DMA 1,046 LUT; crossbar 404; the core 898 | |
+
 ## As a chip (Sky130)
 
 Run #1 of the ASIC flow: the bare core (one copy, no TMR) from RTL to GDSII
