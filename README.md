@@ -675,6 +675,14 @@ its reports are committed with the RTL that produced them.
   to play Doom on the Arty: DDR3 with a cache, the game data from flash, a VGA
   framebuffer, with the M extension (now built), measured in frames per second.
 
+## Used by
+
+This repository is the `soc` block other projects build on, consumed only at
+release tags (`soc-v1.0` released; `soc-v2.0` comes with Phase H). No
+project consumes a release yet; [Open SerDes Lab](https://github.com/RodeanAzari/serdes-lab)
+is cleared to start from `soc-v1.0`, and two more projects wait on
+`soc-v2.0`. Each is listed here when it starts consuming a tag.
+
 ## License
 
 MIT; see [LICENSE](LICENSE). The submodules keep their own licenses:
