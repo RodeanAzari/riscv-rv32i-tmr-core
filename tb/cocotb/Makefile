@@ -70,6 +70,8 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_core_tmr:test_tmr_faults \
          riscv_core_wait:test_core,test_riscv_tests \
          riscv_core_tmr_wait:test_core,test_riscv_tests \
+         riscv_core_m:test_core,test_riscv_tests,test_core_m \
+         riscv_core_m_wait:test_core,test_riscv_tests,test_core_m \
          riscv_alu:test_alu \
          riscv_muldiv:test_muldiv \
          riscv_regfile:test_regfile \
@@ -166,7 +168,14 @@ ifdef TEST_ONE
     COMPILE_ARGS        += -GMEM_WAIT=1
     export DMEM_WAIT    ?= 0.3
     # quoted: cocotb puts it on a shell command line as is
-    export COCOTB_TEST_FILTER := 'test_hold|test_random|test_rv32ui'
+    export COCOTB_TEST_FILTER := 'test_hold|test_random|test_rv32u|test_m_directed'
+  endif
+  # <core>_m: built with M_EXT = 1 (Phase H). After _wait, so <core>_m_wait
+  # is both. M_EXT tells the tests (test_rv32um runs only there).
+  ifneq ($(filter %_m,$(TOPLEVEL)),)
+    TOPLEVEL            := $(patsubst %_m,%,$(TOPLEVEL))
+    COMPILE_ARGS        += -GM_EXT=1
+    export M_EXT        := 1
   endif
   # The crossbar at the test's map: 3 masters, slave 0 at 0x0xxx_xxxx (the
   # RAM's region), slave 1 at 0x2000_0000-0x2000_0FFF; the rest DECERR.

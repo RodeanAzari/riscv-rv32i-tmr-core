@@ -8,13 +8,26 @@
 # of any length; depth 20, as holds leave fewer real steps in the window.
 # bmc_wait: holds completely free, bounded from reset; depth 14 (~1.5 min;
 # each step doubles, 15 took 3 min, 16 over 10; 0-15 passed, 2026-11-04).
+# The *_m tasks build the core with M_EXT (Phase H): every property above
+# plus M1-M3 (the M stall), I1 and B3, with muldiv_stub.sv in place of the
+# unit -- the real handshake, any result, done 3 to 5 cycles into EX. With
+# M2, sound for stalls of any length (muldiv_stub.sv says why); the unit's
+# own latency, handshake and arithmetic are muldiv.sby's.
+# prove_m_wait: M and MEM_WAIT together, holds as prove_wait's;
+# cover_m_wait reaches its covers (M4 among them), holds free.
+# Engine bitwuzla for them: yices sat in prove_m's base case for over 10
+# minutes (step 6, 2026-11-06); bitwuzla proves it in about 5 s.
 
 [tasks]
-prove
-cover
-prove_wait prove
-bmc_wait bmc
-cover_wait cover
+prove yices
+cover yices
+prove_wait prove yices
+bmc_wait bmc yices
+cover_wait cover yices
+prove_m prove bitwuzla
+cover_m cover bitwuzla
+prove_m_wait prove bitwuzla
+cover_m_wait cover bitwuzla
 
 [options]
 prove: mode prove
@@ -24,14 +37,24 @@ prove: depth 10
 cover: depth 10
 bmc_wait: depth 14
 prove_wait: depth 20
+prove_m_wait: depth 20
 
 [engines]
-smtbmc yices
+yices: smtbmc yices
+bitwuzla: smtbmc bitwuzla
 
 [script]
 read_verilog -sv -formal -DRISCV_FORMAL riscv_alu.sv riscv_branch.sv riscv_decoder.sv
 read_verilog -sv -formal -DRISCV_FORMAL riscv_hazard.sv riscv_mem_align.sv riscv_regfile.sv
+prove_m: read_verilog -sv -formal muldiv_stub.sv
+cover_m: read_verilog -sv -formal muldiv_stub.sv
+prove_m_wait: read_verilog -sv -formal muldiv_stub.sv
+cover_m_wait: read_verilog -sv -formal muldiv_stub.sv
 read_verilog -sv -formal -DRISCV_FORMAL riscv_core.sv core_formal.sv
+prove_m: chparam -set M 1 core_formal
+cover_m: chparam -set M 1 core_formal
+prove_m_wait: chparam -set M 1 -set WAIT 1 -set HOLD1 1 core_formal
+cover_m_wait: chparam -set M 1 -set WAIT 1 core_formal
 prove_wait: chparam -set WAIT 1 -set HOLD1 1 core_formal
 bmc_wait: chparam -set WAIT 1 core_formal
 cover_wait: chparam -set WAIT 1 core_formal
@@ -44,5 +67,6 @@ prep -top core_formal
 ../../rtl/core/riscv_hazard.sv
 ../../rtl/core/riscv_mem_align.sv
 ../../rtl/core/riscv_regfile.sv
+muldiv_stub.sv
 ../../rtl/core/riscv_core.sv
 core_formal.sv

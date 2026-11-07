@@ -45,7 +45,14 @@ module riscv_core #(
     // the core behaves exactly as if the cycle had not happened (see Hold,
     // below). With MEM_WAIT = 0, the default and every Stage 1 result,
     // dmem_ready_i is ignored and nothing changes.
-    parameter bit          MEM_WAIT = 1'b0
+    parameter bit          MEM_WAIT = 1'b0,
+    // M extension (Phase H). With M_EXT = 1 the 8 M instructions execute in
+    // riscv_muldiv in EX: while one waits there (3 cycles for MUL*, 34 for
+    // DIV*), IF, ID and EX hold and a bubble enters MEM (mstall, below); its
+    // result then leaves EX like an ALU result, so forwarding is unchanged.
+    // With M_EXT = 0, the default and every RV32I result, the M encodings
+    // stay illegal, no unit is built, and nothing changes.
+    parameter bit          M_EXT    = 1'b0
 ) (
     input  logic            clk_i,
     input  logic            rst_i,
@@ -184,6 +191,7 @@ module riscv_core #(
   logic            redirect;   // taken branch or jump; driven in EX
   logic [XLEN-1:0] redirect_target;
   logic            freeze;     // a trap in EX, or after; driven in EX
+  logic            mstall;     // an M instruction waits in EX; driven in EX
 
   // Hold (MEM_WAIT): the memory system is not ready. Every register below
   // keeps its value and every commit -- store, register write, halt, RVFI
@@ -196,7 +204,7 @@ module riscv_core #(
 
   always_comb begin
     if      (redirect)        pc_next = redirect_target;
-    else if (stall || freeze) pc_next = pc;
+    else if (stall || freeze || mstall) pc_next = pc;
     else                      pc_next = pc + 32'd4;
   end
 
@@ -218,7 +226,7 @@ module riscv_core #(
     if (rst_i || (redirect && !hold)) begin
       if_id_pc_o    <= RESET_VECTOR;
       if_id_instr_o <= NOP;
-    end else if (!stall && !hold) begin
+    end else if (!stall && !hold && !mstall) begin
       if_id_pc_o    <= pc;
       if_id_instr_o <= imem_rdata_i;
     end
@@ -234,10 +242,12 @@ module riscv_core #(
   logic [2:0]        dec_mem_funct3;
   logic              dec_rd_we;
   logic              dec_halt;
+  logic              dec_muldiv;
 
   riscv_decoder #(
       .XLEN   (XLEN),
-      .ADDR_W (ADDR_W)
+      .ADDR_W (ADDR_W),
+      .M_EXT  (M_EXT)
   ) u_decoder (
       .instr_i          (if_id_instr_o),
       .rs1_addr_o       (dec_rs1_addr),
@@ -256,6 +266,7 @@ module riscv_core #(
       .mem_write_o      (dec_mem_write),
       .mem_funct3_o     (dec_mem_funct3),
       .rd_we_o          (dec_rd_we),
+      .muldiv_o         (dec_muldiv),
       .halt_o           (dec_halt)
   );
 
@@ -333,6 +344,7 @@ module riscv_core #(
   logic [2:0] id_ex_mem_funct3;
   logic       id_ex_rd_we;
   logic       id_ex_halt;
+  logic       id_ex_muldiv;
 
   // Hazard detection. The forwarding selects are decided here in ID and
   // registered into ID/EX (id_ex_fwd_*), so EX's muxes switch off flops --
@@ -379,7 +391,7 @@ module riscv_core #(
       id_ex_fwd_rs1_mem_wb <= 1'b0;
       id_ex_fwd_rs2_ex_mem <= 1'b0;
       id_ex_fwd_rs2_mem_wb <= 1'b0;
-    end else if (!hold) begin
+    end else if (!hold && !mstall) begin
       id_ex_pc_o        <= if_id_pc_o;
       id_ex_instr_o     <= if_id_instr_o;
       id_ex_rs1_addr_o  <= dec_rs1_addr;
@@ -402,10 +414,16 @@ module riscv_core #(
     end
   end
 
-  // The six bits a bubble clears. halt is one of them for the same reason as
-  // branch: a stall bubble holds a copy of the instruction in ID, so an
-  // EBREAK stalled behind a load (its rs2 field is 1) would otherwise halt a
-  // cycle early, from the bubble, and the real EBREAK would never retire.
+  // The six bits a bubble clears -- seven with M_EXT: muldiv, which would
+  // otherwise start a multiply or divide from the bubble. halt is one of them
+  // for the same reason as branch: a stall bubble holds a copy of the
+  // instruction in ID, so an EBREAK stalled behind a load (its rs2 field is
+  // 1) would otherwise halt a cycle early, from the bubble, and the real
+  // EBREAK would never retire.
+  //
+  // An M instruction waiting in EX (mstall) holds all of ID/EX. It never
+  // meets stall, redirect or freeze -- each needs a different instruction in
+  // EX (a load, a branch or jump, a trap or halt), and EX holds one (M1).
   always_ff @(posedge clk_i) begin
     if (rst_i || ((stall || redirect || freeze) && !hold)) begin
       id_ex_rd_we       <= 1'b0;
@@ -414,13 +432,15 @@ module riscv_core #(
       id_ex_branch      <= 1'b0;
       id_ex_jump        <= 1'b0;
       id_ex_halt        <= 1'b0;
-    end else if (!hold) begin
+      id_ex_muldiv      <= 1'b0;
+    end else if (!hold && !mstall) begin
       id_ex_rd_we       <= dec_rd_we;
       id_ex_mem_read    <= dec_mem_read;
       id_ex_mem_write   <= dec_mem_write;
       id_ex_branch      <= dec_branch;
       id_ex_jump        <= dec_jump;
       id_ex_halt        <= dec_halt;
+      id_ex_muldiv      <= dec_muldiv;
     end
   end
 
@@ -447,6 +467,28 @@ module riscv_core #(
     else if (id_ex_fwd_rs2_mem_wb) ex_rs2 = wb_rd_wdata;
     else                           ex_rs2 = id_ex_rs2_rdata_o;
   end
+
+`ifdef RISCV_FORMAL
+  // The operands an M instruction architecturally read: ex_rs1 / ex_rs2 on
+  // its first cycle in EX, kept while it waits (see M extension, below, for
+  // why the live mux outputs stop being them). Formal and RVFI only -- the
+  // unit keeps its own copy -- so synthesis never sees these flops.
+  // md_wait_q: the instruction in EX has already spent a cycle there.
+  logic            md_wait_q;
+  logic [XLEN-1:0] md_rs1_q, md_rs2_q, ex_rs1_arch, ex_rs2_arch;
+  always_ff @(posedge clk_i) begin
+    if (rst_i) md_wait_q <= 1'b0;
+    else if (!hold) begin
+      md_wait_q <= mstall;
+      if (!md_wait_q) begin
+        md_rs1_q <= ex_rs1;
+        md_rs2_q <= ex_rs2;
+      end
+    end
+  end
+  assign ex_rs1_arch = md_wait_q ? md_rs1_q : ex_rs1;
+  assign ex_rs2_arch = md_wait_q ? md_rs2_q : ex_rs2;
+`endif
 
   always_comb begin
     if      (id_ex_a_sel_zero) alu_a = '0;
@@ -515,7 +557,76 @@ module riscv_core #(
   // so the only cost on the ALU's path is this one mux.
   logic [XLEN-1:0] ex_link, ex_result;
   assign ex_link   = id_ex_pc_o + 32'd4;
-  assign ex_result = id_ex_jump ? ex_link : alu_result;
+
+  // M extension. The unit captures ex_rs1 / ex_rs2 in the instruction's first
+  // cycle in EX, while they are still the architectural values: after that,
+  // EX/MEM and MEM/WB move on under the waiting instruction and the
+  // forwarding paths no longer point at its producers. Until done, mstall
+  // holds IF, ID and EX and bubbles EX/MEM; on the done cycle the result
+  // goes out like an ALU result. ack: the instruction leaves EX -- not on a
+  // held cycle, which never happened.
+  //
+  // The unit itself runs through a hold (it has no enable): it captured its
+  // operands already, and a result that arrives during a hold waits for ack.
+  logic            md_done;
+  logic [XLEN-1:0] md_result, md_value;
+
+  if (M_EXT) begin : g_muldiv
+    riscv_muldiv #(
+        .XLEN (XLEN)
+    ) u_muldiv (
+        .clk_i    (clk_i),
+        .rst_i    (rst_i),
+        .valid_i  (id_ex_muldiv),
+        .ack_i    (md_done && !hold),
+        .a_i      (ex_rs1),
+        .b_i      (ex_rs2),
+        .funct3_i (id_ex_funct3),
+        .done_o   (md_done),
+        .result_o (md_result)
+    );
+  end else begin : g_no_muldiv
+    assign md_done   = 1'b0;
+    assign md_result = '0;
+  end
+
+  // M_EXT in the term: without M, nothing stalls whatever id_ex_muldiv holds
+  // (xprop's induction starts from any state, and with md_done tied low a
+  // free id_ex_muldiv would stall the pipeline forever).
+  assign mstall = M_EXT && id_ex_muldiv && !md_done;
+
+`ifdef RISCV_FORMAL_ALTOPS
+  // riscv-formal's stand-ins for M (rvfi.rst, "alternative arithmetic"): a
+  // sum or difference XORed with a per-instruction mask, so its checks need
+  // no multiplier. The unit's latency and handshake stay the real ones;
+  // only the value is replaced, computed from the operands as they were on
+  // the first cycle (ex_rs1_arch, in the RVFI block). The unit's own
+  // arithmetic is proven on its own (tb/formal/muldiv.sby).
+  logic [XLEN-1:0] md_alt;
+  always_comb begin
+    case (id_ex_funct3)
+      3'b000:  md_alt = (ex_rs1_arch + ex_rs2_arch) ^ 32'h5876063e;   // MUL
+      3'b001:  md_alt = (ex_rs1_arch + ex_rs2_arch) ^ 32'hf6583fb7;   // MULH
+      3'b010:  md_alt = (ex_rs1_arch - ex_rs2_arch) ^ 32'hecfbe137;   // MULHSU
+      3'b011:  md_alt = (ex_rs1_arch + ex_rs2_arch) ^ 32'h949ce5e8;   // MULHU
+      3'b100:  md_alt = (ex_rs1_arch - ex_rs2_arch) ^ 32'h7f8529ec;   // DIV
+      3'b101:  md_alt = (ex_rs1_arch - ex_rs2_arch) ^ 32'h10e8fd70;   // DIVU
+      3'b110:  md_alt = (ex_rs1_arch - ex_rs2_arch) ^ 32'h8da68fa5;   // REM
+      default: md_alt = (ex_rs1_arch - ex_rs2_arch) ^ 32'h3138d0e1;   // REMU
+    endcase
+  end
+  assign md_value = md_alt;
+  logic unused_md_result;
+  assign unused_md_result = ^md_result;
+`else
+  assign md_value = md_result;
+`endif
+
+  always_comb begin
+    if      (id_ex_muldiv) ex_result = md_value;
+    else if (id_ex_jump)   ex_result = ex_link;
+    else                   ex_result = alu_result;
+  end
 
   // Halt. Every exception resolves here, where branches do, and for the same
   // reason: by EX an instruction is known to be on the right path -- an ECALL
@@ -629,6 +740,9 @@ module riscv_core #(
   assign dmem_wstrb_o = mem_store ? st_wstrb : 4'b0000;
 
   // EX/MEM. rd_we resets low so nothing appears to retire on cycle one.
+  // While an M instruction waits in EX (mstall), EX/MEM takes a bubble: rd_we
+  // is cleared, and nothing else in it can act (an M instruction is neither
+  // a load, a store nor a halt).
   // alu_result_o is the EX result: the ALU's, or a jump's link address; for
   // a load it is the address, whose low bits pick the lanes in MEM. A trap in
   // EX drops the register write and the memory controls here, so the
@@ -651,7 +765,8 @@ module riscv_core #(
       ex_mem_rd_addr_o    <= id_ex_rd_addr_o;
       ex_mem_mem_read     <= id_ex_mem_read  && !ex_trap;
       ex_mem_mem_funct3   <= id_ex_mem_funct3;
-      ex_mem_rd_we_o      <= id_ex_rd_we && !ex_trap;
+      // A waiting M instruction leaves a bubble behind it: no write.
+      ex_mem_rd_we_o      <= id_ex_rd_we && !ex_trap && !mstall;
       ex_mem_halt         <= id_ex_halt || ex_trap;
     end
   end
@@ -719,7 +834,7 @@ module riscv_core #(
 
   always_ff @(posedge clk_i) begin
     if (rst_i || (redirect && !hold)) if_id_valid <= 1'b0;
-    else if (!stall && !hold)         if_id_valid <= 1'b1;
+    else if (!stall && !hold && !mstall) if_id_valid <= 1'b1;
   end
 
   always_ff @(posedge clk_i) begin
@@ -728,8 +843,9 @@ module riscv_core #(
       ex_mem_valid <= 1'b0;
       mem_wb_valid <= 1'b0;
     end else if (!hold) begin
-      id_ex_valid  <= if_id_valid && !stall && !redirect && !freeze;
-      ex_mem_valid <= id_ex_valid;
+      // A waiting M instruction stays in ID/EX and sends a bubble on.
+      if (!mstall) id_ex_valid <= if_id_valid && !stall && !redirect && !freeze;
+      ex_mem_valid <= id_ex_valid && !mstall;
       mem_wb_valid <= ex_mem_valid;
     end
   end
@@ -757,8 +873,8 @@ module riscv_core #(
     if (!hold) begin
       ex_mem_rs1_addr  <= id_ex_rs1_addr_o;
       ex_mem_rs2_addr  <= id_ex_rs2_addr_o;
-      ex_mem_rs1_rdata <= ex_rs1;
-      ex_mem_rs2_rdata <= ex_rs2;
+      ex_mem_rs1_rdata <= ex_rs1_arch;
+      ex_mem_rs2_rdata <= ex_rs2_arch;
       ex_mem_pc_wdata  <= ex_pc_wdata;
       ex_mem_mem_addr  <= dmem_addr_o;
       ex_mem_mem_rmask <= (id_ex_mem_read && !mem_misaligned) ? st_wstrb : 4'b0000;
@@ -849,8 +965,9 @@ module riscv_core #(
   logic            f_past_valid = 1'b0;
   logic            f_shadow_known = 1'b0;   // see forwarding, below
   /* verilator lint_on PROCASSINIT */
-  logic            f_past_rst, f_past_stall;
+  logic            f_past_rst, f_past_stall, f_past_mstall, f_past_md_leave;
   logic [XLEN-1:0] f_past_pc, f_past_if_id_pc, f_past_if_id_instr;
+  logic [XLEN-1:0] f_past_id_ex_pc, f_past_id_ex_instr;
 
   // A held cycle (MEM_WAIT) is an edge that did not happen, for the
   // properties as for the pipeline: the "previous cycle" flops hold too, so
@@ -863,7 +980,49 @@ module riscv_core #(
       f_past_pc          <= pc;
       f_past_if_id_pc    <= if_id_pc_o;
       f_past_if_id_instr <= if_id_instr_o;
+      f_past_mstall      <= mstall;
+      f_past_md_leave    <= id_ex_muldiv && md_done;
+      f_past_id_ex_pc    <= id_ex_pc_o;
+      f_past_id_ex_instr <= id_ex_instr_o;
     end
+  end
+
+  // ---- M extension (Phase H): the M stall ----
+  // M1: an M instruction waiting in EX never meets the other three events
+  // that stop or flush the front end -- each needs a different instruction
+  // in EX -- so the ID/EX bubble logic, which does not look at mstall, can
+  // never bubble a waiting M instruction.
+  // M2: a cycle of mstall holds the pc, IF/ID and ID/EX (the instruction
+  // stays, the unit's valid_i with it, and nothing younger is lost or
+  // fetched twice), and puts a bubble into EX/MEM -- which B1 then proves
+  // inert. M3: only an M instruction stalls.
+  logic f_after_mstall;
+  assign f_after_mstall = f_past_valid && !f_past_rst && f_past_mstall && !rst_i;
+  always_comb begin
+    if (f_past_valid) begin
+      assert (!(mstall && (stall || redirect || freeze)));          // M1
+      if (mstall) assert (id_ex_muldiv);                            // M3
+      if (!M_EXT) assert (!id_ex_muldiv && !mstall);
+    end
+    if (f_after_mstall) begin                                       // M2
+      assert (pc == f_past_pc);
+      assert (if_id_pc_o == f_past_if_id_pc && if_id_instr_o == f_past_if_id_instr);
+      assert (id_ex_pc_o == f_past_id_ex_pc && id_ex_instr_o == f_past_id_ex_instr);
+      assert (id_ex_muldiv && id_ex_valid);
+      assert (!ex_mem_valid);
+    end
+  end
+
+  // M4 (MEM_WAIT): a result the unit has ready during a hold is still there
+  // after it -- the unit is acked only when the instruction leaves EX. An
+  // ack on a held cycle would send the unit back to IDLE under a waiting
+  // instruction, which restarts it from operands the forwarding paths no
+  // longer hold. The stub's values are free, so only the handshake shows
+  // this. Sampled every cycle, holds included: a hold is the case.
+  logic f_done_in_hold;
+  always_ff @(posedge clk_i) f_done_in_hold <= md_done && hold && !rst_i;
+  always_comb begin
+    if (f_past_valid && f_done_in_hold && !rst_i) assert (md_done);   // M4
   end
 
   // The cycle after a load-use stall, with no reset in between -- and the
@@ -987,8 +1146,12 @@ module riscv_core #(
       // without this guard failed exactly there, at a mid-run reset.
       if (id_ex_valid && !rst_i) begin
         // F1 / F2: the operands EX computes with are the architectural values.
-        if (f_arch_known && (id_ex_rs1_addr_o == f_reg)) assert (ex_rs1 == f_arch);
-        if (f_arch_known && (id_ex_rs2_addr_o == f_reg)) assert (ex_rs2 == f_arch);
+        // On an M instruction's later cycles in EX, the operands it computes
+        // with are the ones captured on its first (ex_rs*_arch): the live
+        // mux outputs have moved on by then. On every other cycle the two
+        // are the same signal.
+        if (f_arch_known && (id_ex_rs1_addr_o == f_reg)) assert (ex_rs1_arch == f_arch);
+        if (f_arch_known && (id_ex_rs2_addr_o == f_reg)) assert (ex_rs2_arch == f_arch);
 
         // L1: the load-use stall did its job -- no instruction in EX ever
         // needs a load result that is still in flight.
@@ -1060,10 +1223,10 @@ module riscv_core #(
     logic [XLEN-1:0] f_s_pc, f_s_if_id_pc, f_s_if_id_instr, f_s_id_ex_pc;
     logic [XLEN-1:0] f_s_id_ex_instr, f_s_id_ex_rs1, f_s_id_ex_rs2, f_s_id_ex_imm;
     logic [XLEN-1:0] f_s_ex_mem_pc, f_s_ex_mem_result, f_s_mem_wb_pc, f_s_mem_wb_result;
-    logic [15:0]     f_s_ctrl;
+    logic [16:0]     f_s_ctrl;
     logic [ADDR_W-1:0] f_s_rd_ex, f_s_rd_mem, f_s_rd_wb;
-    logic [15:0]     f_ctrl;
-    assign f_ctrl = {id_ex_rd_we, id_ex_mem_read, id_ex_mem_write, id_ex_branch,
+    logic [16:0]     f_ctrl;
+    assign f_ctrl = {id_ex_muldiv, id_ex_rd_we, id_ex_mem_read, id_ex_mem_write, id_ex_branch,
                      id_ex_jump, id_ex_halt, id_ex_fwd_rs1_ex_mem, id_ex_fwd_rs1_mem_wb,
                      id_ex_fwd_rs2_ex_mem, id_ex_fwd_rs2_mem_wb, ex_mem_rd_we_o,
                      ex_mem_mem_read, ex_mem_halt, mem_wb_rd_we, mem_wb_halt,
@@ -1112,6 +1275,13 @@ module riscv_core #(
     end
   end
 
+  // B3's expected pcs, oldest first (see B3 below).
+  logic [XLEN-1:0] f_exp_mem_wb, f_exp_ex_mem, f_exp_id_ex, f_exp_if_id;
+  assign f_exp_mem_wb = f_next_pc;
+  assign f_exp_ex_mem = mem_wb_valid ? mem_wb_pc_wdata   : f_exp_mem_wb;
+  assign f_exp_id_ex  = ex_mem_valid ? ex_mem_pc_wdata   : f_exp_ex_mem;
+  assign f_exp_if_id  = id_ex_valid  ? id_ex_pc_o + 32'd4 : f_exp_id_ex;
+
   logic f_retired_taken;
 
   always_ff @(posedge clk_i) begin
@@ -1121,11 +1291,20 @@ module riscv_core #(
 
   always_comb begin
     if (f_past_valid) begin
+      // I1, an invariant B1 needs under M: an IF/ID word marked invalid is
+      // the NOP that reset or a redirect put there (both write the two in
+      // the same cycle; everything else loads or holds both). Without it, an
+      // induction window spent wholly inside a divide's stall -- IF/ID held
+      // throughout -- can start from an invalid IF/ID holding an M word,
+      // which then issues as an invalid instruction with muldiv set. RV32I
+      // never needed it: its stalls last one cycle, so the window always
+      // rewrote IF/ID.
+      if (!if_id_valid) assert (if_id_instr_o == NOP);
       // B1, stage by stage, oldest last.
       if (!id_ex_valid) begin
         assert (!(id_ex_rd_we && (id_ex_rd_addr_o != '0)));
         assert (!id_ex_mem_read && !id_ex_mem_write);
-        assert (!id_ex_branch && !id_ex_jump && !id_ex_halt);
+        assert (!id_ex_branch && !id_ex_jump && !id_ex_halt && !id_ex_muldiv);
       end
       if (!ex_mem_valid) begin
         assert (!(ex_mem_rd_we_o && (ex_mem_rd_addr_o != '0)));
@@ -1138,6 +1317,22 @@ module riscv_core #(
 
       // B2.
       if (f_retire) assert (mem_wb_pc_o == f_next_pc);
+      // B3, B2's strengthening: the whole pipeline is one control-flow
+      // chain. Each valid instruction's pc is the next pc of the nearest
+      // older valid one (its pc_wdata), or f_next_pc if none is in flight;
+      // IF/ID's, behind a valid ID/EX, is ID/EX's pc + 4 (fetch is
+      // sequential; a redirect flushes IF/ID). B2 alone closed by induction
+      // while the pipeline drained within the window. M stalls hold IF/ID
+      // for several cycles, back to back for consecutive M instructions, so
+      // the window can start with a pc in IF/ID no run puts there.
+      if (!rst_i) begin
+        if (mem_wb_valid) assert (mem_wb_pc_o == f_exp_mem_wb);
+        if (ex_mem_valid) assert (ex_mem_pc_o == f_exp_ex_mem);
+        if (id_ex_valid)  assert (id_ex_pc_o  == f_exp_id_ex);
+        // Not while frozen: behind a trap IF/ID keeps loading, still
+        // marked valid, words that never issue (ID/EX bubbles from then on).
+        if (if_id_valid && !freeze) assert (if_id_pc_o == f_exp_if_id);
+      end
     end
   end
 
@@ -1160,6 +1355,22 @@ module riscv_core #(
         cover (hold && freeze);
         cover (hold && wb_rd_we_o == 1'b0 && mem_wb_rd_we);
         cover (f_after_stall && hold);
+      end
+      // M extension: an M instruction waits, a hold lands on it, and the
+      // instruction after it takes its result from EX/MEM. F1/F2's
+      // interesting case: an M instruction still waiting whose operand came
+      // from EX/MEM on its first cycle -- a path that has moved since.
+      if (M_EXT) begin
+        cover (mstall);
+        cover (f_after_mstall && md_done);
+        cover (f_past_md_leave && id_ex_valid
+               && (id_ex_fwd_rs1_ex_mem || id_ex_fwd_rs2_ex_mem));
+        cover (md_wait_q && id_ex_valid && (id_ex_rs1_addr_o == f_reg)
+               && (f_reg != '0) && id_ex_fwd_rs1_ex_mem);
+        if (MEM_WAIT) begin
+          cover (mstall && hold);
+          cover (f_done_in_hold && md_done);                        // M4 reached
+        end
       end
       // The instruction that waited out a stall is a taken branch or jump.
       // Not in f_after_stall's cycle: EX then holds the bubble (S3), and the

@@ -488,6 +488,29 @@ async def test_csr_instruction_traps(dut):
     assert int(dut.halt_o.value) == 1, "csrrw did not halt the core"
 
 
+# Set by the Makefile for the *_m builds (riscv_core built with M_EXT = 1).
+M_EXT = os.environ.get("M_EXT") == "1"
+
+
+@cocotb.test(skip=M_EXT)
+async def test_m_encodings_trap_without_m(dut):
+    """RV32I core (M_EXT = 0): each of the 8 M encodings is illegal -- it
+    retires as a trap, writes nothing, and nothing after it retires. Every
+    Stage 1 result rests on this: no RV32I test ever executes funct7 = 1."""
+    for f3 in range(8):
+        program = li(1, 7) + li(2, 3) + [
+            enc_r(f3, 1, 2, 3, funct7=0b0000001), enc_i(1, rd=4)]
+        want_rvfi = []
+        run_model(program, traces=want_rvfi)
+        assert want_rvfi[-1]["trap"], "model: an M encoding did not trap"
+        got_rvfi = []
+        wbs, _ = await run(dut, program, rvfi=got_rvfi)
+        assert int(dut.halt_o.value), f"funct3 {f3}: core did not halt"
+        check_rvfi(got_rvfi, want_rvfi)
+        assert 3 not in final_regs(wbs) and 4 not in final_regs(wbs), \
+            f"funct3 {f3}: the M encoding or the instruction after it wrote"
+
+
 @cocotb.test()
 async def test_control_travels_with_its_instruction(dut):
     """Back-to-back instructions keep their own control through the pipeline.

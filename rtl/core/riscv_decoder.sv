@@ -14,6 +14,10 @@
 // write, no memory access, no redirect -- so it retires with no effect but
 // the trap, as riscv-formal's `ill` check requires.
 //
+// M_EXT (Phase H): the 8 M encodings (OP, funct7 0000001) become legal and
+// raise muldiv_o, which sends the instruction to riscv_muldiv in EX. With
+// M_EXT = 0, the default, they stay illegal and muldiv_o is constant 0.
+//
 // Register address fields sit at fixed positions in every RV32I format, so they
 // are extracted unconditionally. Whether a given instruction actually *uses*
 // rs1, rs2 or rd is answered by rd_we_o and the operand selects below; reading
@@ -21,7 +25,8 @@
 // side effects on read.
 module riscv_decoder #(
     parameter int unsigned XLEN   = 32,
-    parameter int unsigned ADDR_W = 5
+    parameter int unsigned ADDR_W = 5,
+    parameter bit          M_EXT  = 1'b0
 ) (
     input  logic [XLEN-1:0]   instr_i,
 
@@ -52,6 +57,8 @@ module riscv_decoder #(
     output logic              mem_write_o,
     output logic [2:0]        mem_funct3_o,
     output logic              rd_we_o,
+    // An M instruction (M_EXT only): EX takes its result from riscv_muldiv.
+    output logic              muldiv_o,
 
     // ECALL, EBREAK or an illegal instruction: stop the core once
     // everything older has retired.
@@ -83,6 +90,7 @@ module riscv_decoder #(
   // (SUB, SRA, SRAI) alone.
   localparam logic [6:0] F7_BASE = 7'b0000000;
   localparam logic [6:0] F7_ALT  = 7'b0100000;
+  localparam logic [6:0] F7_MULDIV = 7'b0000001;
 
   logic [6:0] opcode;
   logic [2:0] funct3;
@@ -166,13 +174,17 @@ module riscv_decoder #(
                              (funct3 == 3'b010);
       OPCODE_OP:     legal = (funct7 == F7_BASE) ||
                              ((funct7 == F7_ALT) &&
-                              ((funct3 == F3_ADD_SUB) || (funct3 == F3_SRL_SRA)));
+                              ((funct3 == F3_ADD_SUB) || (funct3 == F3_SRL_SRA))) ||
+                             (M_EXT && (funct7 == F7_MULDIV));
       OPCODE_OP_IMM: legal = !op_imm_is_shift || (funct7 == F7_BASE) ||
                              ((funct7 == F7_ALT) && (funct3 == F3_SRL_SRA));
       OPCODE_FENCE:  legal = (funct3 == 3'b000);  // FENCE.I is Zifencei
       default:       legal = (instr_i == INSTR_ECALL) || (instr_i == INSTR_EBREAK);
     endcase
   end
+
+  // Every funct3 under F7_MULDIV is an M instruction, so legal needs no more.
+  assign muldiv_o = M_EXT && (opcode == OPCODE_OP) && (funct7 == F7_MULDIV);
 
   assign halt_o = !legal || (instr_i == INSTR_ECALL) || (instr_i == INSTR_EBREAK);
 

@@ -16,7 +16,9 @@ module core_formal #(
     // 1 (prove_wait): holds last one cycle -- no two held cycles in a row.
     // Sound for holds of any length together with H1, proven in the same
     // run: a held cycle changes nothing. bmc_wait leaves holds free.
-    parameter bit HOLD1 = 1'b0
+    parameter bit HOLD1 = 1'b0,
+    // 1 (*_m tasks): the core built with M_EXT, the M unit inside it.
+    parameter bit M = 1'b0
 ) (
     input logic        clk_i,
     input logic        rst_i,
@@ -25,7 +27,7 @@ module core_formal #(
     input logic        dmem_ready_i
 );
 
-  riscv_core #(.MEM_WAIT(WAIT)) u_core (
+  riscv_core #(.MEM_WAIT(WAIT), .M_EXT(M)) u_core (
       .clk_i               (clk_i),
       .rst_i               (rst_i),
       .imem_addr_o         (),

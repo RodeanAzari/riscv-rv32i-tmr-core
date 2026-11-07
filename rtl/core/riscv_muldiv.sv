@@ -198,14 +198,11 @@ module riscv_muldiv #(
   logic             f_past_valid = 1'b0;
   /* verilator lint_on PROCASSINIT */
   always_ff @(posedge clk_i) f_past_valid <= 1'b1;
-  logic [XLEN-1:0]  f_a_q, f_b_q;
   logic [2:0]       f_f3_q;
   logic [CNT_W:0]   f_cyc_q;      // MUL/DIV cycles since capture
 
   always_ff @(posedge clk_i) begin
     if (state_q == IDLE && valid_i) begin
-      f_a_q   <= a_i;
-      f_b_q   <= b_i;
       f_f3_q  <= funct3_i;
       f_cyc_q <= '0;
     end else if (state_q == MUL || state_q == DIV) begin
@@ -258,6 +255,15 @@ module riscv_muldiv #(
   // (muldiv.sby says why); kept out of the plain FORMAL build, which the core
   // and its proofs will compile, because a full-width divide in an assertion
   // is no cheaper for a solver than one in the design.
+
+  // The operands, as captured with funct3 (f_f3_q, above).
+  logic [XLEN-1:0]  f_a_q, f_b_q;
+  always_ff @(posedge clk_i) begin
+    if (state_q == IDLE && valid_i) begin
+      f_a_q <= a_i;
+      f_b_q <= b_i;
+    end
+  end
 
   // The spec, written independently of the datapath above: plain *, /, %
   // and the two corner cases from the ISA manual's table.
@@ -333,8 +339,11 @@ module riscv_muldiv #(
   end
 `endif
 
+`ifdef MULDIV_ARITH
   // Reachability: every op completes, the corner cases arise, a result is
   // held through a delayed ack, and a new op starts the cycle after an ack.
+  // For the unit's own run (muldiv.sby) only: inside the core a divide
+  // outlasts the core's cover depth, and the core has covers of its own.
   logic f_done_held_q, f_acked_q;
   always_ff @(posedge clk_i) begin
     f_done_held_q <= done_o && !ack_i && !rst_i;
@@ -351,6 +360,7 @@ module riscv_muldiv #(
     cover (done_o && f_done_held_q);
     cover (f_acked_q && state_q == IDLE && valid_i);
   end
+`endif
 `endif
 
 endmodule

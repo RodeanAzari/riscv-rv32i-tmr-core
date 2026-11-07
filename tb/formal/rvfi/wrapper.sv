@@ -31,7 +31,11 @@ module rvfi_wrapper (
   (* keep *) wire        dmem_we;
   (* keep *) wire        halt;
 
-  riscv_core uut (
+  // RVF_M_EXT: 1 in checks_m.cfg (the core with M, ALTOPS results).
+`ifndef RVF_M_EXT
+`define RVF_M_EXT 1'b0
+`endif
+  riscv_core #(.M_EXT(`RVF_M_EXT)) uut (
       .clk_i            (clock),
       .rst_i            (reset),
 

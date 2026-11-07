@@ -79,7 +79,22 @@ def toolchain_prefix():
     raise RuntimeError("no RISC-V gcc found: set RISCV_PREFIX")
 
 
-def build(name):
+# The M extension's suite (Phase H): runs only on a core built with M_EXT = 1
+# (the Makefile's *_m builds export M_EXT=1). Upstream's list, nothing excluded.
+M_EXT = os.environ.get("M_EXT") == "1"
+
+
+def upstream_rv32um():
+    text = (SUITE / "isa" / "rv32um" / "Makefrag").read_text()
+    block = re.search(r"rv32um_sc_tests\s*=\s*\\\n(.*?)\n\s*\n", text, re.S)
+    assert block, "rv32um_sc_tests not found in Makefrag -- upstream changed shape"
+    return block.group(1).replace("\\", " ").split()
+
+
+RV32UM = upstream_rv32um()
+
+
+def build(name, suite="rv32ui"):
     """Assemble one test and return its flat image as {byte address: word}.
 
     -march=rv32i, nothing more: the assembler rejects any instruction outside
@@ -88,12 +103,13 @@ def build(name):
     """
     prefix = toolchain_prefix()
     BUILD.mkdir(parents=True, exist_ok=True)
-    elf, binary = BUILD / f"{name}.elf", BUILD / f"{name}.bin"
-    subprocess.run([f"{prefix}gcc", "-march=rv32i", "-mabi=ilp32", "-static",
+    elf, binary = BUILD / f"{suite}-{name}.elf", BUILD / f"{suite}-{name}.bin"
+    march = "rv32im" if suite == "rv32um" else "rv32i"
+    subprocess.run([f"{prefix}gcc", f"-march={march}", "-mabi=ilp32", "-static",
                     "-nostdlib", "-nostartfiles",
                     f"-I{ENV}", f"-I{SUITE / 'isa' / 'macros' / 'scalar'}",
                     f"-T{ENV / 'link.ld'}", "-o", str(elf),
-                    str(SUITE / "isa" / "rv32ui" / f"{name}.S")],
+                    str(SUITE / "isa" / suite / f"{name}.S")],
                    check=True, capture_output=True, text=True)
     subprocess.run([f"{prefix}objcopy", "-O", "binary", str(elf), str(binary)],
                    check=True)
@@ -124,3 +140,24 @@ async def test_rv32ui(dut, name):
     assert gp == 1, f"{name}: fails at test case {gp >> 1} (gp = {gp:#x})"
     stats = check_rvfi(got_rvfi, want_rvfi)
     dut._log.info(f"{name}: pass; {stats}")
+
+
+# Defined only on an M build, so RV32I builds do not report 8 skips each.
+if M_EXT:
+    @cocotb.test()
+    @cocotb.parametrize(name=RV32UM)
+    async def test_rv32um(dut, name):
+        """rv32um on an M core, judged both ways as test_rv32ui is. A divide is
+        34 cycles in EX, hence the larger budget."""
+        image = build(name, "rv32um")
+        program = [image.get(4 * i, 0) for i in range(max(image) // 4 + 1)]
+        want_rvfi = []
+        _, model = run_model(program, image, traces=want_rvfi, m_ext=True)
+        assert model.halted and model.x[3] == 1, f"MODEL fails {name} -- the model is wrong"
+        got_rvfi = []
+        writebacks, _ = await run(dut, program, dict(image),
+                                  cycles=40 * len(want_rvfi) + 20, rvfi=got_rvfi)
+        assert int(dut.halt_o.value), f"{name}: core never halted"
+        gp = final_regs(writebacks).get(3, 0)
+        assert gp == 1, f"{name}: fails at test case {gp >> 1} (gp = {gp:#x})"
+        dut._log.info(f"{name}: pass; {check_rvfi(got_rvfi, want_rvfi)}")

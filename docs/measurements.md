@@ -72,6 +72,7 @@ All rows out-of-context on `xc7a100tcsg324-1`, constrained at 10.000 ns
 | 2026-10-18 | TMR feedback ports (VOTED = 0 here), `dmem_re_o`, halt flags in next-state form | 966 | 467 | 55 | +1.697 | 120.4 | −2.3 |
 | 2026-11-04 | `dmem_ready_i` port, MEM_WAIT = 0 (ignored): same cells, placement differs | 966 | 467 | 55 | +1.649 | 119.7 | −0.7 |
 | 2026-11-04 | MEM_WAIT = 1 (the data-port hold), `make synth-wait`, not the default | 997 | 462 | 55 | +1.471 | 117.2 | −2.5 |
+| 2026-11-07 | `M_EXT` parameter in, M_EXT = 0 (the default, RV32I): same cells and timing as before it; RV32IM in its own table | 966 | 467 | 55 | +1.649 | 119.7 | 0.0 |
 
 Device totals for the percentages: 63,400 LUT / 126,800 FF / 135 BRAM /
 240 DSP.
@@ -170,6 +171,7 @@ the three copies' cell counts are in `summary_ooc_tmr.txt` and
 | 2026-11-04 | out of context, core alone, MEM_WAIT = 1 (`*_ooc_wait`, `*_ooc_tmr_wait`) | 997 / 462 | 3699 / 1450 | 3.71 | 3.14 | 117.2 MHz | 99.5 MHz | −15.1% |
 | 2026-11-05 | out of context, core alone, bundles registered before the mismatch compare | 966 / 467 | 3895 / 1879 | 4.03 | 4.02 | 119.7 MHz | 104.5 MHz | −12.7% |
 | 2026-11-05 | same, MEM_WAIT = 1 | 997 / 462 | 3904 / 1879 | 3.92 | 4.07 | 117.2 MHz | 107.7 MHz | −8.1% |
+| 2026-11-07 | out of context, core alone, `M_EXT` parameter in, M_EXT = 0: same cells and timing as before it | 966 / 467 | 3895 / 1879 | 4.03 | 4.02 | 119.7 MHz | 104.5 MHz | −12.7% |
 
 LUT and FF here are cell counts, as in the trend tables. By the hierarchical
 report (slice LUTs, `utilization_ooc_tmr_hier.rpt`), the three copies are
@@ -241,6 +243,18 @@ core go in their own table when the unit is in it.
 | Date | Block | LUT | FF | BRAM | DSP | CARRY4 | WNS (ns) | Fmax (MHz) |
 |---|---|---|---|---|---|---|---|---|
 | 2026-11-06 | `riscv_muldiv`: 4-DSP multiply (3 cycles), radix-2 restoring divide (34) | 497 | 109 | 0 | 4 | 53 | +3.308 | 149.4 |
+
+### RV32IM core (M_EXT = 1)
+
+`make synth-m`: `riscv_core` built with M_EXT = 1, out of context, synth +
+place + route, `xc7a100tcsg324-1`, 10.000 ns, from
+`docs/reports/summary_ooc_m.txt`. Never compared row-for-row with the RV32I
+trend table; the cost of M is this row against the RV32I core of the same date
+(966 LUT / 467 FF / 0 DSP, 119.7 MHz). Append-only.
+
+| Date | Build | LUT | FF | DSP | CARRY4 | WNS (ns) | Fmax (MHz) |
+|---|---|---|---|---|---|---|---|
+| 2026-11-07 | `riscv_core` M_EXT = 1, unit in EX, IF/ID/EX held while it works; worst path not in M (ID/EX forwarding select → branch compare → redirect → IF/ID reset, 6 levels) | 1440 | 577 | 4 | 108 | +1.298 | 114.9 |
 
 The report times register to register only (only the clock is constrained).
 Worst path: one restoring step, `quo_q` → `rem_q`, 11 levels. The paths

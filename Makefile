@@ -375,6 +375,13 @@ synth-wait:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_core_tmr wait
 
+# The core built with M_EXT = 1 (RV32IM, Phase H): what M costs in the
+# core. Reports *_ooc_m.*; the TMR core's follows with TMR.
+.PHONY: synth-m
+synth-m:
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_core m
+
 # The systolic array alone, out of context (Phase F): ARRAY=<rows>x<cols>.
 # Reports docs/reports/*_ooc_array<rows>x<cols>.*, with the DSP count.
 ARRAY ?= 16x16
