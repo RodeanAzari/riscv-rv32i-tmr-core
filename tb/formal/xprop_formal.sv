@@ -35,7 +35,10 @@
 //
 // The property lives here rather than in rtl/ because it is stated on the
 // X masks, which exist only after xprop rewrites the core's ports.
-module xprop_formal (
+module xprop_formal #(
+    // 1 (the *_m tasks): the core is built with M_EXT; adds an M cover.
+    parameter bit M = 1'b0
+) (
     input logic        clk_i,
     input logic        rst_i,
     input logic [31:0] imem_rdata_i,
@@ -221,6 +224,10 @@ module xprop_formal (
              && (rvfi_insn_d[19:15] != '0) && (rvfi_insn_d[24:20] != '0));
       // A store committed.
       cover (dmem_we_d);
+      // An M instruction retiring with a register write, all of it defined
+      // (XP/XT hold at it): the unit's unreset datapath was written first.
+      if (M) cover (f_retire && (rvfi_rd_d != '0) && (rvfi_insn_d[6:0] == OP_OP)
+                    && (rvfi_insn_d[31:25] == 7'b0000001));
     end
     // The check stopping: an instruction reading an undefined register.
     if (f_past_valid && !rst_i) cover (f_taint_wb);

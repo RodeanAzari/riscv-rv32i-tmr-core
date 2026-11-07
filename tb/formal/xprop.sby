@@ -3,6 +3,16 @@
 #   prove  XP, k-induction, register file defined at power-up
 #   bmc    XT, bounded, register file X too, until software reads one
 #   cover  XT's reachability
+#   *_m    XT and its covers with the core built with M_EXT (Phase H) and
+#          the real M unit, whose datapath registers are unreset by design:
+#          from reset, no power-up X reaches committed state, and an M
+#          instruction retires with all of it defined (cover). Engine
+#          bitwuzla. XP with M (k-induction) is open: an induction start
+#          with X on a control flop (id_ex_muldiv, so mstall X) holds the
+#          pipeline for any window length, so it needs the invariant "no
+#          reset flop is X", which this harness, seeing only the core's
+#          ports, cannot state (tried 2026-11-07, depth 10 and 24, with the
+#          real unit and with muldiv_stub.sv).
 #
 # The core is X-encoded by Yosys's xprop pass before the harness is read, so
 # the harness can instantiate it by its split _d/_x ports. On the way:
@@ -23,9 +33,11 @@
 #                      or SBY takes it for a derived clock
 
 [tasks]
-prove
-bmc
-cover
+prove yices
+bmc yices
+cover yices
+bmc_m bmc m bitwuzla
+cover_m cover m bitwuzla
 
 [options]
 prove: mode prove
@@ -36,12 +48,15 @@ bmc: depth 10
 cover: depth 10
 
 [engines]
-smtbmc yices
+yices: smtbmc yices
+bitwuzla: smtbmc bitwuzla
 
 [script]
 read_verilog -sv -formal -DRISCV_FORMAL riscv_alu.sv riscv_branch.sv riscv_decoder.sv
 read_verilog -sv -formal -DRISCV_FORMAL riscv_hazard.sv riscv_mem_align.sv riscv_regfile.sv
+m: read_verilog -sv -formal -DRISCV_FORMAL riscv_muldiv.sv
 read_verilog -sv -formal -DRISCV_FORMAL riscv_core.sv
+m: chparam -set M_EXT 1 riscv_core
 hierarchy -top riscv_core
 proc
 chformal -remove
@@ -56,6 +71,7 @@ formalff -ff2anyinit
 setattr -unset replaced_by_gclk riscv_core/w:*
 prove: read_verilog -sv -formal -DXPROP_REGFILE_DEFINED xprop_formal.sv
 ~prove: read_verilog -sv -formal xprop_formal.sv
+m: chparam -set M 1 xprop_formal
 prep -top xprop_formal
 
 [files]
@@ -65,5 +81,6 @@ prep -top xprop_formal
 ../../rtl/core/riscv_hazard.sv
 ../../rtl/core/riscv_mem_align.sv
 ../../rtl/core/riscv_regfile.sv
+../../rtl/core/riscv_muldiv.sv
 ../../rtl/core/riscv_core.sv
 xprop_formal.sv

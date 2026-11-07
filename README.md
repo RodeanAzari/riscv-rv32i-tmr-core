@@ -8,7 +8,9 @@ redundancy)**, still at 100 MHz: in 10,000 injected single-bit faults, none
 changed its output, and on the board it shrugs off faults injected live
 while it computes. The core has also been taken through the open-source
 LibreLane flow to a **DRC- and LVS-clean layout on SkyWater's 130 nm
-process**, timing met at all nine signoff corners.
+process**, timing met at all nine signoff corners. Built with its optional
+**M extension** (hardware multiply and divide, Phase H) it runs CoreMark at
+**2.500 CoreMark/MHz**, single core and TMR alike.
 
 The project has two stages. Stage 1 is the CPU: verified, hardware-proven,
 then made fault-tolerant with triple modular redundancy (TMR) and taken through
@@ -44,6 +46,7 @@ TMR core from Phase E [here](docs/img/vivado/phase-e/floorplan_board_core.svg).*
 | **Pipeline** | 5 stages, full forwarding, 1-cycle load-use stall, branches resolved in EX (static not-taken) |
 | **On the board** | Arty A7-100T, **100 MHz**, timing met with +0.955 ns slack (110.6 MHz estimate); the TMR core also meets 100 MHz (+0.095 ns) |
 | **CoreMark** | **0.962 CoreMark/MHz**, about **96 CoreMark** at 100 MHz, validated, with no hardware multiply |
+| **RV32IM (Phase H)** | A build option (`M_EXT`, off by default): **2.500 CoreMark/MHz**, about **250 CoreMark** at 100 MHz on the board, single and TMR; riscv-formal 54/54, UVM 238/238, 10,000 faults in the TMR core with 0 failures. [Below](#m-extension-phase-h) |
 | **IPC** | 0.691 on CoreMark (CPI 1.447), counted in RTL simulation of the same SoC; it matches the board's cycle count to 0.0013% |
 | **Size** | 966 LUT, 467 FF (core alone); 1123 LUT, 435 FF, 8 BRAM (whole SoC on the board): under 2% of the chip. TMR: 3446 LUT, 1621 FF on the board |
 | **Fault tolerance** | Three voted copies with feedback; voter formally proven; **10,000 random single-bit faults, 0 failures**, every detected fault corrected and the copies back in step; **live on the board**, 250,971 faults injected over 133 runs of one computation, all outvoted, every run the same answer and the same cycle count |
@@ -66,8 +69,8 @@ TMR core from Phase E [here](docs/img/vivado/phase-e/floorplan_board_core.svg).*
 | | D — Hardware bring-up | **Done** |
 | | E — TMR + fault injection, ASIC run #1 | **Done** |
 | **2 — SoC** | F — Systolic array | **Done** (on its own; joined to the core in H) |
-| | G — DMA + AXI interconnect | **In progress**: the DMA engine replays DMA-Engine's golden trace and runs on the SoC under software, through an AXI4 crossbar whose §6.2 properties are proven; software on the core runs GEMM jobs on the accelerator (the DMA fills its buffers); the `soc-v1.0` release remains |
-| | H — Integration + DFT, ASIC run #2 | Not started |
+| | G — DMA + AXI interconnect | **Done**, released as `soc-v1.0`: the DMA engine replays DMA-Engine's golden trace and runs on the SoC under software, through an AXI4 crossbar whose §6.2 properties are proven; software on the core runs GEMM jobs on the accelerator (the DMA fills its buffers) |
+| | H — Integration + DFT, ASIC run #2 | **In progress**: the M extension is built, verified and measured on the board; the array clock domain, scan and ASIC run #2 remain |
 
 Full scope and each phase's definition of done: [docs/buildplan.md](docs/buildplan.md).
 Trend tables and verification detail: [docs/measurements.md](docs/measurements.md); implementation notes and decisions: [docs/design-notes.md](docs/design-notes.md).
@@ -224,6 +227,75 @@ What it costs, same RTL, same conditions:
 | Core alone, out of context | 966 LUT, 120.4 MHz | 3690 LUT, 101.4 MHz | 3.8x, −15.8% |
 
 The TMR build includes the mismatch counter and the live injector.
+
+## M extension (Phase H)
+
+**M was first ruled out.** The original scope was RV32I only, and Stage 1
+(and every Stage 1 number above) is RV32I. M was added after Phase G for the
+two workloads this SoC is heading to, a tiny LLM and Doom, where every
+multiply in RV32I is a libgcc call. It is a parameter, `M_EXT`, **off by
+default**, so the RV32I build and its results are unchanged: with `M_EXT = 0`
+synthesis gives the same cells and timing as before it existed. RV32I and
+RV32IM numbers are kept in separate rows and tables throughout.
+
+**Design** (`rtl/core/riscv_muldiv.sv`): the eight M instructions execute in
+EX. MUL\* take 3 cycles, operands registered into four 17×17 partial
+products on 4 DSP48E1; DIV\* and REM\* take a fixed 34, radix-2 restoring,
+with divide-by-zero and overflow fixed up on the last cycle (no early exit,
+so timing does not depend on data). While a multiply or divide works, IF, ID
+and EX hold and a bubble goes into MEM; the result then leaves EX like an
+ALU result, so forwarding is unchanged. A pipelined multiplier was rejected:
+it would add new hazards to the proven pipeline for little gain on these
+workloads.
+
+**Verification**, the same layers as the RV32I core:
+
+- **Golden models first.** The Python and C models gained an M switch before
+  any RTL, checked against **10,592 vectors from spike** (`rv32im`), with 10
+  planted model bugs caught.
+- **The unit alone**: every result equal to the ISA's (`*` `/` `%` and the
+  manual's divide-by-zero and overflow table), exact latency and handshake,
+  **proven by k-induction** at XLEN = 8 (a 32-bit multiplier against `*` is
+  beyond the solver; the same parameterised RTL is checked at 32 bits by all
+  10,592 spike vectors in simulation).
+- **In the core**: riscv-formal on the RV32IM core, **54/54 checks and 54/54
+  covers**, with riscv-formal's stand-in arithmetic for M (real latency and
+  stall). The `reg` check runs at depth 25, which sees multiplies retire but
+  not divides: at 45 one solver call ran 8 hours without an answer. The
+  core's own properties gained M1-M4 (a waiting M instruction never meets
+  another stall or flush; each stall cycle holds the front end and bubbles
+  MEM; a result ready during a memory wait survives it) and are proven by
+  k-induction with and without the memory wait. Five planted integration bugs
+  are each caught by simulation and by formal; one (an ack on a held cycle)
+  was caught by formal only after M4 was written for it.
+- **UVM**: M instructions in the random generator, the C model with M on, a
+  new coverage group of 33 bins (corner operands, forwarding into and out of
+  an M instruction, load-use into one): **238/238 bins** on three seeds, about
+  45,000 retirements each compared with the model, 0 mismatches.
+- **TMR**: each copy has its own unit. **10,000 single-bit faults with
+  RV32IM programs, 0 failures**; 1,691 landed in the M units, 251 were
+  detected, and every one was corrected with the copies back in step.
+- **X propagation**: from reset, with the real unit (whose datapath
+  registers are unreset by design), no power-up X reaches committed state,
+  by bounded model checking to depth 10, an M instruction shown retiring with
+  all of it defined. **Not yet proven by induction with M**: a start state with
+  X on a control flop stalls the pipeline for any window length, so it needs
+  an invariant the X harness cannot yet state. The RV32I proof is unchanged.
+
+**Results, RV32IM.** Part `xc7a100tcsg324-1`, Vivado 2025.2. RV32I's own
+numbers are in the Stage 1 table below.
+
+| Metric | Value | Report |
+|---|---|---|
+| CoreMark/MHz, on the board, 100 MHz, 5000 iterations, validated | **2.500** (about 250 CoreMark), single core and TMR, cycle-identical; RV32I 0.962 | [coremark_m_board.txt](docs/reports/coremark_m_board.txt), [coremark_m_board_tmr.txt](docs/reports/coremark_m_board_tmr.txt) |
+| IPC / CPI, CoreMark timed region, RTL simulation | 0.712 / 1.404; 284,853 instructions per iteration against RV32I's 718,009 | [coremark_m_sim.txt](docs/reports/coremark_m_sim.txt) |
+| On the board (whole SoC, in context) | **100 MHz**, WNS +0.242 ns (TMR +0.181 ns); 135 DSP (TMR 143) | [summary_board_m.txt](docs/reports/summary_board_m.txt), [summary_board_tmr_m.txt](docs/reports/summary_board_tmr_m.txt) |
+| Core alone, out of context | 1440 LUT / 577 FF / 4 DSP, 114.9 MHz (RV32I 966 / 467 / 0, 119.7 MHz); worst path not in M | [summary_ooc_m.txt](docs/reports/summary_ooc_m.txt) |
+| TMR core alone, out of context | 5343 LUT / 2209 FF / 12 DSP, 106.5 MHz; three copies survive | [summary_ooc_tmr_m.txt](docs/reports/summary_ooc_tmr_m.txt) |
+| TMR: faults injected / failures | 10,000 / **0**; 1,027 detected, all corrected and recovered | [tmr_faults_m.txt](docs/reports/tmr_faults_m.txt) |
+
+`make uvm M=1`, `make faults M=1`, `make synth-m`, `make impl M=1 [TMR=1]`
+and `make bench` (which also builds `coremark_m.hex`) reproduce these.
 
 ## Systolic array (Phase F)
 
@@ -497,9 +569,10 @@ the period, worst of 9 signoff corners
 
 Stated plainly, because they are real:
 
-- **RV32I only.** No multiply/divide (M), no floating point, no compressed
-  instructions, no CSRs (the cycle counter is memory-mapped), no interrupts or
-  privilege modes. Every exception halts the core rather than trapping to a
+- **RV32I, with M as a build option.** M (multiply/divide) is in since
+  Phase H but off by default, and every Stage 1 result is RV32I. No floating
+  point, no compressed instructions, no CSRs (the cycle counter is
+  memory-mapped), no interrupts or privilege modes. Every exception halts the core rather than trapping to a
   handler. These are scope choices ([docs/buildplan.md](docs/buildplan.md) §7),
   and CoreMark is reported with that in mind.
 - **32 KiB of memory**, code and data together, in block RAM. No caches and no
@@ -600,4 +673,11 @@ its reports are committed with the RTL that produced them.
   whole SoC (Phase H).
 - **After everything else: Doom.** Once Stage 2 ships, build what the SoC lacks
   to play Doom on the Arty: DDR3 with a cache, the game data from flash, a VGA
-  framebuffer, and the M extension, measured in frames per second.
+  framebuffer, with the M extension (now built), measured in frames per second.
+
+## License
+
+MIT; see [LICENSE](LICENSE). The submodules keep their own licenses:
+[riscv-tests](sw/riscv-tests), [riscv-formal](tb/formal/riscv-formal),
+[CoreMark](sw/coremark) (run and reporting rules in its README) and
+[DMA-Engine](sw/dma-engine).
