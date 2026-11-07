@@ -4,7 +4,12 @@
 // into the core by hierarchical name -- testbench only; rtl/ is unchanged.
 `timescale 1ns / 1ps
 
-module tb_top;
+module tb_top #(
+    // 1: the core built with M_EXT (RV32IM, Phase H). run.sh sets it with
+    // -generic_top; the environment reads it from the config DB, so the
+    // generator, model and coverage follow the build.
+    parameter bit M_EXT = 1'b0
+);
   import uvm_pkg::*;
   import rv_pkg::*;
 
@@ -13,7 +18,7 @@ module tb_top;
 
   core_if cif (clk);
 
-  riscv_core dut (
+  riscv_core #(.M_EXT(M_EXT)) dut (
       .clk_i               (clk),
       .rst_i               (cif.rst),
       .imem_addr_o         (cif.imem_addr),
@@ -83,6 +88,7 @@ module tb_top;
   assign cif.fwd_rs2_mem_wb = dut.id_ex_fwd_rs2_mem_wb;
   assign cif.stall          = dut.stall;
   assign cif.redirect       = dut.redirect;
+  assign cif.mstall         = dut.mstall;
 
   // WB->ID bypass: decided in ID, used when that instruction is in EX one
   // cycle later. Registered unconditionally: if ID did not advance (stall,
@@ -94,6 +100,7 @@ module tb_top;
 
   initial begin
     uvm_config_db#(virtual core_if)::set(null, "*", "vif", cif);
+    uvm_config_db#(int)::set(null, "*", "m_ext", M_EXT);
     run_test();
   end
 endmodule

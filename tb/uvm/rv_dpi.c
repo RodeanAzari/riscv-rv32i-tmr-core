@@ -6,6 +6,7 @@
 
 void rvm_reset(unsigned pc) { rv_reset(pc); }
 void rvm_mem_clear(void) { rv_mem_clear(); }
+void rvm_set_m(int on) { rv_set_m(on); }   /* RV32IM; kept across rvm_reset */
 void rvm_mem_write(unsigned addr, unsigned word) { rv_mem_write32(addr, word); }
 
 int rvm_step(unsigned *insn, unsigned *pc_rdata, unsigned *pc_wdata,

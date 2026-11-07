@@ -430,13 +430,15 @@ faults:
 # programs checked retirement by retirement against the C golden model, and
 # fails below COV_MIN percent functional coverage.
 #   make uvm SEED=7 PROGRAMS=300 COV_MIN=95
+# M=1: the core built with M_EXT (RV32IM, Phase H); coverage adds group 9.
 SEED     ?= 1
 PROGRAMS ?= 300
 COV_MIN  ?= 95
+M        ?= 0
 
 .PHONY: uvm
 uvm:
-	scripts/setup-vivado-env.sh bash tb/uvm/run.sh $(SEED) $(PROGRAMS) $(COV_MIN)
+	scripts/setup-vivado-env.sh bash tb/uvm/run.sh $(SEED) $(PROGRAMS) $(COV_MIN) $(M)
 
 # --- board -----------------------------------------------------------------
 # Board-level synthesis, place & route and bitstream for the Arty A7 (Phase D):

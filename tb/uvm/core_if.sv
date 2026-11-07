@@ -25,6 +25,7 @@ interface core_if (input logic clk);
   logic        id_ex_valid, if_id_valid;
   logic        fwd_rs1_ex_mem, fwd_rs1_mem_wb, fwd_rs2_ex_mem, fwd_rs2_mem_wb;
   logic        stall, redirect;
+  logic        mstall;                   // an M instruction waits in EX (M_EXT)
   logic [31:0] if_id_instr, id_ex_instr, mem_wb_instr;
   logic [4:0]  ex_mem_rd_addr, wb_rd_addr;
   logic        ex_mem_rd_we, wb_rd_we;

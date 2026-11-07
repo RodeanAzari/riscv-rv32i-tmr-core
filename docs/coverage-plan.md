@@ -127,6 +127,27 @@ file" means a real value, not the hardwired zero.
 | misaligned load, misaligned store | 2 |
 | taken branch to a misaligned target; JAL to one; JALR to one | 3 |
 
+### 9. M extension — 33 bins (RV32IM build only, Phase H)
+
+Counted only when the core is built with M_EXT = 1 (`make uvm M=1`); the
+RV32I run's total stays groups 1-8. Written before the environment's M
+support, as groups 1-8 were. Group 1 does not count M encodings (they share
+OP's funct3 values with ADD..AND).
+
+| | Bins |
+|---|---|
+| each M instruction retired: MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU | 8 |
+| DIV, DIVU, REM, REMU by zero; DIV, REM with INT_MIN / −1 (overflow) | 6 |
+| MULH both negative; MULH one negative; MULHSU rs1 negative; MULHU both ≥ 2^31; DIV/REM negative ÷ positive; DIV/REM positive ÷ negative (not −1) | 6 |
+| M operand source (white-box, the instruction's first EX cycle): rs1 from EX/MEM, MEM/WB, WB→ID; rs2 the same | 6 |
+| M result read by the next retirement; by the one after (nearest writer); by a taken branch at distance 1 | 3 |
+| load-use stall with an M instruction waiting in ID; two M instructions retiring back to back; a trap retiring straight after an M instruction | 3 |
+| M instruction with rd = x0 | 1 |
+
+An M instruction stays in EX for 3 or 34 cycles while ID moves on; the
+forwarding groups (2 and this one) sample an instruction only on its first
+cycle in EX, the one whose forwarding decision it used.
+
 ## Total
 
 | Group | Bins |
@@ -140,6 +161,8 @@ file" means a real value, not the hardwired zero.
 | 7. Alignment | 32 |
 | 8. Traps | 7 |
 | **Total** | **205** |
+| 9. M extension (RV32IM build only) | 33 |
+| **Total, RV32IM build** | **238** |
 
 95% of 205 is 194.75, so **at most 10 bins may stay unhit**. Every unhit
 bin at sign-off is listed in PROGRESS.md with the reason.

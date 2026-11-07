@@ -15,6 +15,7 @@ package rv_pkg;
   // ---------------------------------------------------------------- model --
   import "DPI-C" function void rvm_reset(int unsigned pc);
   import "DPI-C" function void rvm_mem_clear();
+  import "DPI-C" function void rvm_set_m(int on);
   import "DPI-C" function void rvm_mem_write(int unsigned addr, int unsigned word);
   import "DPI-C" function int rvm_step(
       output int unsigned insn, output int unsigned pc_rdata, output int unsigned pc_wdata,
@@ -26,6 +27,12 @@ package rv_pkg;
       output int unsigned trap, output int unsigned halt);
 
   localparam int RV_OK = 0, RV_HALTED = 1;
+
+  // The core under test is built with M_EXT (RV32IM, Phase H): tb_top's
+  // parameter, read from the config DB by the test before anything runs.
+  // The generator then mixes M instructions in, the model executes them,
+  // and coverage adds group 9.
+  bit m_ext = 1'b0;
 
   // ------------------------------------------------------------ encodings --
   localparam bit [6:0] OP_LUI = 7'h37, OP_AUIPC = 7'h17, OP_JAL = 7'h6F, OP_JALR = 7'h67,
@@ -68,12 +75,20 @@ package rv_pkg;
     return {i[20], i[10:1], i[11], i[19:12], rd, OP_JAL};
   endfunction
 
+  localparam bit [6:0] F7_M = 7'h01;
+
+  // M instruction index (funct3: MUL..REMU = 0..7), -1 if not one.
+  function automatic int m_index(bit [31:0] in);
+    return (in[6:0] == OP_OP && in[31:25] == F7_M) ? int'(in[14:12]) : -1;
+  endfunction
+
   // Instruction index for coverage group 1 (docs/coverage-plan.md), -1 if
-  // not one of the 40.
+  // not one of the 40. An M encoding is not: it shares OP's funct3 values.
   function automatic int mnemonic(bit [31:0] in);
     bit [6:0] op = in[6:0];
     bit [2:0] f3 = in[14:12];
     bit [6:0] f7 = in[31:25];
+    if (m_index(in) >= 0) return -1;
     case (op)
       OP_LUI:    return 0;
       OP_AUIPC:  return 1;
@@ -160,7 +175,7 @@ package rv_pkg;
   // the same constraints in isolation come out as weighted. Measured with a
   // histogram of the draws; the staged classes are measured the same way.
   typedef enum {K_R, K_I, K_SHIFT, K_LUI, K_AUIPC, K_LOAD, K_STORE,
-                K_BRANCH, K_JAL, K_JALR, K_LOOP, K_FENCE} kind_e;
+                K_BRANCH, K_JAL, K_JALR, K_LOOP, K_FENCE, K_M} kind_e;
 
   // A dist next to a condition on a non-random member is ignored by XSim (the
   // draws come out uniform), so each variant is its own class.
@@ -176,6 +191,23 @@ package rv_pkg;
     rand kind_e kind;
     constraint c {
       kind dist {K_R := 18, K_I := 16, K_SHIFT := 6, K_LUI := 3, K_LOAD := 14, K_STORE := 10};
+    }
+  endclass
+  // The same two with M instructions in (m_ext), each its own class for the
+  // reason above.
+  class rv_kind_m_r;
+    rand kind_e kind;
+    constraint c {
+      kind dist {K_R := 18, K_I := 16, K_SHIFT := 6, K_LUI := 3, K_AUIPC := 3,
+                 K_LOAD := 14, K_STORE := 10, K_BRANCH := 12, K_JAL := 3,
+                 K_JALR := 3, K_LOOP := 3, K_FENCE := 1, K_M := 14};
+    }
+  endclass
+  class rv_body_kind_m_r;
+    rand kind_e kind;
+    constraint c {
+      kind dist {K_R := 18, K_I := 16, K_SHIFT := 6, K_LUI := 3, K_LOAD := 14, K_STORE := 10,
+                 K_M := 14};
     }
   endclass
 
@@ -225,6 +257,13 @@ package rv_pkg;
       return v;
     endfunction
   endclass
+  // M: the operation, and now and then the operands set up just before it
+  // for the division corners -- 1: rs2 = 0 (by zero), 2: rs1 = INT_MIN and
+  // rs2 = -1 (overflow). Signs come from the random register values.
+  class rv_m_r;
+    rand bit [2:0] f3; rand int corner;
+    constraint c { corner dist {0 := 6, 1 := 1, 2 := 1}; }
+  endclass
   class rv_ctrl_r;
     rand bit [2:0] f3; rand int skip, loop_n, loop_body;
     constraint c { f3 inside {0, 1, 4, 5, 6, 7}; skip inside {[1:6]};
@@ -240,6 +279,7 @@ package rv_pkg;
     bit [19:0] uimm;
     int        skip, loop_n, loop_body;
     int        base;
+    int        corner;     // K_M: operand set-up (rv_m_r)
 
     // recent: registers written by the last few operations, for dependent
     // reads. The picks from it are procedural: a constraint over a dynamic
@@ -248,8 +288,14 @@ package rv_pkg;
     static function rv_op draw(bit body_only, const ref int unsigned recent[$]);
       rv_op o = new();
       rv_regs_r r = new();
-      if (body_only) begin
+      if (body_only && m_ext) begin
+        rv_body_kind_m_r k = new(); if (!k.randomize()) `uvm_fatal("GEN", "randomize failed")
+        o.kind = k.kind;
+      end else if (body_only) begin
         rv_body_kind_r k = new(); if (!k.randomize()) `uvm_fatal("GEN", "randomize failed")
+        o.kind = k.kind;
+      end else if (m_ext) begin
+        rv_kind_m_r k = new(); if (!k.randomize()) `uvm_fatal("GEN", "randomize failed")
         o.kind = k.kind;
       end else begin
         rv_kind_r k = new(); if (!k.randomize()) `uvm_fatal("GEN", "randomize failed")
@@ -288,6 +334,10 @@ package rv_pkg;
           end
           if (!x.randomize()) `uvm_fatal("GEN", "randomize failed")
           o.imm = x.offset(1 << o.f3[1:0]);
+        end
+        K_M: begin
+          rv_m_r x = new(); if (!x.randomize()) `uvm_fatal("GEN", "randomize failed")
+          o.f3 = x.f3; o.corner = x.corner;
         end
         default: begin
           rv_ctrl_r x = new(); if (!x.randomize()) `uvm_fatal("GEN", "randomize failed")
@@ -348,6 +398,7 @@ package rv_pkg;
         K_AUIPC: return enc_u(o.uimm, o.rd, OP_AUIPC);
         K_LOAD:  return enc_i(o.imm, BASE0 + o.base, o.f3, o.rd, OP_LOAD);
         K_STORE: return enc_s(o.imm, o.rs2, BASE0 + o.base, o.f3);
+        K_M:     return enc_r(F7_M, o.rs2, o.rs1, o.f3, o.rd, OP_OP);
         default: return FENCE;
       endcase
     endfunction
@@ -393,6 +444,18 @@ package rv_pkg;
             end
             emit(enc_i(-1, LOOP_REG, 0, LOOP_REG, OP_IMM), 0);
             emit(enc_b(4 * (start - s.size()), 0, LOOP_REG, 1), 0);
+          end
+          K_M: begin
+            // Corner operands, set just before (so the M instruction also
+            // forwards them). Only where the registers allow: x0 cannot be
+            // set, and overflow needs two different registers.
+            if (o.corner == 1 && o.rs2 != 0) li(o.rs2, 32'h0);
+            if (o.corner == 2 && o.rs1 != 0 && o.rs2 != 0 && o.rs1 != o.rs2) begin
+              li(o.rs1, 32'h8000_0000);
+              li(o.rs2, 32'hFFFF_FFFF);
+            end
+            emit(simple(o));
+            note_write(o.rd);
           end
           default: begin
             emit(simple(o));
@@ -673,8 +736,10 @@ package rv_pkg;
   // is exactly bins hit / bins. The collector also counts hits itself, under
   // the plan's names, to list what is missing -- and checks that its count
   // and the covergroups' agree.
-  localparam int NGROUPS = 8;
-  localparam int GROUP_BINS[NGROUPS] = '{40, 30, 9, 17, 59, 11, 32, 7};
+  // Group 9 (M) counts only on the RV32IM build: ngroups() is 8 otherwise.
+  localparam int NGROUPS = 9;
+  localparam int GROUP_BINS[NGROUPS] = '{40, 30, 9, 17, 59, 11, 32, 7, 33};
+  function automatic int ngroups(); return m_ext ? 9 : 8; endfunction
 
   covergroup cg_g1 with function sample(int b); coverpoint b { bins b[] = {[0:39]}; } endgroup
   covergroup cg_g2 with function sample(int b); coverpoint b { bins b[] = {[0:29]}; } endgroup
@@ -684,12 +749,13 @@ package rv_pkg;
   covergroup cg_g6 with function sample(int b); coverpoint b { bins b[] = {[0:10]}; } endgroup
   covergroup cg_g7 with function sample(int b); coverpoint b { bins b[] = {[0:31]}; } endgroup
   covergroup cg_g8 with function sample(int b); coverpoint b { bins b[] = {[0:6]};  } endgroup
+  covergroup cg_g9 with function sample(int b); coverpoint b { bins b[] = {[0:32]}; } endgroup
 
   class rv_coverage extends uvm_subscriber #(rv_retire);
     `uvm_component_utils(rv_coverage)
     virtual core_if vif;
     rv_mem mem;
-    cg_g1 g1; cg_g2 g2; cg_g3 g3; cg_g4 g4; cg_g5 g5; cg_g6 g6; cg_g7 g7; cg_g8 g8;
+    cg_g1 g1; cg_g2 g2; cg_g3 g3; cg_g4 g4; cg_g5 g5; cg_g6 g6; cg_g7 g7; cg_g8 g8; cg_g9 g9;
     int    hits[NGROUPS][];
     string names[NGROUPS][];
     rv_retire hist[$];                  // previous retirements, newest first
@@ -697,7 +763,7 @@ package rv_pkg;
     function new(string name, uvm_component parent);
       super.new(name, parent);
       g1 = new(); g2 = new(); g3 = new(); g4 = new();
-      g5 = new(); g6 = new(); g7 = new(); g8 = new();
+      g5 = new(); g6 = new(); g7 = new(); g8 = new(); g9 = new();
       foreach (GROUP_BINS[g]) begin
         hits[g] = new[GROUP_BINS[g]];
         names[g] = new[GROUP_BINS[g]];
@@ -710,7 +776,8 @@ package rv_pkg;
       hits[g][b]++;
       case (g)
         0: g1.sample(b); 1: g2.sample(b); 2: g3.sample(b); 3: g4.sample(b);
-        4: g5.sample(b); 5: g6.sample(b); 6: g7.sample(b); default: g8.sample(b);
+        4: g5.sample(b); 5: g6.sample(b); 6: g7.sample(b); 7: g8.sample(b);
+        default: g9.sample(b);
       endcase
     endfunction
 
@@ -778,22 +845,46 @@ package rv_pkg;
       names[7][0] = "ECALL"; names[7][1] = "EBREAK"; names[7][2] = "misaligned load";
       names[7][3] = "misaligned store"; names[7][4] = "branch to misaligned target";
       names[7][5] = "JAL to misaligned target"; names[7][6] = "JALR to misaligned target";
+      begin
+        string mi[8] = '{"MUL", "MULH", "MULHSU", "MULHU", "DIV", "DIVU", "REM", "REMU"};
+        string ms[3] = '{"EX/MEM", "MEM/WB", "WB->ID"};
+        foreach (mi[i]) names[8][i] = mi[i];
+        for (int i = 0; i < 4; i++) names[8][8 + i] = {mi[4 + i], " by zero"};
+        names[8][12] = "DIV INT_MIN / -1"; names[8][13] = "REM INT_MIN / -1";
+        names[8][14] = "MULH both negative"; names[8][15] = "MULH one negative";
+        names[8][16] = "MULHSU rs1 negative"; names[8][17] = "MULHU both >= 2^31";
+        names[8][18] = "DIV/REM negative / positive"; names[8][19] = "DIV/REM positive / negative";
+        for (int i = 0; i < 3; i++) begin
+          names[8][20 + i] = {"M rs1 from ", ms[i]};
+          names[8][23 + i] = {"M rs2 from ", ms[i]};
+        end
+        names[8][26] = "M result read by the next retirement";
+        names[8][27] = "M result read two retirements later";
+        names[8][28] = "taken branch reads an M result at distance 1";
+        names[8][29] = "load-use stall, M instruction waiting in ID";
+        names[8][30] = "two M instructions back to back";
+        names[8][31] = "trap straight after an M instruction";
+        names[8][32] = "M with rd = x0";
+      end
     endfunction
 
     // --- white-box groups 2 and 3, sampled every cycle ---
     task run_phase(uvm_phase phase);
-      bit stall_q, stall_qq;
+      bit stall_q, stall_qq, mstall_q;
       forever begin
         @(posedge vif.clk);
         if (vif.rst) begin
-          stall_q = 0; stall_qq = 0;
+          stall_q = 0; stall_qq = 0; mstall_q = 0;
           continue;
         end
         // Group 2: the instruction in EX. Nothing squashes an instruction
         // once it is in EX (a redirect flushes only the younger stages, and
         // no test resets mid-program), so each valid EX cycle is one
-        // instruction that retires.
-        if (vif.id_ex_valid) sample_forwarding();
+        // instruction that retires. Only its first cycle there: an M
+        // instruction stays several (mstall), while ID, EX/MEM and WB -- and
+        // so the bypass probe and the producers' state -- move on.
+        if (vif.id_ex_valid && !mstall_q) sample_forwarding();
+        mstall_q = vif.mstall;
         // Group 3: the stall cycle. The load is in EX and its consumer in ID;
         // a stall never coincides with a redirect (property S1), so the
         // consumer is not squashed and will retire.
@@ -826,6 +917,10 @@ package rv_pkg;
         hit(1, 27);
       if (u1 && s1 == 1 && wb_load) hit(1, 28);
       if (u2 && s2 == 1 && wb_load) hit(1, 29);
+      if (m_ext && m_index(in) >= 0) begin           // group 9: M operand sources
+        if (u1 && s1 < 3) hit(8, 20 + s1);
+        if (u2 && s2 < 3) hit(8, 23 + s2);
+      end
     endfunction
 
     function void sample_stall();
@@ -839,6 +934,7 @@ package rv_pkg;
         0: hit(2, 3); 1: hit(2, 4); 2: hit(2, 5); 4: hit(2, 6); 5: hit(2, 7);
         default: ;
       endcase
+      if (m_ext && (m1 || m2) && m_index(c) >= 0) hit(8, 29);
     endfunction
 
     // --- black-box groups, one sample per retirement ---
@@ -953,8 +1049,42 @@ package rv_pkg;
             hit(5, 10);
         end
       end
+      if (m_ext) sample_m(t);
       hist.push_front(t);
       if (hist.size() > 8) void'(hist.pop_back());
+    endfunction
+
+    // Group 9 (M), per retirement, before t joins the history.
+    function void sample_m(rv_retire t);
+      bit [31:0] in = t.insn, a = t.rs1_rdata, b = t.rs2_rdata;
+      bit [4:0]  r1 = in[19:15], r2 = in[24:20];
+      int        mi = m_index(in);
+      bit        prev_m = hist.size() > 0 && m_index(hist[0].insn) >= 0;
+      if (mi >= 0 && !t.trap) begin
+        hit(8, mi);
+        if (mi >= 4 && b == 0) hit(8, 8 + (mi - 4));
+        if ((mi == 4 || mi == 6) && a == 32'h8000_0000 && b == 32'hFFFF_FFFF)
+          hit(8, mi == 4 ? 12 : 13);
+        if (mi == 1 && a[31] && b[31]) hit(8, 14);
+        if (mi == 1 && a[31] != b[31]) hit(8, 15);
+        if (mi == 2 && a[31]) hit(8, 16);
+        if (mi == 3 && a[31] && b[31]) hit(8, 17);
+        if ((mi == 4 || mi == 6) && a[31] && !b[31] && b != 0) hit(8, 18);
+        if ((mi == 4 || mi == 6) && !a[31] && b[31] && b != 32'hFFFF_FFFF) hit(8, 19);
+        if (in[11:7] == 0) hit(8, 32);
+        if (prev_m) hit(8, 30);
+      end
+      if (t.trap && prev_m) hit(8, 31);
+      if (!t.trap) begin
+        // reads of an M result, by its nearest writer
+        bit rd1 = reads_rs1(in) && r1 != 0, rd2 = reads_rs2(in) && r2 != 0;
+        int d1 = rd1 ? distance(r1) : 0, d2 = rd2 ? distance(r2) : 0;
+        bit at1 = (d1 == 1 || d2 == 1) && prev_m;
+        bit at2 = (d1 == 2 || d2 == 2) && hist.size() > 1 && m_index(hist[1].insn) >= 0;
+        if (at1) hit(8, 26);
+        if (at2) hit(8, 27);
+        if (at1 && in[6:0] == OP_BRANCH && t.pc_wdata != t.pc_rdata + 4) hit(8, 28);
+      end
     endfunction
 
     // Retirements back to the most recent writer of r; 0 if none in the
@@ -974,9 +1104,9 @@ package rv_pkg;
       real cg[NGROUPS];
       cg[0] = g1.get_coverage(); cg[1] = g2.get_coverage(); cg[2] = g3.get_coverage();
       cg[3] = g4.get_coverage(); cg[4] = g5.get_coverage(); cg[5] = g6.get_coverage();
-      cg[6] = g7.get_coverage(); cg[7] = g8.get_coverage();
+      cg[6] = g7.get_coverage(); cg[7] = g8.get_coverage(); cg[8] = g9.get_coverage();
       hit_bins = 0; all_bins = 0; from_cg = 0;
-      foreach (GROUP_BINS[g]) begin
+      for (int g = 0; g < ngroups(); g++) begin
         for (int b = 0; b < GROUP_BINS[g]; b++) if (hits[g][b] > 0) hit_bins++;
         all_bins += GROUP_BINS[g];
         from_cg += cg[g] * GROUP_BINS[g] / 100.0;
@@ -990,7 +1120,7 @@ package rv_pkg;
       int h, n;
       string missing = "";
       own = total(cg, h, n);
-      foreach (GROUP_BINS[g]) begin
+      for (int g = 0; g < ngroups(); g++) begin
         int gh = 0;
         for (int b = 0; b < GROUP_BINS[g]; b++) if (hits[g][b] > 0) gh++;
         `uvm_info("COV", $sformatf("group %0d: %0d / %0d", g + 1, gh, GROUP_BINS[g]), UVM_NONE)
@@ -1035,7 +1165,14 @@ package rv_pkg;
     real   cov_min = 95.0;
     function new(string name, uvm_component parent); super.new(name, parent); endfunction
     function void build_phase(uvm_phase phase);
+      int m;
       env = rv_env::type_id::create("env", this);
+      if (!uvm_config_db#(int)::get(this, "", "m_ext", m))
+        `uvm_fatal("TEST", "no m_ext in the config DB (tb_top sets it)")
+      m_ext = (m != 0);
+      rvm_set_m(m_ext);
+      `uvm_info("TEST", m_ext ? "core built with M_EXT: RV32IM, coverage groups 1-9"
+                              : "RV32I core: coverage groups 1-8", UVM_NONE)
       void'($value$plusargs("PROGRAMS=%d", programs));
       void'($value$plusargs("COV_MIN=%f", cov_min));
     endfunction
