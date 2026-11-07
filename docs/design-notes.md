@@ -307,17 +307,27 @@ history, [formal-properties.md](formal-properties.md) and
      below 1, random phase); formal with `multiclock on` (no loss, no
      duplication, order, full/empty never lie). Bug injection: binary instead
      of gray pointer, one sync flop, reset released asynchronously.
-  2. **Golden model first** (`sw/model/accel_model.py`): with CDC, CYCLES is no
-     longer a fixed formula in core cycles; model a lower bound (the formula)
-     and what a slower `clk_array` costs; results stay bit-exact.
-  3. **The stream**: the sequencer pushes **exactly the input it drives today,
-     one entry per core cycle while busy, bubbles included** ({valid, swap,
-     w_shift, a, w}, ~259 bits at 16×16) into an async FIFO; the array side
-     pops one entry per `clk_array` cycle and feeds a bubble when empty. Extra
-     bubbles only lengthen gaps, so the swap/shift spacing the array needs
-     (shadows still for ROWS + COLS/2 − 2 array cycles after a swap) holds
-     whatever the clock ratio, because the spacing is carried as entries, not
-     time. The sequencer stalls whole when the FIFO is (almost) full: the
+  2. **Golden model first** (**done 2026-11-07**: `sw/model/accel_cdc_model.py`,
+     measurements.md "Array clock domain: model cost"). It runs a job edge by
+     edge on both clocks and returns the CYCLES the RTL must report for given
+     periods and phase; cocotb (slice 3) sets both and compares exactly, the
+     board (phase unknown) against the min-max over phases. Found while
+     writing it: ARRAY_CDC = 0's formula is **not** a lower bound (a faster
+     array drains sooner: 0.89x at 200 MHz); at equal clocks a tile costs
+     2·SYNC_STAGES + 1 cycles more (+1 when edges coincide); the output FIFO
+     needs 32 entries to cost nothing (24 at 200 MHz), the input 16.
+  3. **The stream**: the sequencer pushes **only the entries it drives today
+     that carry something** (each weight shift, the swap, each row of A:
+     {valid, swap, w_shift, a, w}, ~259 bits at 16×16) into an async FIFO,
+     one per core cycle at most; the array side pops one entry per
+     `clk_array` cycle and feeds a bubble when empty. (The first plan pushed
+     every busy cycle, bubbles included; changed in slice 2, because DRAIN's
+     bubbles would queue ahead of the next tile and, with a slow array, delay
+     it by up to the FIFO's depth. Nothing needs them: the next tile still
+     waits for the last row's write, which keeps the shadows still for the
+     ROWS + COLS/2 − 2 array cycles after a swap, whatever the ratio; the
+     model checks it at every shift.) Extra bubbles only lengthen gaps.
+     The sequencer stalls whole when the FIFO is (almost) full: the
      BRAM read in flight lands in the slack. **Results**: valid rows (512 bits)
      into a second async FIFO; the array cannot be stalled, so the sequencer
      holds **credits** (rows sent − rows received ≤ depth) and never sends a
@@ -327,11 +337,12 @@ history, [formal-properties.md](formal-properties.md) and
   4. **Parameter** `ARRAY_CDC`, default 0: the direct path, cycle-exact, so
      every Phase G result and the CYCLES-equals-model tests stay valid (the
      MEM_WAIT / M_EXT pattern). The soc-v2.0 board build sets it, with
-     `clk_array` from its own MMCM output (100 MHz by default),
-     `set_clock_groups -asynchronous`, and `report_cdc` clean.
+     `clk_array` from its own MMCM output (100 MHz by default), the
+     crossings bounded as in `constr/cdc_ooc.xdc` (not `set_clock_groups`,
+     see 1), and `report_cdc` clean.
   5. Then box 4 (DRP registers) and the 80-vs-100 MHz regression and board run.
-  Above core clock the array gains nothing (fed one row per core cycle);
-  that is fine for P5, whose point is the errors, not the speed.
+  Above core clock the array gains little (fed one row per core cycle; only
+  the drain shortens); that is fine for P5, whose point is the errors.
 
 
 ### 1. Timing: IF/ID flush via the valid bit

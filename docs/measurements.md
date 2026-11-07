@@ -36,6 +36,7 @@ saying so. Every number is transcribed from `docs/reports/`, never typed.
 | **M golden models** (Phase H) | 2026-11-06, before any RTL: an M switch, off by default, in `tb/cocotb/rv32i_model.py` and `sw/model/rv32i_iss.c` (M encodings trap when off, as on the RV32I core). `make model-test`: riscv-tests rv32um 8/8 (M on), rv32ui 40/40 (M off); both models against `sw/model/m_vectors.txt`, **10,592 vectors from spike `--isa=rv32im`** (all pairs of 18 edge values + 1,000 seeded random, × 8 ops; `make m-vectors` regenerates), 10,592/10,592 each; 8/8 M encodings trap with M off. 10 planted model bugs caught |
 | **M unit** (Phase H) | 2026-11-06: `rtl/core/riscv_muldiv.sv`, not yet in the core. MUL\*: operands captured (sign/zero-extended to 33 bits), four 17×17 signed partial products registered (4 DSP48E1), summed: **3 cycles in EX**. DIV\*: |a|, |b| captured, 32 restoring steps, signs applied: **34 cycles, fixed**. Handshake `valid_i` / `done_o` / `ack_i`; result held until ack. `riscv_muldiv:test_muldiv`: all 10,592 spike vectors + 3,000 random ops against the golden model, operands scrambled after capture, random ack delays, reset mid-op; latency exact; ~20 s. Formal: property 14 in [formal-properties.md](formal-properties.md). 8 planted bugs caught by both. Out of context: 497 LUT, 109 FF, 4 DSP, 149.4 MHz (register to register; see M-extension synthesis) |
 | **CDC primitives** (Phase H, array clock domain slice 1) | 2026-11-07: `rtl/cdc/`: `cdc_sync` (`ASYNC_REG` chain), `cdc_async_fifo` (gray pointers, first-word fall-through, `wr_used_o` for an almost-full), `cdc_pulse` (toggle + acknowledgement, `src_busy_o`), `cdc_reset_sync` (asynchronous assert, synchronous release; the one asynchronous reset in `rtl/`). Not yet instantiated. cocotb, two unrelated clocks at six period pairs (faster, slower, equal, 10.00/10.03 ns drifting, 7/31 and 31/7 ns), random phase: FIFO (16 deep × 8 bits, and 4 deep with 3 flops) 3,000 bursty entries per pair against a scoreboard, full and empty reached at every pair, head and `wr_used_o` checked every cycle; latency exactly SYNC_STAGES edges each way; writes while full dropped; 24 mid-stream flushes; pulse 300 per pair, 132-4,997 ignored while busy; reset sync 200 releases at random phase. Formal: property 17 in [formal-properties.md](formal-properties.md), unbounded (PDR). Planted bugs: 9 by formal, 4 by simulation (one-flop synchronizer by the latency test, unsynchronised release, write while full, level pulse) |
+| **Array CDC golden model** (Phase H, array clock domain slice 2) | 2026-11-07, before the stream RTL: `sw/model/accel_cdc_model.py` runs a job edge by edge on both clocks (input FIFO, array, output FIFO with credits, ideal synchronizers) and computes C from the entries it schedules. `make accel-model`: with no FIFOs it equals `accel_model.py` exactly (cycles and every byte of C, 132 shapes at 4×4, 16×16, 4×8); through the FIFOs, 2,112 runs at eight clock pairs (equal, 10.00/10.03 ns, 3.1 to 31 ns arrays, an edge-sharing phase and a random one), input FIFO 2-16 deep, output 1-32: C bit-exact against `gemm()`, padding and untouched lines kept, CYCLES never under a bound derived separately from the design; equal clocks cost exactly 2·SYNC_STAGES + 1 cycles per tile (+2 with shared edges); one row per cycle of the slower clock. Planted model bugs: 10 of 10 caught (tie sampling, one sync flop, no credit check, room ignoring the read in flight, latency, a lost swap, W order, tile end, K tiles not summed, the swap-spacing check), plus one equivalent mutant |
 | CI on push | green (lint + sim + formal on `ubuntu-24.04`) on branch `dma` at `2277923`, run 41911741373 (Phase G DMA engine, PyYAML 6.0.3 added); `systolic` last at `984cb52`; `main` last at `f1713af` (Phase E README) |
 
 ## Synthesis trend
@@ -300,6 +301,28 @@ The first run found the gray pointer's top bit unconstrained: Vivado merges
 it with the binary pointer's (equal by construction), so a name filter on
 `wgray_q` missed it. The constraints now take every startpoint in the fanin
 of the first synchronizer flop.
+
+## Array clock domain: model cost (Phase H)
+
+`python3 sw/model/accel_cdc_model.py --costs`: the golden model, not RTL
+(slice 3 measures the RTL against it). 16×16 array, core clock 100 MHz,
+SYNC_STAGES 2, input FIFO 16 entries, CYCLES in core cycles over 20 array
+phases, against ARRAY_CDC = 0 (`job_cycles`: 61, 1699, 301); last column is
+the smallest output FIFO (of 8 to 64) that costs no cycle at any shape here.
+
+| f_array | 16×16×16 | 64×64×64 | 256×16×16 | Output FIFO |
+|---|---|---|---|---|
+| 200 MHz | 53-54 (0.89×) | 1571-1587 (0.93×) | 293-294 (0.98×) | 24 |
+| 125 MHz | 61 (1.00×) | 1699 (1.00×) | 301 (1.00×) | 32 |
+| 100 MHz | 66-67 (1.10×) | 1779-1795 (1.06×) | 306-307 (1.02×) | 32 |
+| 80 MHz | 80-81 (1.33×) | 2202-2204 (1.30×) | 380-381 (1.27×) | 32 |
+| 50 MHz | 123-125 (2.05×) | 3459-3491 (2.05×) | 603-605 (2.01×) | 32 |
+| 25 MHz | 237-241 (3.95×) | 6849-6853 (4.03×) | 1197-1201 (3.99×) | 32 |
+
+At equal clocks the two crossings cost 5 or 6 cycles a tile (6 when the
+edges coincide). A faster array drains a tile sooner, so ARRAY_CDC = 0's
+count is not a lower bound; a slower one sets the pace at one row per array
+cycle.
 
 ## ASIC (LibreLane + Sky130, CLAUDE.md §6.4)
 

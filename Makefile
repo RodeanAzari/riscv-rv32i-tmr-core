@@ -106,9 +106,12 @@ gemm-model:
 # The GEMM accelerator's golden model (sw/model/accel_model.py): buffer
 # layouts, registers, tiling, refused shapes and cycle count around
 # gemm_model's arithmetic, checked against gemm() on the unpacked matrices.
+# Then the same with the array on its own clock (sw/model/accel_cdc_model.py,
+# Phase H): CYCLES edge by edge, C from the stream it schedules.
 .PHONY: accel-model
 accel-model:
 	$(GEMM_PY) sw/model/accel_model.py
+	$(GEMM_PY) sw/model/accel_cdc_model.py
 
 # The DMA engine's golden model (sw/model/dmaeng_model.py, ported from
 # DMA-Engine's QEMU device) replays DMA-Engine's golden trace and runs the
