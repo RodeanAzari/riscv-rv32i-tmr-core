@@ -144,6 +144,7 @@ trims logic the OOC run keeps.
 | 2026-11-05 | TMR, the three bundles registered before the mismatch compare; worst path now the data address → RAM port B | 4944 | 2975 | 8 | 100 MHz | +0.123 | 101.2 |
 | 2026-11-05 | + GEMM accelerator (16×16 array, 3 × 16 KiB buffers, +24 BRAM, 131 DSP) as crossbar slaves 2 and 3; worst path inside the array (a PE pair's DSP product → lane split → psum add → deskew, 10 levels) | 13204 | 12357 | 32 | 100 MHz | +0.288 | 103.0 |
 | 2026-11-05 | TMR, same; worst path the data address → RAM port B again (thinner: placement around the array) | 15445 | 13985 | 32 | 100 MHz | +0.042 | 100.4 |
+| 2026-11-07 | RV32IM core (M_EXT = 1, `make impl M=1`, `summary_board_m.txt`; 135 DSP = 131 + the M unit's 4), CoreMark image | 13682 | 12475 | 32 | 100 MHz | +0.242 | 102.5 |
 
 At 50 MHz the critical path was the one the OOC flow could not time: a block
 RAM's output (load data) through alignment, the forwarding mux and the branch
@@ -351,3 +352,20 @@ RTL simulation of the same SoC, one iteration. `-O2 -march=rv32i
 |---|---|---|---|---|---|---|
 | 2026-10-17 | First CoreMark: core + illegal trap, SoC + cycle counter | 50 MHz | 1000 | 1,038,847,073 | 0.962 | 0.691 |
 | 2026-10-17 | Data memory accessed from EX; 100 MHz | 100 MHz | 2000 | 2,077,692,270 | 0.962 | 0.691 |
+
+### RV32IM (Phase H)
+
+Kept apart from RV32I's rows: the core built with M_EXT (`make impl M=1
+FW_IMAGE=sw/build/coremark_m.hex`), CoreMark compiled `-O2 -march=rv32im
+-mabi=ilp32` (multiply and divide inline; libgcc only in the port's report
+printing, after the timed region), 5000 iterations (`COREMARK_M_ITERATIONS`,
+~20 s). Simulation: `soc_m:test_coremark` → `docs/reports/coremark_m_sim.txt`.
+
+| Date | Build | Core clock | Iterations | Cycles | CoreMark/MHz | IPC (sim) |
+|---|---|---|---|---|---|---|
+
+Simulation, 2026-11-07, 1 iteration ([coremark_m_sim.txt](reports/coremark_m_sim.txt)):
+284,853 instructions retired in 399,865 cycles (RV32I: 718,009 in 1,038,833),
+IPC 0.712, **2.501 CoreMark/MHz for one iteration (RV32I 0.963, 2.6×)**; CRCs
+correct; the TMR SoC (`soc_tmr_m:test_coremark`) the same with zero
+mismatches. Board run pending (2026-11-07: board held by P3).

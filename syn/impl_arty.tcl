@@ -1,6 +1,6 @@
 # Board-level synthesis, implementation and bitstream for the Arty A7-100T.
 #
-#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila] [tmr]
+#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila] [tmr] [m]
 #
 # Top: rtl/top/arty_a7_top.sv, pins in constr/arty_a7.xdc, the RAM loaded
 # from <hex> (sw/build/hello.hex, from `make fw`). Unlike synth_ooc.tcl this
@@ -24,6 +24,9 @@ set ila  [expr {[lindex $argv 2] eq "1"}]
 # reports named *_board_tmr.* so the single core's stay beside them.
 set tmr  [expr {[lindex $argv 3] eq "1"}]
 set sfx  [expr {$tmr ? "_board_tmr" : "_board"}]
+# m = 1: the core(s) built with M_EXT (RV32IM, Phase H), reports *_board[_tmr]_m.*
+set m    [expr {[lindex $argv 4] eq "1"}]
+if {$m} { set sfx "${sfx}_m" }
 if {$part eq ""} { set part xc7a100tcsg324-1 }
 
 set top     arty_a7_top
@@ -64,7 +67,7 @@ read_verilog -sv $sv
 read_xdc [file join $repo constr arty_a7.xdc]
 
 synth_design -top $top -part $part -generic "INIT_FILE=\"$hex\"" -generic "ILA=$ila" \
-    -generic "TMR=$tmr"
+    -generic "TMR=$tmr" -generic "M_EXT=$m"
 
 set bb [get_cells -hier -quiet -filter {IS_BLACKBOX == 1}]
 if {[llength $bb] > 0} {

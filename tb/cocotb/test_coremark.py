@@ -40,6 +40,11 @@ BUDGET_CYCLES = 20_000_000
 CYCLE_ADDR = 0x1000_0010
 
 
+# soc_m / soc_tmr_m (the Makefile exports M_EXT): the RV32IM core(s) and the
+# -march=rv32im image, reported to coremark_m_sim.txt.
+M_EXT = os.environ.get("M_EXT") == "1"
+
+
 async def count_retirements(dut, marks):
     """Count RVFI retirements; append the count at each load of CYCLE."""
     core = dut.g_cpu.u_core
@@ -90,12 +95,13 @@ async def test_coremark(dut):
     assert len(marks) == 2, f"{len(marks)} loads of CYCLE, want 2"
     insns = marks[1] - marks[0]
     ipc = insns / ticks
-    report = (f"CoreMark, 1 iteration, RTL simulation of rtl/top/soc.sv (Verilator)\n"
+    report = (f"CoreMark, 1 iteration, RTL simulation of rtl/top/soc.sv (Verilator)"
+              f"{', RV32IM (M_EXT = 1, -march=rv32im)' if M_EXT else ''}\n"
               f"timed region: {insns} instructions retired, {ticks} cycles\n"
               f"IPC {ipc:.4f}  CPI {1 / ipc:.4f}\n"
               f"CoreMark/MHz (1 iteration) {1e6 / ticks:.3f}\n")
     dut._log.info(report)
-    with open(os.path.join("sim_build", "coremark_sim.txt"), "w") as f:
+    with open(os.path.join("sim_build", "coremark_m_sim.txt" if M_EXT else "coremark_sim.txt"), "w") as f:
         f.write(report)
     assert 0 < ipc <= 1, f"IPC {ipc}"
     assert_no_tmr_mismatch(dut)

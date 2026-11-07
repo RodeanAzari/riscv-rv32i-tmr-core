@@ -203,8 +203,15 @@ BENCH_CFLAGS := $(filter-out -O2,$(FW_CFLAGS)) $(BENCH_OPT) \
                 -Isw/coremark-port -Isw/coremark \
                 '-DFLAGS_STR="$(BENCH_OPT) -march=rv32i -mabi=ilp32"'
 
+# coremark_m{,_sim}: the same for the RV32IM core (Phase H, M_EXT), compiled
+# -march=rv32im: multiply and divide inline, libgcc only for what remains.
+# 2.6x faster per iteration, so 5000 iterations for the same ~20 s.
+COREMARK_M_ITERATIONS ?= 5000
+BENCH_M_CFLAGS := $(subst -march=rv32i ,-march=rv32im ,$(BENCH_CFLAGS))
+
 .PHONY: bench
-bench: $(FW_BUILD)/coremark.hex $(FW_BUILD)/coremark_sim.hex
+bench: $(FW_BUILD)/coremark.hex $(FW_BUILD)/coremark_sim.hex \
+       $(FW_BUILD)/coremark_m.hex $(FW_BUILD)/coremark_m_sim.hex
 
 $(FW_BUILD)/coremark.elf: $(BENCH_SRCS) sw/coremark-port/core_portme.h $(FW_DEPS)
 	@test -f sw/coremark/core_main.c || { echo "sw/coremark is empty -- run: git submodule update --init sw/coremark" >&2; exit 1; }
@@ -216,6 +223,18 @@ $(FW_BUILD)/coremark_sim.elf: $(BENCH_SRCS) sw/coremark-port/core_portme.h $(FW_
 	@test -f sw/coremark/core_main.c || { echo "sw/coremark is empty -- run: git submodule update --init sw/coremark" >&2; exit 1; }
 	@mkdir -p $(FW_BUILD)
 	$(RISCV_PREFIX)gcc $(BENCH_CFLAGS) -DITERATIONS=1 \
+		-o $@ $(FW_DIR)/crt0.S $(BENCH_SRCS) -lgcc
+
+$(FW_BUILD)/coremark_m.elf: $(BENCH_SRCS) sw/coremark-port/core_portme.h $(FW_DEPS)
+	@test -f sw/coremark/core_main.c || { echo "sw/coremark is empty -- run: git submodule update --init sw/coremark" >&2; exit 1; }
+	@mkdir -p $(FW_BUILD)
+	$(RISCV_PREFIX)gcc $(BENCH_M_CFLAGS) -DITERATIONS=$(COREMARK_M_ITERATIONS) \
+		-o $@ $(FW_DIR)/crt0.S $(BENCH_SRCS) -lgcc
+
+$(FW_BUILD)/coremark_m_sim.elf: $(BENCH_SRCS) sw/coremark-port/core_portme.h $(FW_DEPS)
+	@test -f sw/coremark/core_main.c || { echo "sw/coremark is empty -- run: git submodule update --init sw/coremark" >&2; exit 1; }
+	@mkdir -p $(FW_BUILD)
+	$(RISCV_PREFIX)gcc $(BENCH_M_CFLAGS) -DITERATIONS=1 \
 		-o $@ $(FW_DIR)/crt0.S $(BENCH_SRCS) -lgcc
 
 # The serial bootloader (sw/boot/), the default bitstream image since the
@@ -458,14 +477,16 @@ BIT := syn/build/board/arty_a7_top.bit
 # ILA=1 attaches a logic analyser to the core's pipeline registers and writes
 # its probes file beside the bitstream; its reports stay in syn/build/board/,
 # so docs/reports/ always describes the design without debug logic. TMR=1
-# builds the three-copy core, reports to docs/reports/*_board_tmr.*.
+# builds the three-copy core, reports to docs/reports/*_board_tmr.*. M=1
+# builds RV32IM core(s), reports *_board[_tmr]_m.*: with FW_IMAGE=
+# sw/build/coremark_m.hex for RV32IM CoreMark.
 FW_IMAGE ?= $(FW_BUILD)/boot.hex
 ILA      ?= 0
 TMR      ?= 0
 
 impl: $(FW_IMAGE)
 	$(VIVADO) -mode batch -nojournal -notrace \
-		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA) $(TMR)
+		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA) $(TMR) $(M)
 
 # Two routes, picked per session (docs/vivado-setup.md section 6). If the Arty
 # is attached to WSL with usbipd-win (FTDI 0403:6010 visible here), program it

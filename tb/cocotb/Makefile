@@ -105,7 +105,9 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          soc_tmr:test_boot \
          soc_tmr:test_demo \
          soc_tmr:test_dma \
-         soc_tmr:test_gemm
+         soc_tmr:test_gemm \
+         soc_m:test_coremark \
+         soc_tmr_m:test_coremark
 
 # The SoC runs a firmware simulation image from sw/build/, built by `make fw`
 # and `make bench` (the regression below builds both first; a TEST_ONE run of
@@ -121,14 +123,23 @@ ifdef TEST_ONE
   # soc_tmr: the same SoC built with TMR = 1 (three voted cores); the tests
   # then also require the mismatch counter to stay at zero.
   TMR_SUFFIX            :=
+  # soc_m / soc_tmr_m: the SoC with RV32IM core(s) (M_EXT, Phase H); CoreMark
+  # then runs its -march=rv32im image. Stripped first, so the rest is soc's.
+  M_SUFFIX              :=
+  ifneq ($(filter soc_m soc_tmr_m,$(TOPLEVEL)),)
+    TOPLEVEL            := $(patsubst %_m,%,$(TOPLEVEL))
+    M_SUFFIX            := _m
+    COMPILE_ARGS        += -GM_EXT=1
+    export M_EXT        := 1
+  endif
   ifeq ($(TOPLEVEL),soc_tmr)
     TOPLEVEL            := soc
     TMR_SUFFIX          := _tmr
     COMPILE_ARGS        += -GTMR=1
   endif
   ifeq ($(TOPLEVEL),soc)
-    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,$(if $(filter test_dma,$(MODULE)),boot_dma_sim,$(if $(filter test_gemm,$(MODULE)),boot_gemm_sim,hello_sim)))))
-    BUILD_TAG           := soc_$(SOC_IMAGE)$(TMR_SUFFIX)
+    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark$(M_SUFFIX)_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,$(if $(filter test_dma,$(MODULE)),boot_dma_sim,$(if $(filter test_gemm,$(MODULE)),boot_gemm_sim,hello_sim)))))
+    BUILD_TAG           := soc_$(SOC_IMAGE)$(TMR_SUFFIX)$(if $(filter coremark%,$(SOC_IMAGE)),,$(M_SUFFIX))
     # The demo, DMA and GEMM tests run the UART at CLK/16: their output is
     # thousands of characters.
     ifneq ($(filter test_demo test_dma test_gemm,$(MODULE)),)

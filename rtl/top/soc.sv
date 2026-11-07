@@ -58,7 +58,9 @@ module soc #(
     // Triple modular redundancy: three voted copies of the core
     // (rtl/tmr/riscv_core_tmr.sv) instead of one. Either way the core is at
     // g_cpu.u_core.
-    parameter bit          TMR       = 1'b0
+    parameter bit          TMR       = 1'b0,
+    // M extension (riscv_core M_EXT, Phase H): RV32IM, each copy with its unit.
+    parameter bit          M_EXT     = 1'b0
 ) (
     input  logic       clk_i,
     input  logic       rst_i,
@@ -122,7 +124,7 @@ module soc #(
       else       inject_q <= (io_we && (dmem_addr[4:2] == IO_TMR)) ? dmem_wdata : '0;
     end
 
-    riscv_core_tmr #(.MEM_WAIT(1'b1)) u_core (
+    riscv_core_tmr #(.MEM_WAIT(1'b1), .M_EXT(M_EXT)) u_core (
         .clk_i               (clk_i),
         .rst_i               (rst_i),
         .imem_addr_o         (imem_addr),
@@ -182,7 +184,7 @@ module soc #(
         .mem_wb_instr_o      (dbg_mem_wb_instr_o)
     );
   end else begin : g_cpu
-    riscv_core #(.MEM_WAIT(1'b1)) u_core (
+    riscv_core #(.MEM_WAIT(1'b1), .M_EXT(M_EXT)) u_core (
         .clk_i               (clk_i),
         .rst_i               (rst_i),
   `ifdef FORMAL
