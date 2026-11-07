@@ -363,9 +363,12 @@ printing, after the timed region), 5000 iterations (`COREMARK_M_ITERATIONS`,
 
 | Date | Build | Core clock | Iterations | Cycles | CoreMark/MHz | IPC (sim) |
 |---|---|---|---|---|---|---|
+| 2026-11-07 | RV32IM: M unit in EX (MUL 3 cycles, DIV 34), SoC as Phase G | 100 MHz | 5000 | 1,999,390,615 | **2.500** | 0.712 |
 
-Simulation, 2026-11-07, 1 iteration ([coremark_m_sim.txt](reports/coremark_m_sim.txt)):
+Board ([coremark_m_board.txt](reports/coremark_m_board.txt)): "Correct operation
+validated", **about 250 CoreMark at 100 MHz (RV32I: 96, 2.6×)**; 399,878 cycles
+per iteration against simulation's 399,865 (0.003%). Simulation, 2026-11-07, 1 iteration ([coremark_m_sim.txt](reports/coremark_m_sim.txt)):
 284,853 instructions retired in 399,865 cycles (RV32I: 718,009 in 1,038,833),
 IPC 0.712, **2.501 CoreMark/MHz for one iteration (RV32I 0.963, 2.6×)**; CRCs
 correct; the TMR SoC (`soc_tmr_m:test_coremark`) the same with zero
-mismatches. Board run pending (2026-11-07: board held by P3).
+mismatches.
