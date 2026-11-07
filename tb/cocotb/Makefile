@@ -81,6 +81,11 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_mem_align:test_mem_align \
          riscv_hazard:test_hazard \
          riscv_branch:test_branch \
+         cdc_async_fifo:test_cdc_async_fifo \
+         cdc_async_fifo_small:test_cdc_async_fifo \
+         cdc_pulse:test_cdc_pulse \
+         cdc_pulse_s3:test_cdc_pulse \
+         cdc_reset_sync:test_cdc_reset_sync \
          uart_tx:test_uart_tx \
          uart_rx:test_uart_rx \
          systolic_pe:test_systolic_pe \
@@ -189,6 +194,21 @@ ifdef TEST_ONE
     TOPLEVEL            := $(patsubst %_m,%,$(TOPLEVEL))
     COMPILE_ARGS        += -GM_EXT=1
     export M_EXT        := 1
+  endif
+  # CDC primitives (array clock domain, Phase H). cdc_async_fifo is 8 bits by
+  # 16 with 2 synchronizer flops; _small is 4 deep with 3, so the stream
+  # sits at full and empty far more often. cdc_pulse_s3: 3 flops.
+  # CDC_SYNC_STAGES tells the tests, which check latencies in edges.
+  export CDC_SYNC_STAGES ?= 2
+  ifeq ($(TOPLEVEL),cdc_async_fifo_small)
+    TOPLEVEL            := cdc_async_fifo
+    COMPILE_ARGS        += -GDEPTH=4 -GSYNC_STAGES=3
+    CDC_SYNC_STAGES     := 3
+  endif
+  ifeq ($(TOPLEVEL),cdc_pulse_s3)
+    TOPLEVEL            := cdc_pulse
+    COMPILE_ARGS        += -GSYNC_STAGES=3
+    CDC_SYNC_STAGES     := 3
   endif
   # The crossbar at the test's map: 3 masters, slave 0 at 0x0xxx_xxxx (the
   # RAM's region), slave 1 at 0x2000_0000-0x2000_0FFF; the rest DECERR.

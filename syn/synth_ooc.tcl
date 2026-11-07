@@ -7,6 +7,7 @@
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> <other top>
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> riscv_core[_tmr] wait
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> riscv_core[_tmr] m
+#   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> cdc_async_fifo <width> <depth>
 #
 # Reports: docs/reports/*_ooc.* for the core, *_ooc_tmr.* for the TMR core,
 # which also gets a per-hierarchy utilization report and a check that three
@@ -40,6 +41,13 @@ if {$top eq "systolic_array"} {
     set sub      "array${rows}x${cols}"
     set generics [list -generic ROWS=$rows -generic COLS=$cols]
     set title    "$top ${rows}x${cols}"
+} elseif {$top eq "cdc_async_fifo"} {
+    # two clocks (constr/cdc_ooc.xdc); also a report_cdc
+    lassign [lrange $argv 2 3] width depth
+    set sfx      "_ooc_cdc_fifo${width}x${depth}"
+    set sub      "cdc_fifo${width}x${depth}"
+    set generics [list -generic WIDTH=$width -generic DEPTH=$depth]
+    set title    "$top ${width}x${depth}"
 } elseif {$top ne "riscv_core" && !$tmr} {
     # any other block on its own (the DMA, Phase G): reports *_ooc_<top>.*
     set sfx "_ooc_$top"
@@ -87,9 +95,16 @@ if {[llength $sv] == 0} {
 # spec/dmaeng.yaml) first: packages compile before what imports them.
 set sv [concat [list [file join $repo sw dma-engine rtl dmaeng_pkg.sv]] $sv]
 read_verilog -sv $sv
-read_xdc [file join $repo constr core_ooc.xdc]
-
-synth_design -top $top -part $part -mode out_of_context {*}$generics
+set cdc [expr {$top eq "cdc_async_fifo"}]
+if {$cdc} {
+    # Its constraints name synthesized cells, so they are read after synthesis
+    # (and are used by implementation only).
+    synth_design -top $top -part $part -mode out_of_context {*}$generics
+    read_xdc -mode out_of_context [file join $repo constr cdc_ooc.xdc]
+} else {
+    read_xdc [file join $repo constr core_ooc.xdc]
+    synth_design -top $top -part $part -mode out_of_context {*}$generics
+}
 
 # A module Vivado cannot find becomes a black box with a critical warning and
 # the run completes, producing a utilization report for a design with a hole in
@@ -109,6 +124,10 @@ write_checkpoint -force [file join $rundir post_route.dcp]
 
 report_utilization    -file [file join $reports utilization$sfx.rpt]
 report_timing_summary -file [file join $reports timing$sfx.rpt]
+if {$cdc} {
+    report_cdc -details -file [file join $reports cdc$sfx.rpt]
+    report_bus_skew       -file [file join $reports bus_skew$sfx.rpt]
+}
 
 # --- TMR: did three copies survive? ------------------------------------------
 # Each copy must still be its own hierarchy with a core's worth of cells. A
@@ -128,7 +147,7 @@ if {$tmr} {
 # Fmax is computed, not asserted: slack against a known period tells us what
 # period the design would actually meet.  Fmax = 1000 / (period - WNS).
 
-set clk    [get_clocks clk]
+set clk    [get_clocks [expr {$cdc ? "wr_clk" : "clk"}]]
 set period [get_property PERIOD $clk]
 set paths  [get_timing_paths -delay_type max -max_paths 1 -nworst 1]
 
@@ -158,6 +177,11 @@ foreach {label group total} [list \
     dict set util $label [list $used $total]
 }
 
+# LUTs used as distributed RAM (the register file, FIFOs) are not LUT cells,
+# so the LUT count above leaves them out; reported on their own line.
+set lutram 0
+regexp {LUT as Distributed RAM\s*\|\s*(\d+)} [report_utilization -return_string] -> lutram
+
 set fh [open [file join $reports summary$sfx.txt] w]
 foreach out [list stdout $fh] {
     puts $out ""
@@ -182,6 +206,7 @@ foreach out [list stdout $fh] {
             puts $out [format "%-5s %8d %19s" $label $used "(no device total)"]
         }
     }
+    puts $out [format "%-6s %7d %19s" LUTRAM $lutram "(LUTs as distributed RAM, not in LUT)"]
     if {$tmr} {
         puts $out ""
         puts $out "TMR copies (leaf cells each; DONT_TOUCH + KEEP_HIERARCHY):"

@@ -1,0 +1,37 @@
+# cdc_async_fifo under two free clocks and metastable synchronizers -- see
+# cdc_async_fifo_formal.sv. multiclock: every step of the global clock may
+# carry an edge of either clock, both, or neither.
+#
+#   prove       DEPTH 4, SYNC_STAGES 2 (the shape the stream uses, smaller)
+#   prove_d2s3  DEPTH 2, SYNC_STAGES 3: the smallest FIFO, a longer chain
+#   cover       reachability: full, a tracked entry out, filled then
+#               drained, a wrap past both laps
+
+[tasks]
+prove
+prove_d2s3
+cover
+
+[options]
+prove: mode prove
+prove_d2s3: mode prove
+cover: mode cover
+prove: depth 20
+prove_d2s3: depth 20
+cover: depth 40
+multiclock on
+
+[engines]
+prove: abc pdr
+prove_d2s3: abc pdr
+cover: smtbmc yices
+
+[script]
+read_verilog -sv -formal -DFORMAL cdc_sync_meta.sv cdc_async_fifo.sv cdc_async_fifo_formal.sv
+prove_d2s3: chparam -set DEPTH 2 -set SYNC_STAGES 3 cdc_async_fifo_formal
+prep -top cdc_async_fifo_formal
+
+[files]
+cdc_sync_meta.sv
+../../rtl/cdc/cdc_async_fifo.sv
+cdc_async_fifo_formal.sv

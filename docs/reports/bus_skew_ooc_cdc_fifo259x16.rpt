@@ -1,0 +1,191 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
+| Date         : Sat Nov  7 16:12:56 2026
+| Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
+| Command      : report_bus_skew -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/bus_skew_ooc_cdc_fifo259x16.rpt
+| Design       : cdc_async_fifo
+| Device       : 7a100t-csg324
+| Speed File   : -1  PRODUCTION 1.23 2018-06-13
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Bus Skew Report
+
+Table of Contents
+-----------------
+1. Bus Skew Report Summary
+2. Bus Skew Report Per Constraint
+
+1. Bus Skew Report Summary
+--------------------------
+
+Id  Position  From                            To                              Corner  Requirement(ns)  Actual(ns)  Slack(ns)
+--  --------  ------------------------------  ------------------------------  ------  ---------------  ----------  ---------
+1   5         [get_cells -of [all_fanin -startpoints_only -flat [get_pins -of [get_cells -hier -filter {NAME =~ *u_wptr_sync/sync_q_reg[0]*}] -filter {REF_PIN_NAME == D}]]]
+                                              [get_cells -hier -filter {NAME =~ *u_wptr_sync/sync_q_reg[0]*}]
+                                                                              Slow              5.000       0.928      4.072
+2   6         [get_cells -of [all_fanin -startpoints_only -flat [get_pins -of [get_cells -hier -filter {NAME =~ *u_rptr_sync/sync_q_reg[0]*}] -filter {REF_PIN_NAME == D}]]]
+                                              [get_cells -hier -filter {NAME =~ *u_rptr_sync/sync_q_reg[0]*}]
+                                                                              Slow              5.000       0.746      4.254
+
+
+2. Bus Skew Report Per Constraint
+---------------------------------
+
+Id: 1
+set_bus_skew -from [get_cells -of [all_fanin -startpoints_only -flat [get_pins -of [get_cells -hier -filter {NAME =~ *u_wptr_sync/sync_q_reg[0]*}] -filter {REF_PIN_NAME == D}]]] -to [get_cells -hier -filter {NAME =~ *u_wptr_sync/sync_q_reg[0]*}] 5.000
+Requirement: 5.000ns
+Endpoints: 5
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+wr_clk                rd_clk                u_wptr_sync/sync_q_reg[0][3]/D  u_wptr_sync/sync_q_reg[0][0]/D  Slow         0.928      4.072
+
+
+Slack (MET) :             4.072ns  (requirement - actual skew)
+  Endpoint Source:        wgray_q_reg[3]/C
+                            (rising edge-triggered cell FDRE clocked by wr_clk)
+  Endpoint Destination:   u_wptr_sync/sync_q_reg[0][3]/D
+                            (rising edge-triggered cell FDRE clocked by rd_clk)
+  Reference Source:       wgray_q_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by wr_clk)
+  Reference Destination:  u_wptr_sync/sync_q_reg[0][0]/D
+                            (rising edge-triggered cell FDRE clocked by rd_clk)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            5.000ns
+  Endpoint Relative Delay:    1.328ns
+  Reference Relative Delay:   0.400ns
+  Relative CRPR:              0.000ns
+  Actual Bus Skew:            0.928ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock wr_clk rise edge)     0.000     0.000 r  
+                                                      0.000     0.000 r  wr_clk_i (IN)
+                         net (fo=364, unset)          0.973     0.973    wr_clk_i
+    SLICE_X16Y30         FDRE                                         r  wgray_q_reg[3]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X16Y30         FDRE (Prop_fdre_C_Q)         0.419     1.392 r  wgray_q_reg[3]/Q
+                         net (fo=1, routed)           0.591     1.983    u_wptr_sync/Q[3]
+    SLICE_X17Y30         FDRE                                         r  u_wptr_sync/sync_q_reg[0][3]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock rd_clk rise edge)     0.000     0.000 r  
+                                                      0.000     0.000 r  rd_clk_i (IN)
+                         net (fo=18, unset)           0.924     0.924    u_wptr_sync/rd_clk_i
+    SLICE_X17Y30         FDRE                                         r  u_wptr_sync/sync_q_reg[0][3]/C
+                         clock pessimism              0.000     0.924    
+    SLICE_X17Y30         FDRE (Setup_fdre_C_D)       -0.270     0.654    u_wptr_sync/sync_q_reg[0][3]
+  -------------------------------------------------------------------
+                         data arrival                           1.983    
+                         clock arrival                          0.654    
+  -------------------------------------------------------------------
+                         relative delay                         1.328    
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock wr_clk rise edge)     0.000     0.000 r  
+                                                      0.000     0.000 r  wr_clk_i (IN)
+                         net (fo=364, unset)          0.924     0.924    wr_clk_i
+    SLICE_X16Y29         FDRE                                         r  wgray_q_reg[0]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X16Y29         FDRE (Prop_fdre_C_Q)         0.367     1.291 r  wgray_q_reg[0]/Q
+                         net (fo=1, routed)           0.251     1.542    u_wptr_sync/Q[0]
+    SLICE_X17Y29         FDRE                                         r  u_wptr_sync/sync_q_reg[0][0]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock rd_clk rise edge)     0.000     0.000 r  
+                                                      0.000     0.000 r  rd_clk_i (IN)
+                         net (fo=18, unset)           0.973     0.973    u_wptr_sync/rd_clk_i
+    SLICE_X17Y29         FDRE                                         r  u_wptr_sync/sync_q_reg[0][0]/C
+                         clock pessimism              0.000     0.973    
+    SLICE_X17Y29         FDRE (Hold_fdre_C_D)         0.169     1.142    u_wptr_sync/sync_q_reg[0][0]
+  -------------------------------------------------------------------
+                         data arrival                           1.542    
+                         clock arrival                          1.142    
+  -------------------------------------------------------------------
+                         relative delay                         0.400    
+
+
+
+Id: 2
+set_bus_skew -from [get_cells -of [all_fanin -startpoints_only -flat [get_pins -of [get_cells -hier -filter {NAME =~ *u_rptr_sync/sync_q_reg[0]*}] -filter {REF_PIN_NAME == D}]]] -to [get_cells -hier -filter {NAME =~ *u_rptr_sync/sync_q_reg[0]*}] 5.000
+Requirement: 5.000ns
+Endpoints: 5
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+rd_clk                wr_clk                u_rptr_sync/sync_q_reg[0][3]/D  u_rptr_sync/sync_q_reg[0][0]/D  Slow         0.746      4.254
+
+
+Slack (MET) :             4.254ns  (requirement - actual skew)
+  Endpoint Source:        rgray_q_reg[3]/C
+                            (rising edge-triggered cell FDRE clocked by rd_clk)
+  Endpoint Destination:   u_rptr_sync/sync_q_reg[0][3]/D
+                            (rising edge-triggered cell FDRE clocked by wr_clk)
+  Reference Source:       rgray_q_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by rd_clk)
+  Reference Destination:  u_rptr_sync/sync_q_reg[0][0]/D
+                            (rising edge-triggered cell FDRE clocked by wr_clk)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            5.000ns
+  Endpoint Relative Delay:    1.102ns
+  Reference Relative Delay:   0.357ns
+  Relative CRPR:              0.000ns
+  Actual Bus Skew:            0.746ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock rd_clk rise edge)     0.000     0.000 r  
+                                                      0.000     0.000 r  rd_clk_i (IN)
+                         net (fo=18, unset)           0.973     0.973    rd_clk_i
+    SLICE_X16Y28         FDRE                                         r  rgray_q_reg[3]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X16Y28         FDRE (Prop_fdre_C_Q)         0.456     1.429 r  rgray_q_reg[3]/Q
+                         net (fo=3, routed)           0.505     1.934    u_rptr_sync/rgray_q[3]
+    SLICE_X17Y28         FDRE                                         r  u_rptr_sync/sync_q_reg[0][3]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock wr_clk rise edge)     0.000     0.000 r  
+                                                      0.000     0.000 r  wr_clk_i (IN)
+                         net (fo=364, unset)          0.924     0.924    u_rptr_sync/wr_clk_i
+    SLICE_X17Y28         FDRE                                         r  u_rptr_sync/sync_q_reg[0][3]/C
+                         clock pessimism              0.000     0.924    
+    SLICE_X17Y28         FDRE (Setup_fdre_C_D)       -0.093     0.831    u_rptr_sync/sync_q_reg[0][3]
+  -------------------------------------------------------------------
+                         data arrival                           1.934    
+                         clock arrival                          0.831    
+  -------------------------------------------------------------------
+                         relative delay                         1.102    
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock rd_clk rise edge)     0.000     0.000 r  
+                                                      0.000     0.000 r  rd_clk_i (IN)
+                         net (fo=18, unset)           0.924     0.924    rd_clk_i
+    SLICE_X15Y28         FDRE                                         r  rgray_q_reg[0]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X15Y28         FDRE (Prop_fdre_C_Q)         0.367     1.291 r  rgray_q_reg[0]/Q
+                         net (fo=2, routed)           0.268     1.560    u_rptr_sync/rgray_q[0]
+    SLICE_X14Y29         FDRE                                         r  u_rptr_sync/sync_q_reg[0][0]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock wr_clk rise edge)     0.000     0.000 r  
+                                                      0.000     0.000 r  wr_clk_i (IN)
+                         net (fo=364, unset)          0.973     0.973    u_rptr_sync/wr_clk_i
+    SLICE_X14Y29         FDRE                                         r  u_rptr_sync/sync_q_reg[0][0]/C
+                         clock pessimism              0.000     0.973    
+    SLICE_X14Y29         FDRE (Hold_fdre_C_D)         0.230     1.203    u_rptr_sync/sync_q_reg[0][0]
+  -------------------------------------------------------------------
+                         data arrival                           1.560    
+                         clock arrival                          1.203    
+  -------------------------------------------------------------------
+                         relative delay                         0.357    
+
+
+

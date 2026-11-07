@@ -81,6 +81,12 @@ lint:
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module gemm_accel -GROWS=4 -GCOLS=4 -GBUF_BYTES=2048 $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module axi_xbar -GN=3 -GM=2 $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module axi_xbar -GN=3 -GM=2 -DFORMAL $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module cdc_async_fifo $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module cdc_async_fifo -DFORMAL $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module cdc_async_fifo -GDEPTH=2 -GSYNC_STAGES=3 -DFORMAL $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module cdc_pulse $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module cdc_pulse -DFORMAL $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module cdc_reset_sync $(RTL)
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim
@@ -433,6 +439,17 @@ synth-accel:
 synth-muldiv:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_muldiv
+
+# An asynchronous FIFO alone, out of context (array clock domain, Phase H):
+# CDC_FIFO=<width>x<depth>, default the input stream's 259 bits by 16. Two
+# 100 MHz clocks, crossings bounded (constr/cdc_ooc.xdc). Reports
+# docs/reports/*_ooc_cdc_fifo<width>x<depth>.*, with report_cdc and
+# report_bus_skew.
+CDC_FIFO ?= 259x16
+.PHONY: synth-cdc
+synth-cdc:
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART) cdc_async_fifo $(subst x, ,$(CDC_FIFO))
 
 # --- TMR fault injection ---------------------------------------------------
 # The documented campaign (CLAUDE.md 5.7): FAULTS random single-bit flips into

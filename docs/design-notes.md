@@ -285,7 +285,7 @@ history, [formal-properties.md](formal-properties.md) and
   freeze's fanout measured against the TMR board's +0.095 ns.
 - **The ASIC flow is LibreLane, not OpenLane** (the successor to OpenLane 2).
   Open: whether LibreLane has built-in scan insertion (§6.5); check in Phase H.
-- **Array clock domain (Phase H box 2; decided 2026-11-07, not yet built).**
+- **Array clock domain (Phase H box 2; decided 2026-11-07; slice 1 built).**
   **Only `systolic_array` moves to `clk_array`**; the sequencer, buffers and
   registers stay on the core clock. Why: P5 overclocks `clk_array` to provoke
   setup errors *in the array* and sweeps it by DRP with "stop the array → hold
@@ -293,7 +293,14 @@ history, [formal-properties.md](formal-properties.md) and
   P7 swaps the array by DFX. Moving the whole engine would put the sequencer's
   control under overclocking (hangs, not arithmetic errors) and split the
   buffers across clocks. Rejected for that. Plan, in slices, each measured:
-  1. **CDC primitives first**, in `rtl/cdc/` (none exist yet): async FIFO
+  1. **CDC primitives first** (**done 2026-11-07**: property 17 in
+     formal-properties.md, measurements.md "CDC primitives", `make synth-cdc`;
+     the board build takes `constr/cdc_ooc.xdc`'s way of bounding the gray
+     crossings, by fanin, never by `set_clock_groups`; it must also bound the
+     FIFO's storage read, distributed RAM written on one clock and read on
+     the other, which out of context ends at a port and is not timed; a
+     flush holds the reset source until both clocks have ticked, or a slow
+     side's stale pointer reaches the fast side), in `rtl/cdc/`: async FIFO
      (gray pointers, 2-flop synchronizers, `ASYNC_REG`), a pulse/handshake
      synchronizer, a reset synchronizer (async assert, sync release in the
      destination domain). cocotb with two unrelated clocks (ratios above and

@@ -1,0 +1,32 @@
+# cdc_reset_sync -- see cdc_reset_sync_formal.sv. Real module (no stand-in):
+# what is checked is when rst_o rises and falls, not what a metastable first
+# flop resolves to.
+#
+#   prove     STAGES 2;  prove_s3  STAGES 3
+#   cover     a release, and an assertion between clock edges
+
+[tasks]
+prove
+prove_s3
+cover
+
+[options]
+prove: mode prove
+prove_s3: mode prove
+cover: mode cover
+cover: depth 20
+multiclock on
+
+[engines]
+prove: abc pdr
+prove_s3: abc pdr
+cover: smtbmc yices
+
+[script]
+read_verilog -sv -formal -DFORMAL cdc_reset_sync.sv cdc_reset_sync_formal.sv
+prove_s3: chparam -set STAGES 3 cdc_reset_sync_formal
+prep -top cdc_reset_sync_formal
+
+[files]
+../../rtl/cdc/cdc_reset_sync.sv
+cdc_reset_sync_formal.sv

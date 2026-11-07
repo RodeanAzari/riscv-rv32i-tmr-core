@@ -1,0 +1,32 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
+| Date         : Sat Nov  7 16:12:56 2026
+| Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
+| Command      : report_cdc -details -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/cdc_ooc_cdc_fifo259x16.rpt
+| Design       : cdc_async_fifo
+| Device       : 7a100t-csg324
+| Speed File   : -1  PRODUCTION 1.23 2018-06-13
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+CDC Report
+
+ID     Severity  Count  Description
+-----  --------  -----  ------------------------------------------
+CDC-3  Info          1  1-bit synchronized with ASYNC_REG property
+
+ID     Waived Endpoints  
+-----  ----------------  
+CDC-6                 9  
+
+Note: for multi-bits checks, the reported number is the number of waived endpoints.
+
+Source Clock: wr_clk
+Destination Clock: rd_clk
+CDC Type: No Common Primary Clock
+
+Row  ID     Severity  Description                                 Depth  Exception                Source (From)    Destination (To)
+---  -----  --------  ------------------------------------------  -----  -----------------------  ---------------  ------------------------------
+  1  CDC-3  Info      1-bit synchronized with ASYNC_REG property      2  Max Delay Datapath Only  wbin_q_reg[4]/C  u_wptr_sync/sync_q_reg[0][4]/D
+

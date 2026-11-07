@@ -1,0 +1,33 @@
+# cdc_pulse under two free clocks and metastable synchronizers -- see
+# cdc_pulse_formal.sv.
+#
+#   prove       SYNC_STAGES 2;  prove_s3  SYNC_STAGES 3
+#   cover       reachability: three round trips, a pulse out while busy,
+#               a stale bit captured
+
+[tasks]
+prove
+prove_s3
+cover
+
+[options]
+prove: mode prove
+prove_s3: mode prove
+cover: mode cover
+cover: depth 60
+multiclock on
+
+[engines]
+prove: abc pdr
+prove_s3: abc pdr
+cover: smtbmc yices
+
+[script]
+read_verilog -sv -formal -DFORMAL cdc_sync_meta.sv cdc_pulse.sv cdc_pulse_formal.sv
+prove_s3: chparam -set SYNC_STAGES 3 cdc_pulse_formal
+prep -top cdc_pulse_formal
+
+[files]
+cdc_sync_meta.sv
+../../rtl/cdc/cdc_pulse.sv
+cdc_pulse_formal.sv

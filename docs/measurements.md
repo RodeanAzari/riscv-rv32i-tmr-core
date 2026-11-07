@@ -35,6 +35,7 @@ saying so. Every number is transcribed from `docs/reports/`, never typed.
 | **DMA and GEMM on the board** (Phase G) | 2026-11-05, bitstreams from `f873d7d` (`make impl`, `make impl TMR=1`, reports unchanged), programs loaded over serial: `dmatest` **186/186**, `gemmtest` **11/11**, single core and TMR alike. Every cycle count equals simulation's: 4 KiB copy 4,888 cycles (core word loop 7,172); 24×20×24 job 267, whole call 11,704, core alone 822,328 ([dmatest_board.txt](reports/dmatest_board.txt), [gemmtest_board.txt](reports/gemmtest_board.txt)) |
 | **M golden models** (Phase H) | 2026-11-06, before any RTL: an M switch, off by default, in `tb/cocotb/rv32i_model.py` and `sw/model/rv32i_iss.c` (M encodings trap when off, as on the RV32I core). `make model-test`: riscv-tests rv32um 8/8 (M on), rv32ui 40/40 (M off); both models against `sw/model/m_vectors.txt`, **10,592 vectors from spike `--isa=rv32im`** (all pairs of 18 edge values + 1,000 seeded random, × 8 ops; `make m-vectors` regenerates), 10,592/10,592 each; 8/8 M encodings trap with M off. 10 planted model bugs caught |
 | **M unit** (Phase H) | 2026-11-06: `rtl/core/riscv_muldiv.sv`, not yet in the core. MUL\*: operands captured (sign/zero-extended to 33 bits), four 17×17 signed partial products registered (4 DSP48E1), summed: **3 cycles in EX**. DIV\*: |a|, |b| captured, 32 restoring steps, signs applied: **34 cycles, fixed**. Handshake `valid_i` / `done_o` / `ack_i`; result held until ack. `riscv_muldiv:test_muldiv`: all 10,592 spike vectors + 3,000 random ops against the golden model, operands scrambled after capture, random ack delays, reset mid-op; latency exact; ~20 s. Formal: property 14 in [formal-properties.md](formal-properties.md). 8 planted bugs caught by both. Out of context: 497 LUT, 109 FF, 4 DSP, 149.4 MHz (register to register; see M-extension synthesis) |
+| **CDC primitives** (Phase H, array clock domain slice 1) | 2026-11-07: `rtl/cdc/`: `cdc_sync` (`ASYNC_REG` chain), `cdc_async_fifo` (gray pointers, first-word fall-through, `wr_used_o` for an almost-full), `cdc_pulse` (toggle + acknowledgement, `src_busy_o`), `cdc_reset_sync` (asynchronous assert, synchronous release; the one asynchronous reset in `rtl/`). Not yet instantiated. cocotb, two unrelated clocks at six period pairs (faster, slower, equal, 10.00/10.03 ns drifting, 7/31 and 31/7 ns), random phase: FIFO (16 deep × 8 bits, and 4 deep with 3 flops) 3,000 bursty entries per pair against a scoreboard, full and empty reached at every pair, head and `wr_used_o` checked every cycle; latency exactly SYNC_STAGES edges each way; writes while full dropped; 24 mid-stream flushes; pulse 300 per pair, 132-4,997 ignored while busy; reset sync 200 releases at random phase. Formal: property 17 in [formal-properties.md](formal-properties.md), unbounded (PDR). Planted bugs: 9 by formal, 4 by simulation (one-flop synchronizer by the latency test, unsynchronised release, write while full, level pulse) |
 | CI on push | green (lint + sim + formal on `ubuntu-24.04`) on branch `dma` at `2277923`, run 41911741373 (Phase G DMA engine, PyYAML 6.0.3 added); `systolic` last at `984cb52`; `main` last at `f1713af` (Phase E README) |
 
 ## Synthesis trend
@@ -93,6 +94,12 @@ routing. Since data memory moved to EX (2026-10-17) the forward starts at a
 flop: out of context it is now forwarding select → ALU → EX/MEM (7.8 ns, 6
 levels, 79% routing). The remaining lever is the redirect fanout (IF/ID flush
 via a valid bit; see Next up).
+
+**LUT excludes distributed RAM.** Every summary's LUT is the count of LUT
+cells; LUTs configured as distributed RAM are not among them (the register
+file: 44 in the core, 132 in TMR, per the utilization reports). Found
+2026-11-07; the summaries now print it as LUTRAM on its own line, and
+earlier rows are left as they were measured.
 
 **The out-of-context slack is optimistic.** Paths that cross the core's ports
 are untimed here (no output delays are set): the pc and branch-resolution
@@ -272,6 +279,27 @@ overall still the divide step (6.333 ns). So MUL's result can leave the unit
 unregistered: the core adds the EX result mux after it. Unconstrained OOC
 port timing had shown 8.857 ns for the same sum, 74% of it routing to
 unplaced ports.
+
+## CDC synthesis (Phase H)
+
+`make synth-cdc`: `rtl/cdc/cdc_async_fifo.sv` alone, out of context, synth +
+place + route, `xc7a100tcsg324-1`, two unrelated 10.000 ns clocks, gray
+crossings bounded by `set_max_delay -datapath_only` (one source period) and
+`set_bus_skew` (half a destination period), not cut
+([constr/cdc_ooc.xdc](../constr/cdc_ooc.xdc)); from
+`docs/reports/summary_ooc_cdc_fifo<W>x<D>.txt`, with `report_cdc`
+(`cdc_ooc_*.rpt`) and `report_bus_skew` (`bus_skew_ooc_*.rpt`). LUT is LUT
+cells, as elsewhere; LUTRAM (LUTs used as distributed RAM, the storage) is
+its own column. Append-only.
+
+| Date | Block | LUT | LUTRAM | FF | WNS (ns) | Fmax (MHz) | report_cdc | Bus skew |
+|---|---|---|---|---|---|---|---|---|
+| 2026-11-07 | `cdc_async_fifo` 259×16 (the array's input stream) | 32 | 174 | 38 | +4.010 | 166.9 | 1 Info (CDC-3), 9 gray endpoints waived (CDC-6), nothing else | met, +4.072 / +4.254 |
+
+The first run found the gray pointer's top bit unconstrained: Vivado merges
+it with the binary pointer's (equal by construction), so a name filter on
+`wgray_q` missed it. The constraints now take every startpoint in the fanin
+of the first synchronizer flop.
 
 ## ASIC (LibreLane + Sky130, CLAUDE.md §6.4)
 
