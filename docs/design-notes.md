@@ -285,6 +285,46 @@ history, [formal-properties.md](formal-properties.md) and
   freeze's fanout measured against the TMR board's +0.095 ns.
 - **The ASIC flow is LibreLane, not OpenLane** (the successor to OpenLane 2).
   Open: whether LibreLane has built-in scan insertion (§6.5); check in Phase H.
+- **Array clock domain (Phase H box 2; decided 2026-11-07, not yet built).**
+  **Only `systolic_array` moves to `clk_array`**; the sequencer, buffers and
+  registers stay on the core clock. Why: P5 overclocks `clk_array` to provoke
+  setup errors *in the array* and sweeps it by DRP with "stop the array → hold
+  `clk_array` in reset → reprogram → LOCKED → flush the CDC FIFOs → release";
+  P7 swaps the array by DFX. Moving the whole engine would put the sequencer's
+  control under overclocking (hangs, not arithmetic errors) and split the
+  buffers across clocks. Rejected for that. Plan, in slices, each measured:
+  1. **CDC primitives first**, in `rtl/cdc/` (none exist yet): async FIFO
+     (gray pointers, 2-flop synchronizers, `ASYNC_REG`), a pulse/handshake
+     synchronizer, a reset synchronizer (async assert, sync release in the
+     destination domain). cocotb with two unrelated clocks (ratios above and
+     below 1, random phase); formal with `multiclock on` (no loss, no
+     duplication, order, full/empty never lie). Bug injection: binary instead
+     of gray pointer, one sync flop, reset released asynchronously.
+  2. **Golden model first** (`sw/model/accel_model.py`): with CDC, CYCLES is no
+     longer a fixed formula in core cycles; model a lower bound (the formula)
+     and what a slower `clk_array` costs; results stay bit-exact.
+  3. **The stream**: the sequencer pushes **exactly the input it drives today,
+     one entry per core cycle while busy, bubbles included** ({valid, swap,
+     w_shift, a, w}, ~259 bits at 16×16) into an async FIFO; the array side
+     pops one entry per `clk_array` cycle and feeds a bubble when empty. Extra
+     bubbles only lengthen gaps, so the swap/shift spacing the array needs
+     (shadows still for ROWS + COLS/2 − 2 array cycles after a swap) holds
+     whatever the clock ratio, because the spacing is carried as entries, not
+     time. The sequencer stalls whole when the FIFO is (almost) full: the
+     BRAM read in flight lands in the slack. **Results**: valid rows (512 bits)
+     into a second async FIFO; the array cannot be stalled, so the sequencer
+     holds **credits** (rows sent − rows received ≤ depth) and never sends a
+     row the output FIFO could not take. C accumulation becomes pop-driven
+     (read C on pop, add and write next cycle, 1 row/cycle). The weight-
+     transform hook (box 3) sits on the array side of the input FIFO.
+  4. **Parameter** `ARRAY_CDC`, default 0: the direct path, cycle-exact, so
+     every Phase G result and the CYCLES-equals-model tests stay valid (the
+     MEM_WAIT / M_EXT pattern). The soc-v2.0 board build sets it, with
+     `clk_array` from its own MMCM output (100 MHz by default),
+     `set_clock_groups -asynchronous`, and `report_cdc` clean.
+  5. Then box 4 (DRP registers) and the 80-vs-100 MHz regression and board run.
+  Above core clock the array gains nothing (fed one row per core cycle);
+  that is fine for P5, whose point is the errors, not the speed.
 
 
 ### 1. Timing: IF/ID flush via the valid bit
