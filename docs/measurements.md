@@ -145,6 +145,7 @@ trims logic the OOC run keeps.
 | 2026-11-05 | + GEMM accelerator (16×16 array, 3 × 16 KiB buffers, +24 BRAM, 131 DSP) as crossbar slaves 2 and 3; worst path inside the array (a PE pair's DSP product → lane split → psum add → deskew, 10 levels) | 13204 | 12357 | 32 | 100 MHz | +0.288 | 103.0 |
 | 2026-11-05 | TMR, same; worst path the data address → RAM port B again (thinner: placement around the array) | 15445 | 13985 | 32 | 100 MHz | +0.042 | 100.4 |
 | 2026-11-07 | RV32IM core (M_EXT = 1, `make impl M=1`, `summary_board_m.txt`; 135 DSP = 131 + the M unit's 4), CoreMark image | 13682 | 12475 | 32 | 100 MHz | +0.242 | 102.5 |
+| 2026-11-07 | TMR, RV32IM (`make impl M=1 TMR=1`, `summary_board_tmr_m.txt`; 143 DSP = 131 + 3 × 4), CoreMark image | 16891 | 14305 | 32 | 100 MHz | +0.181 | 101.8 |
 
 At 50 MHz the critical path was the one the OOC flow could not time: a block
 RAM's output (load data) through alignment, the forwarding mux and the branch
@@ -364,9 +365,11 @@ printing, after the timed region), 5000 iterations (`COREMARK_M_ITERATIONS`,
 | Date | Build | Core clock | Iterations | Cycles | CoreMark/MHz | IPC (sim) |
 |---|---|---|---|---|---|---|
 | 2026-11-07 | RV32IM: M unit in EX (MUL 3 cycles, DIV 34), SoC as Phase G | 100 MHz | 5000 | 1,999,390,615 | **2.500** | 0.712 |
+| 2026-11-07 | RV32IM, TMR (three voted cores, each with its unit) | 100 MHz | 5000 | 1,999,390,615 | **2.500** | 0.712 |
 
 Board ([coremark_m_board.txt](reports/coremark_m_board.txt)): "Correct operation
-validated", **about 250 CoreMark at 100 MHz (RV32I: 96, 2.6×)**; 399,878 cycles
+validated", **about 250 CoreMark at 100 MHz (RV32I: 96, 2.6×)**; the TMR bitstream
+([coremark_m_board_tmr.txt](reports/coremark_m_board_tmr.txt)) cycle-identical; 399,878 cycles
 per iteration against simulation's 399,865 (0.003%). Simulation, 2026-11-07, 1 iteration ([coremark_m_sim.txt](reports/coremark_m_sim.txt)):
 284,853 instructions retired in 399,865 cycles (RV32I: 718,009 in 1,038,833),
 IPC 0.712, **2.501 CoreMark/MHz for one iteration (RV32I 0.963, 2.6×)**; CRCs
