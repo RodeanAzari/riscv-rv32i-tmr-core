@@ -115,7 +115,8 @@ report_timing_summary -file [file join $reports timing$sfx.rpt]
 # merged design would show one populated copy and two empty or missing ones.
 set copies {}
 if {$tmr} {
-    report_utilization -hierarchical -file [file join $reports utilization_ooc_tmr_hier.rpt]
+    # per build: utilization_ooc_tmr_hier.rpt, *_tmr_wait_hier, *_tmr_m_hier
+    report_utilization -hierarchical -file [file join $reports utilization${sfx}_hier.rpt]
     foreach c {u_core_a g_other[1].u_core g_other[2].u_core} {
         set n [llength [get_cells -quiet -hier -filter "IS_PRIMITIVE && NAME =~ $c/*"]]
         lappend copies $c $n

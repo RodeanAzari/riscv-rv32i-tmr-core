@@ -375,12 +375,14 @@ synth-wait:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_core_tmr wait
 
-# The core built with M_EXT = 1 (RV32IM, Phase H): what M costs in the
-# core. Reports *_ooc_m.*; the TMR core's follows with TMR.
+# The core and the TMR core built with M_EXT = 1 (RV32IM, Phase H): what M
+# costs. Reports *_ooc_m.* and *_ooc_tmr_m.*.
 .PHONY: synth-m
 synth-m:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_core m
+	$(VIVADO) -mode batch -nojournal -notrace \
+		-source syn/synth_ooc.tcl -tclargs $(PART) riscv_core_tmr m
 
 # The systolic array alone, out of context (Phase F): ARRAY=<rows>x<cols>.
 # Reports docs/reports/*_ooc_array<rows>x<cols>.*, with the DSP count.
@@ -421,9 +423,12 @@ synth-muldiv:
 FAULTS ?= 10000
 
 .PHONY: faults
+# M=1: the RV32IM TMR core, RV32IM programs, the M unit's flops among the
+# targets; report docs/reports/tmr_faults_m.txt.
+FAULTS_SFX := $(if $(filter 1,$(M)),_m,)
 faults:
-	FAULTS=$(FAULTS) SEED=$(SEED) $(MAKE) -C tb/cocotb TEST_ONE=riscv_core_tmr:test_tmr_faults
-	cp tb/cocotb/sim_build/tmr_faults.txt docs/reports/tmr_faults.txt
+	FAULTS=$(FAULTS) SEED=$(SEED) $(MAKE) -C tb/cocotb TEST_ONE=riscv_core_tmr$(FAULTS_SFX):test_tmr_faults
+	cp tb/cocotb/sim_build/tmr_faults$(FAULTS_SFX).txt docs/reports/tmr_faults$(FAULTS_SFX).txt
 
 # --- UVM -------------------------------------------------------------------
 # The Phase C regression in XSim (tb/uvm/, docs/coverage-plan.md): random

@@ -39,7 +39,9 @@ module riscv_core_tmr #(
     parameter int unsigned ADDR_W = 5,
     // Data-port wait (riscv_core MEM_WAIT): one dmem_ready_i for all three
     // copies, so a hold can never split them.
-    parameter bit          MEM_WAIT = 1'b0
+    parameter bit          MEM_WAIT = 1'b0,
+    // M extension (riscv_core M_EXT, Phase H): each copy has its own unit.
+    parameter bit          M_EXT    = 1'b0
 ) (
     input  logic            clk_i,
     input  logic            rst_i,
@@ -170,7 +172,8 @@ module riscv_core_tmr #(
   // Copy A drives the debug and RVFI ports; B's and C's are left open.
   /* verilator lint_off PINCONNECTEMPTY */
   (* DONT_TOUCH = "TRUE", KEEP_HIERARCHY = "TRUE" *)
-  riscv_core #(.XLEN(XLEN), .ADDR_W(ADDR_W), .VOTED(1'b1), .MEM_WAIT(MEM_WAIT)) u_core_a (
+  riscv_core #(.XLEN(XLEN), .ADDR_W(ADDR_W), .VOTED(1'b1), .MEM_WAIT(MEM_WAIT),
+             .M_EXT(M_EXT)) u_core_a (
       .clk_i (clk_i), .rst_i (rst_i),
 `ifdef FORMAL
       .f_regs_o (),
@@ -208,7 +211,8 @@ module riscv_core_tmr #(
 
   for (genvar i = 1; i < 3; i++) begin : g_other
     (* DONT_TOUCH = "TRUE", KEEP_HIERARCHY = "TRUE" *)
-    riscv_core #(.XLEN(XLEN), .ADDR_W(ADDR_W), .VOTED(1'b1), .MEM_WAIT(MEM_WAIT)) u_core (
+    riscv_core #(.XLEN(XLEN), .ADDR_W(ADDR_W), .VOTED(1'b1), .MEM_WAIT(MEM_WAIT),
+             .M_EXT(M_EXT)) u_core (
         .clk_i (clk_i), .rst_i (rst_i),
 `ifdef FORMAL
         .f_regs_o (),

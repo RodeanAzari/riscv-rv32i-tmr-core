@@ -26,6 +26,11 @@ disagreement lasted.
 FAULTS trials (default 1000 in the regression, about 15 s; `make faults`
 runs the documented campaign and writes docs/reports/tmr_faults.txt). SEED picks the
 campaign. The regression requires zero failures.
+
+On the RV32IM build (riscv_core_tmr_m, M_EXT=1; `make faults M=1` writes
+tmr_faults_m.txt) the programs are RV32IM (test_core_m's generator) and the
+M unit's flip-flops, read from rtl/core/riscv_muldiv.sv the same way, are
+part of each copy's state: flipped, and compared at the end.
 """
 
 import os
@@ -40,17 +45,24 @@ from cocotb.triggers import FallingEdge, RisingEdge, Timer
 import test_core
 from rv32i_model import run_model
 from test_core import CLK_PERIOD_NS, MEM_WB, NOP, bram_model, random_mem, random_program, release
+from test_core_m import is_m, random_m_program
 
 REPO = Path(__file__).resolve().parents[2]
 REGFILE_BITS = 31 * 32                      # x1-x31; x0's storage is never read
 
 
-def core_flops():
-    """Names of the core's flip-flops, from its RTL, verification code excluded."""
-    src = (REPO / "rtl/core/riscv_core.sv").read_text()
+M_EXT = os.environ.get("M_EXT") == "1"
+
+
+def core_flops(path="rtl/core/riscv_core.sv"):
+    """Names of a module's flip-flops, from its RTL, verification code excluded."""
+    src = (REPO / path).read_text()
     kept, skip = [], 0
     for line in src.splitlines():
-        if re.match(r"\s*`ifdef (RISCV_FORMAL|FORMAL)", line):
+        # any `ifdef nested inside a skipped block counts too, so its `endif
+        # does not end the skip early (riscv_muldiv: MULDIV_ARITH in FORMAL)
+        if re.match(r"\s*`ifdef (RISCV_FORMAL|FORMAL)", line) or (
+                skip and re.match(r"\s*`if(n?def)\b", line)):
             skip += 1
         elif skip and re.match(r"\s*`endif", line):
             skip -= 1
@@ -69,24 +81,30 @@ def copies(dut):
     return [dut.u_core_a, dut.g_other[1].u_core, dut.g_other[2].u_core]
 
 
-def state_targets(core, flops):
-    """(handle, width, label) for every flop group; the regfile separately."""
-    targets = []
-    for name in flops:
-        h = getattr(core, name)
-        targets.append((h, len(h), name))
-    return targets
+def flop_names():
+    """Every flop group of a copy, as a path below the copy: the core's, and
+    with M_EXT the unit's."""
+    names = core_flops()
+    if M_EXT:
+        names += [f"g_muldiv.u_muldiv.{n}" for n in core_flops("rtl/core/riscv_muldiv.sv")]
+    return names
+
+
+def handle(core, path):
+    for part in path.split("."):
+        core = getattr(core, part)
+    return core
 
 
 def snapshot(core, flops):
     regs = [int(core.u_regfile.mem[i].value) for i in range(1, 32)]
-    return regs, [int(getattr(core, n).value) for n in flops]
+    return regs, [int(handle(core, n).value) for n in flops]
 
 
 async def trial(dut, rng, flops, widths):
-    program = random_program(rng, 120, 0)
+    program = random_m_program(rng, 120) if M_EXT else random_program(rng, 120, 0)
     mem0 = random_mem(rng)
-    want_wb, model = run_model(program, dict(mem0))
+    want_wb, model = run_model(program, dict(mem0), m_ext=M_EXT)
     want = [(rd, v) for rd, v in want_wb if rd != 0]
 
     # Reset, with this trial's program and data in the memories the models
@@ -111,7 +129,9 @@ async def trial(dut, rng, flops, widths):
     copy = rng.randrange(3)
     flop_bits = sum(widths)
     pick = rng.randrange(flop_bits + REGFILE_BITS)
-    run_cycles = 3 * len(program) + MEM_WB + 1
+    # A divide holds EX for 34 cycles: room for every M instruction to be one.
+    n_m = sum(1 for w in program if is_m(w)) if M_EXT else 0
+    run_cycles = 3 * len(program) + 34 * n_m + MEM_WB + 1
     at = rng.randrange(1, max(2, len(want_wb)))   # within the run, not after the halt
     core = copies(dut)[copy]
 
@@ -121,7 +141,7 @@ async def trial(dut, rng, flops, widths):
             if pick < flop_bits:
                 for name, w in zip(flops, widths):
                     if pick < w:
-                        h = getattr(core, name)
+                        h = handle(core, name)
                         h.value = int(h.value) ^ (1 << pick)
                         where = f"{name}[{pick}]"
                         break
@@ -164,14 +184,19 @@ def summarise(results, seed):
     def pct(k, d):
         return f"{k:5d}  {100 * k / d:5.1f}%" if d else f"{k:5d}      -"
 
+    gen = ("RV32IM: tb/cocotb/test_core_m.py's generator, the M unit's flops among the targets"
+           if M_EXT else "tb/cocotb/test_core.py's generator")
     lines = [f"TMR fault-injection campaign: {n} trials, seed {seed}",
              "One random bit flipped in one copy per trial; each trial a fresh dense random",
-             "program (tb/cocotb/test_core.py's generator, 120 instructions + setup) judged",
+             f"program ({gen}, 120 instructions + setup) judged",
              "against the golden model on the voted register writes and final memory.",
              ""]
-    for label, sel in (("all faults", lambda r: True),
-                       ("pipeline flip-flops", lambda r: not r["regfile"]),
-                       ("register file", lambda r: r["regfile"])):
+    groups = [("all faults", lambda r: True),
+              ("pipeline flip-flops", lambda r: not r["regfile"]),
+              ("register file", lambda r: r["regfile"])]
+    if M_EXT:   # a subset of the pipeline flip-flops above
+        groups.append(("of which the M unit's flip-flops", lambda r: "muldiv" in r["where"]))
+    for label, sel in groups:
         rs = [r for r in results if sel(r)]
         det = [r for r in rs if r["detected"]]
         masked = [r for r in rs if not r["detected"]]
@@ -219,8 +244,8 @@ async def test_fault_campaign(dut):
     seed = int(os.environ.get("SEED", "1"))
     n = int(os.environ.get("FAULTS", "1000"))
     rng = random.Random(seed)
-    flops = core_flops()
-    widths = [len(getattr(dut.u_core_a, name)) for name in flops]
+    flops = flop_names()
+    widths = [len(handle(dut.u_core_a, name)) for name in flops]
     dut._log.info(f"{len(flops)} flop groups, {sum(widths)} bits, + {REGFILE_BITS} "
                   f"register-file bits per copy; {n} trials, seed {seed}")
     results = []
@@ -230,7 +255,7 @@ async def test_fault_campaign(dut):
             dut._log.info(f"{i + 1}/{n} trials")
     text = summarise(results, seed)
     dut._log.info("\n" + text)
-    with open(os.path.join("sim_build", "tmr_faults.txt"), "w") as f:
+    with open(os.path.join("sim_build", "tmr_faults_m.txt" if M_EXT else "tmr_faults.txt"), "w") as f:
         f.write(text)
     assert all(r["correct"] for r in results), "a single fault changed the TMR core's output"
     assert all((r["count"] > 0) == r["detected"] for r in results), \

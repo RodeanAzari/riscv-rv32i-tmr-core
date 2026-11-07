@@ -72,6 +72,8 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          riscv_core_tmr_wait:test_core,test_riscv_tests \
          riscv_core_m:test_core,test_riscv_tests,test_core_m \
          riscv_core_m_wait:test_core,test_riscv_tests,test_core_m \
+         riscv_core_tmr_m:test_core,test_riscv_tests,test_core_m \
+         riscv_core_tmr_m:test_tmr_faults \
          riscv_alu:test_alu \
          riscv_muldiv:test_muldiv \
          riscv_regfile:test_regfile \
@@ -187,7 +189,7 @@ ifdef TEST_ONE
   # flip: its build leaves them out, and has a build directory of its own.
   ifeq ($(MODULE),test_tmr_faults)
     COMPILE_ARGS        := $(filter-out -DFORMAL --assert,$(COMPILE_ARGS))
-    BUILD_TAG           := $(TOPLEVEL)_faults
+    BUILD_TAG           := $(BUILD_TAG)_faults
   endif
   SIM_BUILD             := sim_build/$(BUILD_TAG)
   COCOTB_RESULTS_FILE   := results_$(BUILD_TAG).xml

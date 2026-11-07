@@ -1,0 +1,49 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
+| Date         : Sat Nov  7 13:00:56 2026
+| Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
+| Command      : report_utilization -hierarchical -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/utilization_ooc_tmr_m_hier.rpt
+| Design       : riscv_core_tmr
+| Device       : xc7a100tcsg324-1
+| Speed File   : -1
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++-------------------------+-----------------+------------+------------+---------+------+------+--------+--------+------------+
+|         Instance        |      Module     | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs | RAMB36 | RAMB18 | DSP Blocks |
++-------------------------+-----------------+------------+------------+---------+------+------+--------+--------+------------+
+| riscv_core_tmr          |           (top) |       4821 |       4689 |     132 |    0 | 2209 |      0 |      0 |         12 |
+|   (riscv_core_tmr)      |           (top) |        296 |        296 |       0 |    0 |  463 |      0 |      0 |          0 |
+|   g_other[1].u_core     |   riscv_core__1 |       1327 |       1283 |      44 |    0 |  582 |      0 |      0 |          4 |
+|     (g_other[1].u_core) |   riscv_core__1 |        170 |        170 |       0 |    0 |  473 |      0 |      0 |          0 |
+|     g_muldiv.u_muldiv   |  riscv_muldiv_4 |        479 |        479 |       0 |    0 |  109 |      0 |      0 |          4 |
+|     u_alu               |     riscv_alu_5 |        444 |        444 |       0 |    0 |    0 |      0 |      0 |          0 |
+|     u_branch            |  riscv_branch_6 |        117 |        117 |       0 |    0 |    0 |      0 |      0 |          0 |
+|     u_regfile           | riscv_regfile_7 |        117 |         73 |      44 |    0 |    0 |      0 |      0 |          0 |
+|   g_other[2].u_core     |   riscv_core__2 |       1324 |       1280 |      44 |    0 |  582 |      0 |      0 |          4 |
+|     (g_other[2].u_core) |   riscv_core__2 |        170 |        170 |       0 |    0 |  473 |      0 |      0 |          0 |
+|     g_muldiv.u_muldiv   |  riscv_muldiv_0 |        477 |        477 |       0 |    0 |  109 |      0 |      0 |          4 |
+|     u_alu               |     riscv_alu_1 |        444 |        444 |       0 |    0 |    0 |      0 |      0 |          0 |
+|     u_branch            |  riscv_branch_2 |        116 |        116 |       0 |    0 |    0 |      0 |      0 |          0 |
+|     u_regfile           | riscv_regfile_3 |        117 |         73 |      44 |    0 |    0 |      0 |      0 |          0 |
+|   u_core_a              |      riscv_core |       1333 |       1289 |      44 |    0 |  582 |      0 |      0 |          4 |
+|     (u_core_a)          |      riscv_core |        177 |        177 |       0 |    0 |  473 |      0 |      0 |          0 |
+|     g_muldiv.u_muldiv   |    riscv_muldiv |        687 |        687 |       0 |    0 |  109 |      0 |      0 |          4 |
+|     u_alu               |       riscv_alu |        236 |        236 |       0 |    0 |    0 |      0 |      0 |          0 |
+|     u_branch            |    riscv_branch |        117 |        117 |       0 |    0 |    0 |      0 |      0 |          0 |
+|     u_regfile           |   riscv_regfile |        117 |         73 |      44 |    0 |    0 |      0 |      0 |          0 |
+|   u_voter               |       tmr_voter |        542 |        542 |       0 |    0 |    0 |      0 |      0 |          0 |
++-------------------------+-----------------+------------+------------+---------+------+------+--------+--------+------------+
+* Note: The sum of lower-level cells may be larger than their parent cells total, due to cross-hierarchy LUT combining
+
+

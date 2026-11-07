@@ -1,0 +1,41 @@
+TMR fault-injection campaign: 10000 trials, seed 1
+One random bit flipped in one copy per trial; each trial a fresh dense random
+program (RV32IM: tb/cocotb/test_core_m.py's generator, the M unit's flops among the targets, 120 instructions + setup) judged
+against the golden model on the voted register writes and final memory.
+
+all faults: 10000
+  masked (no copy ever disagreed)     8973   89.7%
+    still latent at end               4794   53.4%
+  detected (copies disagreed)         1027   10.3%
+    output correct (corrected)        1027  100.0%
+    copies identical again at end     1027  100.0%
+  output wrong (failure)                 0    0.0%
+
+pipeline flip-flops: 4532
+  masked (no copy ever disagreed)     3688   81.4%
+    still latent at end                  0    0.0%
+  detected (copies disagreed)          844   18.6%
+    output correct (corrected)         844  100.0%
+    copies identical again at end      844  100.0%
+  output wrong (failure)                 0    0.0%
+
+register file: 5468
+  masked (no copy ever disagreed)     5285   96.7%
+    still latent at end               4794   90.7%
+  detected (copies disagreed)          183    3.3%
+    output correct (corrected)         183  100.0%
+    copies identical again at end      183  100.0%
+  output wrong (failure)                 0    0.0%
+
+of which the M unit's flip-flops: 1691
+  masked (no copy ever disagreed)     1440   85.2%
+    still latent at end                  0    0.0%
+  detected (copies disagreed)          251   14.8%
+    output correct (corrected)         251  100.0%
+    copies identical again at end      251  100.0%
+  output wrong (failure)                 0    0.0%
+
+disagreement length, detected faults: median 1 cycles, 90th percentile 38, max 469
+mismatch counter matched detection in 10000/10000 trials
+still latent: a copy still holds the flipped value at the end -- unused, so
+never voted on, and rewritten only if the program writes that register.
