@@ -107,6 +107,7 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          soc:test_demo \
          soc:test_dma \
          soc:test_gemm \
+         soc_cdc:test_gemm \
          soc_tmr:test_soc \
          soc_tmr:test_coremark \
          soc_tmr:test_boot \
@@ -144,9 +145,17 @@ ifdef TEST_ONE
     TMR_SUFFIX          := _tmr
     COMPILE_ARGS        += -GTMR=1
   endif
+  # soc_cdc: the SoC with the array on its own clock (ARRAY_CDC, Phase H);
+  # test_gemm drives clk_array_i and takes CYCLES from accel_cdc_model.
+  CDC_SUFFIX            :=
+  ifeq ($(TOPLEVEL),soc_cdc)
+    TOPLEVEL            := soc
+    CDC_SUFFIX          := _cdc
+    COMPILE_ARGS        += -GARRAY_CDC=1
+  endif
   ifeq ($(TOPLEVEL),soc)
     SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark$(M_SUFFIX)_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,$(if $(filter test_dma,$(MODULE)),boot_dma_sim,$(if $(filter test_gemm,$(MODULE)),boot_gemm_sim,hello_sim)))))
-    BUILD_TAG           := soc_$(SOC_IMAGE)$(TMR_SUFFIX)$(if $(filter coremark%,$(SOC_IMAGE)),,$(M_SUFFIX))
+    BUILD_TAG           := soc_$(SOC_IMAGE)$(TMR_SUFFIX)$(if $(filter coremark%,$(SOC_IMAGE)),,$(M_SUFFIX))$(CDC_SUFFIX)
     # The demo, DMA and GEMM tests run the UART at CLK/16: their output is
     # thousands of characters.
     ifneq ($(filter test_demo test_dma test_gemm,$(MODULE)),)

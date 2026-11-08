@@ -1,0 +1,12 @@
+# gemmtest on the Arty A7-100T, single core 100 MHz, systolic array on its own MMCM at 100 MHz (ARRAY_CDC = 1, make impl CDC=1), loaded with scripts/load.py after a DTR board reset, 2026-11-08; five runs, identical; every job's cycles equal accel_cdc_model at phase 0 (both MMCMs deskewed to the one oscillator)
+gemmtest: 16x16 array, 16384-byte buffers, status 0x0
+gemmtest: 1x1x1 ok, job 52 cycles, call 755, core 129
+gemmtest: 16x16x16 ok, job 67 cycles, call 2639, core 290576
+gemmtest: 5x7x9 ok, job 56 cycles, call 2477, core 23351
+gemmtest: 3x33x17 ok, job 309 cycles, call 5963, core 119359
+gemmtest: 2x40x3 ok, job 153 cycles, call 5710, core 17202
+gemmtest: 24x20x24 ok, job 291 cycles, call 11724, core 822328
+gemmtest: last a 0x310c w 0x34cc c 0x418c
+gemmtest: 11/11 ok
+
+rv32i bootlo

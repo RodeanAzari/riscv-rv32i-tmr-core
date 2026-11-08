@@ -24,9 +24,10 @@
 // else, the buses and CYCLES included, stays on clk_i. With 0, clk_array_i
 // is unused.
 //
-// Resets with ARRAY_CDC: rst_i (synchronous to clk_i) resets the array side
-// at once, released on clk_array (rst_a); the clk_i side stays in reset
-// until rst_a has been seen back on clk_i (rst_c). So the clk_i side never
+// Resets with ARRAY_CDC: rst_i (synchronous to clk_i), registered once
+// (rst_q, a source for nothing but the synchronizer), resets the array side
+// at once, released on clk_array (rst_a); the clk_i side is in reset with
+// rst_i and stays there until rst_a has been seen back on clk_i (rst_c). So the clk_i side never
 // runs while the array side still holds pointers from before the reset,
 // however short rst_i and however slow clk_array. rst_c outlasts rst_i, so
 // the bus masters may already be running: every READY here is held low
@@ -116,16 +117,19 @@ module gemm_accel #(
   // ---- resets ----
   logic rst_c, rst_a;    // the clk_i side, the clk_array side
   if (ARRAY_CDC) begin : g_rst_cdc
+    logic rst_q, rst_back;
+    always_ff @(posedge clk_i) rst_q <= rst_i;
     cdc_reset_sync u_rst_a (
         .clk_i  (clk_array_i),
-        .arst_i (rst_i),
+        .arst_i (rst_q),
         .rst_o  (rst_a)
     );
     cdc_reset_sync u_rst_c (
         .clk_i  (clk_i),
         .arst_i (rst_a),
-        .rst_o  (rst_c)
+        .rst_o  (rst_back)
     );
+    assign rst_c = rst_i || rst_back;
   end else begin : g_rst
     assign rst_c = rst_i;
     assign rst_a = rst_i;      // unused

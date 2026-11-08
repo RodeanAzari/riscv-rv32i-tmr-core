@@ -1,6 +1,6 @@
 # Board-level synthesis, implementation and bitstream for the Arty A7-100T.
 #
-#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila] [tmr] [m]
+#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila] [tmr] [m] [cdc]
 #
 # Top: rtl/top/arty_a7_top.sv, pins in constr/arty_a7.xdc, the RAM loaded
 # from <hex> (sw/build/hello.hex, from `make fw`). Unlike synth_ooc.tcl this
@@ -27,6 +27,15 @@ set sfx  [expr {$tmr ? "_board_tmr" : "_board"}]
 # m = 1: the core(s) built with M_EXT (RV32IM, Phase H), reports *_board[_tmr]_m.*
 set m    [expr {[lindex $argv 4] eq "1"}]
 if {$m} { set sfx "${sfx}_m" }
+# cdc = 1: the systolic array on its own clock (ARRAY_CDC, Phase H), from a
+# second MMCM; reports *_board[_tmr][_m]_cdc.*, with report_cdc, bus skew
+# and clock interaction. Both MMCMs take the one oscillator, so Vivado
+# derives related clocks and would time any crossing as if synchronous at
+# 100/100 MHz, which DRP (box 4) will make untrue. So every timed path
+# between the two clocks must carry an exception from constr/accel_cdc.xdc,
+# or there is no bitstream.
+set cdc  [expr {[lindex $argv 5] eq "1"}]
+if {$cdc} { set sfx "${sfx}_cdc" }
 if {$part eq ""} { set part xc7a100tcsg324-1 }
 
 set top     arty_a7_top
@@ -67,7 +76,12 @@ read_verilog -sv $sv
 read_xdc [file join $repo constr arty_a7.xdc]
 
 synth_design -top $top -part $part -generic "INIT_FILE=\"$hex\"" -generic "ILA=$ila" \
-    -generic "TMR=$tmr" -generic "M_EXT=$m"
+    -generic "TMR=$tmr" -generic "M_EXT=$m" -generic "ARRAY_CDC=$cdc"
+if {$cdc} {
+    # names synthesized cells, so after synthesis (implementation uses it)
+    read_xdc [file join $repo constr accel_cdc.xdc]
+    source [file join $repo syn accel_cdc_check.tcl]
+}
 
 set bb [get_cells -hier -quiet -filter {IS_BLACKBOX == 1}]
 if {[llength $bb] > 0} {
@@ -115,6 +129,29 @@ write_checkpoint -force [file join $rundir post_route.dcp]
 report_utilization    -file [file join $reports utilization$sfx.rpt]
 report_timing_summary -file [file join $reports timing$sfx.rpt]
 
+set unexcepted 0
+if {$cdc} {
+    report_cdc -details           -file [file join $reports cdc$sfx.rpt]
+    report_bus_skew               -file [file join $reports bus_skew$sfx.rpt]
+    report_clock_interaction      -file [file join $reports clock_interaction$sfx.rpt]
+    set cclk [get_clocks -of_objects [get_pins u_mmcm/CLKOUT0]]
+    set aclk [get_clocks -of_objects [get_pins g_array_clk.u_mmcm_array/CLKOUT0]]
+    set crossing 0
+    foreach {from to} [list $cclk $aclk $aclk $cclk] {
+        foreach p [get_timing_paths -from $from -to $to -delay_type max \
+                       -max_paths 100000 -nworst 1 -unique_pins] {
+            incr crossing
+            if {[get_property EXCEPTION $p] eq ""} {
+                incr unexcepted
+                if {$unexcepted <= 20} {
+                    puts "UNCONSTRAINED CROSSING: [get_property STARTPOINT_PIN $p] -> [get_property ENDPOINT_PIN $p]"
+                }
+            }
+        }
+    }
+    puts "crossing paths: $crossing, without an exception: $unexcepted"
+}
+
 # --- headline numbers -------------------------------------------------------
 # The core runs on the MMCM's CLKOUT0. Its slack against that clock's period
 # gives the board-level Fmax: 1000 / (period - WNS). Worst setup slack over
@@ -154,6 +191,12 @@ foreach out [list stdout $fh] {
     puts $out [format "Fmax (core clk) %.1f MHz" $fmax]
     puts $out [format "worst setup     %.3f ns (all clocks)" $worst]
     puts $out [format "worst hold      %.3f ns (all clocks)" $hold]
+    if {$cdc} {
+        puts $out [format "array clock     %s, %.3f ns, its own MMCM from 100 MHz" \
+                   [get_property NAME $aclk] [get_property PERIOD $aclk]]
+        puts $out [format "crossings       %d timed paths between the clocks, %d without an exception" \
+                   $crossing $unexcepted]
+    }
     puts $out ""
     puts $out "In-context: real pins, clock tree and BRAM paths. LED, UART and"
     puts $out "button I/O are false-pathed (constr/arty_a7.xdc). Fmax is what the"
@@ -172,6 +215,9 @@ foreach out [list stdout $fh] {
 }
 close $fh
 
+if {$unexcepted > 0} {
+    error "$unexcepted paths cross between the core and array clocks without an exception (constr/accel_cdc.xdc) -- no bitstream written"
+}
 if {$worst < 0 || $hold < 0} {
     error "timing not met (setup $worst ns, hold $hold ns) -- no bitstream written"
 }

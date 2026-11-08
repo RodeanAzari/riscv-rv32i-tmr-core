@@ -361,7 +361,31 @@ history, [formal-properties.md](formal-properties.md) and
      MEM_WAIT / M_EXT pattern). The soc-v2.0 board build sets it, with
      `clk_array` from its own MMCM output (100 MHz by default), the
      crossings bounded as in `constr/cdc_ooc.xdc` (not `set_clock_groups`,
-     see 1), and `report_cdc` clean.
+     see 1), and `report_cdc` clean. **Done 2026-11-08** (`make impl CDC=1`;
+     measurements.md board table; `gemmtest_board_cdc.txt`):
+     - **A second MMCM**, not CLKOUT1 of the core's: DRP (box 4) holds the
+       MMCM it reprograms in reset, which would stop the core too. Both take
+       the oscillator pin (placed without complaint); the SoC's reset waits
+       for both LOCKs for now (box 4 gives the array its own).
+     - **Related clocks.** Both MMCMs derive from one oscillator, so Vivado
+       times any crossing as synchronous at 100/100, which DRP makes untrue
+       and which `report_cdc` would not flag. `syn/impl_arty.tcl` walks every
+       timed path between the two clocks and refuses a bitstream if one has
+       no exception (2,964 paths, all bounded; a planted missing bound is
+       refused). `report_clock_interaction` shows both directions as
+       "Max Delay Datapath Only".
+     - **On the board** every job's CYCLES is the model's at phase 0, the
+       one phase that costs a cycle more: both MMCMs are deskewed to the
+       same input, so the edges coincide. Fixed, so a board number is exact,
+       not a range; it would move if the MMCMs did.
+     - **Board reset.** Opening the serial port does not reset the Arty here
+       (WSL/usbipd): DTR must be pulsed. Without it a rerun starts from the
+       last run's state (gemmtest's "idle after reset" fails on the sticky
+       ERROR of its own refused shape), which looks like a reset bug and is
+       not one.
+     - `gemm_accel` feeds the array-side reset synchronizer from a registered
+       copy of `rst_i`, so `rst_i` itself stays a purely synchronous reset
+       (no SYNCASYNCNET up the hierarchy, a glitch-free source).
   5. Then box 4 (DRP registers) and the 80-vs-100 MHz regression and board run.
   Above core clock the array gains little (fed one row per core cycle; only
   the drain shortens); that is fine for P5, whose point is the errors.

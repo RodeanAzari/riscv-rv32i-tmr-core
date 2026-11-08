@@ -60,10 +60,14 @@ module soc #(
     // g_cpu.u_core.
     parameter bit          TMR       = 1'b0,
     // M extension (riscv_core M_EXT, Phase H): RV32IM, each copy with its unit.
-    parameter bit          M_EXT     = 1'b0
+    parameter bit          M_EXT     = 1'b0,
+    // The systolic array on clk_array_i (gemm_accel ARRAY_CDC, Phase H).
+    // With 0, clk_array_i is unused.
+    parameter bit          ARRAY_CDC = 1'b0
 ) (
     input  logic       clk_i,
     input  logic       rst_i,
+    input  logic       clk_array_i,
     output logic [3:0] led_o,
     output logic       uart_tx_o,
     input  logic       uart_rx_i,
@@ -628,11 +632,12 @@ module soc #(
       .ROWS      (16),
       .COLS      (16),
       .BUF_BYTES (ACC_BUF),
-      .OFF_W     (ACC_OFF_W)
+      .OFF_W     (ACC_OFF_W),
+      .ARRAY_CDC (ARRAY_CDC)
   ) u_accel (
       .clk_i       (clk_i),
       .rst_i       (rst_i),
-      .clk_array_i (clk_i),       // ARRAY_CDC = 0: unused
+      .clk_array_i (clk_array_i),
       .s_awaddr_i  (acc_awaddr[ACC_OFF_W-1:0]),
       .s_awvalid_i (acc_awvalid),
       .s_awready_o (acc_awready),

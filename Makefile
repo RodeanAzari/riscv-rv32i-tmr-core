@@ -64,6 +64,8 @@ lint:
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module $(TOP) -DRISCV_FORMAL -DFORMAL $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -GARRAY_CDC=1 $(RTL) $(XILINX_MODELS)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -GARRAY_CDC=1 -GTMR=1 -GM_EXT=1 -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr -DRISCV_FORMAL -DFORMAL $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core -GMEM_WAIT=1 $(RTL)
@@ -504,14 +506,17 @@ BIT := syn/build/board/arty_a7_top.bit
 # so docs/reports/ always describes the design without debug logic. TMR=1
 # builds the three-copy core, reports to docs/reports/*_board_tmr.*. M=1
 # builds RV32IM core(s), reports *_board[_tmr]_m.*: with FW_IMAGE=
-# sw/build/coremark_m.hex for RV32IM CoreMark.
+# sw/build/coremark_m.hex for RV32IM CoreMark. CDC=1 puts the systolic array
+# on its own clock from a second MMCM (ARRAY_CDC, Phase H), reports
+# *_board[_tmr][_m]_cdc.*.
 FW_IMAGE ?= $(FW_BUILD)/boot.hex
 ILA      ?= 0
 TMR      ?= 0
+CDC      ?= 0
 
 impl: $(FW_IMAGE)
 	$(VIVADO) -mode batch -nojournal -notrace \
-		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA) $(TMR) $(M)
+		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA) $(TMR) $(M) $(CDC)
 
 # Two routes, picked per session (docs/vivado-setup.md section 6). If the Arty
 # is attached to WSL with usbipd-win (FTDI 0403:6010 visible here), program it

@@ -8,8 +8,14 @@
 // (riscv_core.sv). The MMCM stays, rather than the oscillator directly: it
 // is where the clock is chosen, and its deskew is part of the timing.
 //
-// Reset: held while the red RESET button (active low) is pressed or the MMCM
-// is not locked, and for RST_HOLD clocks after both clear. The request is
+// Array clock (ARRAY_CDC = 1, make impl CDC=1; Phase H): the systolic array
+// runs on clk_array, from a second MMCM, 100 MHz by default. Its own MMCM,
+// not a second output of the core's: reprogramming an MMCM (DRP, box 4)
+// holds it in reset, which would stop the core's clock too. With
+// ARRAY_CDC = 0 there is no second MMCM and clk_array is clk.
+//
+// Reset: held while the red RESET button (active low) is pressed or an MMCM
+// is not locked, and for RST_HOLD clocks after all clear. The request is
 // synchronised first -- both sources are asynchronous to the core clock --
 // and the release then shifts in a 1 per clock. Out of configuration the
 // chain is all zeros (a Xilinx flop powers up to its INIT value, 0), so the
@@ -28,7 +34,8 @@ module arty_a7_top #(
     parameter string INIT_FILE = "",
     parameter bit    ILA       = 1'b0,
     parameter bit    TMR       = 1'b0,    // three voted cores: soc.sv, make impl TMR=1
-    parameter bit    M_EXT     = 1'b0     // RV32IM core(s): make impl M=1
+    parameter bit    M_EXT     = 1'b0,    // RV32IM core(s): make impl M=1
+    parameter bit    ARRAY_CDC = 1'b0     // the array on clk_array: make impl CDC=1
 ) (
     input  logic       clk100_i,     // CLK100MHZ, E3
     input  logic       rst_ni,       // ck_rst, the RESET button, C2
@@ -63,13 +70,41 @@ module arty_a7_top #(
       .O (clk)
   );
 
+  logic clk_array, locked_array;
+  if (ARRAY_CDC) begin : g_array_clk
+    logic clk_fb_a, clk_mmcm_a;
+
+    MMCME2_BASE #(
+        .CLKIN1_PERIOD    (10.0),
+        .DIVCLK_DIVIDE    (1),
+        .CLKFBOUT_MULT_F  (10.0),
+        .CLKOUT0_DIVIDE_F (10.0)
+    ) u_mmcm_array (
+        .CLKIN1   (clk100_i),
+        .CLKFBIN  (clk_fb_a),
+        .CLKFBOUT (clk_fb_a),
+        .CLKOUT0  (clk_mmcm_a),
+        .LOCKED   (locked_array),
+        .PWRDWN   (1'b0),
+        .RST      (1'b0)
+    );
+
+    BUFG u_bufg_array (
+        .I (clk_mmcm_a),
+        .O (clk_array)
+    );
+  end else begin : g_array_clk_none
+    assign clk_array    = clk;
+    assign locked_array = 1'b1;
+  end
+
   // ---- reset ----
   logic [1:0]          rst_req_q;    // synchroniser
   logic [RST_HOLD-1:0] rst_n_q;      // release delay; all zero = in reset
   logic                rst;
 
   always_ff @(posedge clk) begin
-    rst_req_q <= {rst_req_q[0], !rst_ni || !locked};
+    rst_req_q <= {rst_req_q[0], !rst_ni || !locked || !locked_array};
     if (rst_req_q[1]) rst_n_q <= '0;
     else              rst_n_q <= {rst_n_q[RST_HOLD-2:0], 1'b1};
   end
@@ -90,10 +125,12 @@ module arty_a7_top #(
       .CLK_HZ    (CLK_HZ),
       .INIT_FILE (INIT_FILE),
       .TMR       (TMR),
-      .M_EXT     (M_EXT)
+      .M_EXT     (M_EXT),
+      .ARRAY_CDC (ARRAY_CDC)
   ) u_soc (
       .clk_i                   (clk),
       .rst_i                   (rst),
+      .clk_array_i             (clk_array),
       .led_o                   (led_o),
       .uart_tx_o               (uart_tx_o),
       .uart_rx_i               (uart_rx_i),

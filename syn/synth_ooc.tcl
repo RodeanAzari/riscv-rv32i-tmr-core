@@ -110,26 +110,12 @@ if {$cdc} {
     # Their constraints name synthesized cells, so they are read after
     # synthesis (and are used by implementation only).
     synth_design -top $top -part $part -mode out_of_context {*}$generics
-    set xdc [expr {$top eq "cdc_async_fifo" ? "cdc_ooc.xdc" : "accel_cdc_ooc.xdc"}]
-    read_xdc -mode out_of_context [file join $repo constr $xdc]
-    # XDC has no error command: a constraint whose cell search found
-    # nothing applies to nothing, silently. Check what the accelerator's
-    # constraints were meant to find.
-    if {$xdc eq "accel_cdc_ooc.xdc"} {
-        foreach f {u_in u_out} {
-            foreach sync {u_wptr_sync u_rptr_sync} {
-                set pat "*u_seq/g_cdc.$f/$sync/sync_q_reg*"
-                if {[llength [get_cells -hier -filter "NAME =~ $pat"]] == 0} {
-                    error "accel_cdc_ooc.xdc: nothing matches $pat"
-                }
-            }
-            if {[llength [get_cells -hier -filter "NAME =~ *u_seq/g_cdc.$f/mem_reg* && PRIMITIVE_GROUP == DMEM"]] == 0} {
-                error "accel_cdc_ooc.xdc: no distributed RAM in $f"
-            }
-        }
-        if {[llength [get_pins -hier -filter {NAME =~ *g_rst_cdc.u_rst_*/sync_q_reg*/PRE}]] != 4} {
-            error "accel_cdc_ooc.xdc: expected 4 reset synchronizer PRE pins"
-        }
+    if {$top eq "cdc_async_fifo"} {
+        read_xdc -mode out_of_context [file join $repo constr cdc_ooc.xdc]
+    } else {
+        read_xdc -mode out_of_context [file join $repo constr accel_cdc_ooc.xdc]
+        read_xdc -mode out_of_context [file join $repo constr accel_cdc.xdc]
+        source [file join $repo syn accel_cdc_check.tcl]
     }
 } else {
     read_xdc [file join $repo constr core_ooc.xdc]

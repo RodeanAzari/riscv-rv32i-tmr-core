@@ -17,6 +17,11 @@ What matters and why:
     register access and the DMA stealing RAM cycles;
   - the job's cycle count on the SoC is the contract measured in the
     block test: utilization figures quoted from it hold here too.
+
+Built with ARRAY_CDC = 1 (soc_cdc), the array runs on clk_array_i at
+ARRAY_PS, slower than the core, and each job's cycles must equal
+sw/model/accel_cdc_model.py's at the phase that job started at (the core
+edge where the accelerator's busy rose, against the array clock's edges).
 """
 
 from pathlib import Path
@@ -26,13 +31,25 @@ import sys
 import cocotb
 import numpy as np
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, FallingEdge
+from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge, Timer
+from cocotb.utils import get_sim_time
 
 from test_demo import CLK_PERIOD_NS, CLKS_PER_BIT, uart_out
 from test_soc import assert_no_tmr_mismatch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sw" / "model"))
 import accel_model as am  # noqa: E402
+import accel_cdc_model as acm  # noqa: E402
+
+# soc_cdc: the array's clock, slower than the core's (20 ns), so the input
+# FIFO fills; its first edge this far after the core clock's start
+ARRAY_PS, ARRAY_OFFSET_PS = 31_000, 7_000
+
+
+async def watch_busy(dut, rises):
+    while True:
+        await RisingEdge(dut.u_accel.u_seq.busy_o)
+        rises.append(get_sim_time("ps"))
 
 
 def ram_bytes(dut, addr, length):
@@ -47,9 +64,17 @@ def ram_bytes(dut, addr, length):
 @cocotb.test()
 async def test_gemmtest(dut):
     out = []
+    cdc = bool(int(dut.ARRAY_CDC.value))
     cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start())
     dut.uart_rx_i.value = 1
     dut.rst_i.value = 1
+    rises, a0 = [], None
+    if cdc:
+        await Timer(ARRAY_OFFSET_PS, unit="ps")
+        cocotb.start_soon(Clock(dut.clk_array_i, ARRAY_PS, unit="ps").start())
+        await RisingEdge(dut.clk_array_i)
+        a0 = get_sim_time("ps")
+        cocotb.start_soon(watch_busy(dut, rises))
     await ClockCycles(dut.clk_i, 5)
     await FallingEdge(dut.clk_i)
     dut.rst_i.value = 0
@@ -75,9 +100,17 @@ async def test_gemmtest(dut):
 
     jobs = re.findall(r"gemmtest: (\d+)x(\d+)x(\d+) ok, job (\d+) cycles", text)
     assert len(jobs) >= 6, "gemmtest ran fewer shapes than it has"
-    for m, k, n, cyc in jobs:
+    if cdc:
+        # the shapes' jobs, then the one refused shape
+        assert len(rises) == len(jobs) + 1, f"{len(rises)} jobs started, {len(jobs)} reported + 1 refused"
+    for i, (m, k, n, cyc) in enumerate(jobs):
         m, k, n, cyc = int(m), int(k), int(n), int(cyc)
         want = am.job_cycles(m, k, n, 16, 16)
+        if cdc:
+            acc = am.Accel()
+            acc.m, acc.k, acc.n = m, k, n
+            phase = (a0 - rises[i]) % ARRAY_PS
+            want = acm.stream_job(acc, CLK_PERIOD_NS * 1000, ARRAY_PS, phase)
         assert cyc == want, f"{m}x{k}x{n}: job {cyc} cycles, model {want}"
         util = m * k * n / (cyc * 256)
         dut._log.info(f"{m}x{k}x{n}: {cyc} cycles, PE utilization {100 * util:.1f}%")
