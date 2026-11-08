@@ -1,0 +1,46 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
+| Date         : Sun Nov  8 11:30:25 2026
+| Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
+| Command      : report_cdc -details -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/cdc_ooc_gemm_accel_cdc.rpt
+| Design       : gemm_accel
+| Device       : 7a100t-csg324
+| Speed File   : -1  PRODUCTION 1.23 2018-06-13
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+CDC Report
+
+ID     Severity  Count  Description
+-----  --------  -----  -------------------------------------------------------
+CDC-3  Info          2  1-bit synchronized with ASYNC_REG property
+CDC-9  Info          1  Asynchronous reset synchronized with ASYNC_REG property
+
+ID      Waived Endpoints  
+------  ----------------  
+CDC-1               2082  
+CDC-6                 20  
+CDC-13               180  
+CDC-15               640  
+CDC-26                41  
+
+Note: for multi-bits checks, the reported number is the number of waived endpoints.
+
+Source Clock: clk_array
+Destination Clock: clk
+CDC Type: No Common Primary Clock
+
+Row  ID     Severity  Description                                              Depth  Exception                Source (From)                      Destination (To)
+---  -----  --------  -------------------------------------------------------  -----  -----------------------  ---------------------------------  ------------------------------------------------
+  1  CDC-9  Info      Asynchronous reset synchronized with ASYNC_REG property      2  False Path               g_rst_cdc.u_rst_a/sync_q_reg[1]/C  g_rst_cdc.u_rst_c/sync_q_reg[0]/PRE
+  2  CDC-3  Info      1-bit synchronized with ASYNC_REG property                   2  Max Delay Datapath Only  u_seq/g_cdc.u_out/wbin_q_reg[5]/C  u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][5]/D
+
+Source Clock: clk
+Destination Clock: clk_array
+CDC Type: No Common Primary Clock
+
+Row  ID     Severity  Description                                 Depth  Exception                Source (From)                     Destination (To)
+---  -----  --------  ------------------------------------------  -----  -----------------------  --------------------------------  -----------------------------------------------
+  1  CDC-3  Info      1-bit synchronized with ASYNC_REG property      2  Max Delay Datapath Only  u_seq/g_cdc.u_in/wbin_q_reg[4]/C  u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][4]/D
+

@@ -37,6 +37,7 @@ saying so. Every number is transcribed from `docs/reports/`, never typed.
 | **M unit** (Phase H) | 2026-11-06: `rtl/core/riscv_muldiv.sv`, not yet in the core. MUL\*: operands captured (sign/zero-extended to 33 bits), four 17×17 signed partial products registered (4 DSP48E1), summed: **3 cycles in EX**. DIV\*: |a|, |b| captured, 32 restoring steps, signs applied: **34 cycles, fixed**. Handshake `valid_i` / `done_o` / `ack_i`; result held until ack. `riscv_muldiv:test_muldiv`: all 10,592 spike vectors + 3,000 random ops against the golden model, operands scrambled after capture, random ack delays, reset mid-op; latency exact; ~20 s. Formal: property 14 in [formal-properties.md](formal-properties.md). 8 planted bugs caught by both. Out of context: 497 LUT, 109 FF, 4 DSP, 149.4 MHz (register to register; see M-extension synthesis) |
 | **CDC primitives** (Phase H, array clock domain slice 1) | 2026-11-07: `rtl/cdc/`: `cdc_sync` (`ASYNC_REG` chain), `cdc_async_fifo` (gray pointers, first-word fall-through, `wr_used_o` for an almost-full), `cdc_pulse` (toggle + acknowledgement, `src_busy_o`), `cdc_reset_sync` (asynchronous assert, synchronous release; the one asynchronous reset in `rtl/`). Not yet instantiated. cocotb, two unrelated clocks at six period pairs (faster, slower, equal, 10.00/10.03 ns drifting, 7/31 and 31/7 ns), random phase: FIFO (16 deep × 8 bits, and 4 deep with 3 flops) 3,000 bursty entries per pair against a scoreboard, full and empty reached at every pair, head and `wr_used_o` checked every cycle; latency exactly SYNC_STAGES edges each way; writes while full dropped; 24 mid-stream flushes; pulse 300 per pair, 132-4,997 ignored while busy; reset sync 200 releases at random phase. Formal: property 17 in [formal-properties.md](formal-properties.md), unbounded (PDR). Planted bugs: 9 by formal, 4 by simulation (one-flop synchronizer by the latency test, unsynchronised release, write while full, level pulse) |
 | **Array CDC golden model** (Phase H, array clock domain slice 2) | 2026-11-07, before the stream RTL: `sw/model/accel_cdc_model.py` runs a job edge by edge on both clocks (input FIFO, array, output FIFO with credits, ideal synchronizers) and computes C from the entries it schedules. `make accel-model`: with no FIFOs it equals `accel_model.py` exactly (cycles and every byte of C, 132 shapes at 4×4, 16×16, 4×8); through the FIFOs, 2,112 runs at eight clock pairs (equal, 10.00/10.03 ns, 3.1 to 31 ns arrays, an edge-sharing phase and a random one), input FIFO 2-16 deep, output 1-32: C bit-exact against `gemm()`, padding and untouched lines kept, CYCLES never under a bound derived separately from the design; equal clocks cost exactly 2·SYNC_STAGES + 1 cycles per tile (+2 with shared edges); one row per cycle of the slower clock. Planted model bugs: 10 of 10 caught (tie sampling, one sync flop, no credit check, room ignoring the read in flight, latency, a lost swap, W order, tile end, K tiles not summed, the swap-spacing check), plus one equivalent mutant |
+| **Array CDC stream** (Phase H, array clock domain slice 3) | 2026-11-08: `ARRAY_CDC` in `gemm_accel` (default 0): shifts, swap and rows of A through a 259×16 async FIFO to the array on `clk_array_i`, sums back through 512×32 under credits, resets in both domains (`rst_c` held until the array side's reset is back, READYs held meanwhile). cocotb `test_gemm_accel`, six tests, every job's CYCLES equal to `accel_cdc_model.stream_job()` at the phase the RTL saw and every byte of C equal to the model: `gemm_accel_cdc` (16×16, the SoC's FIFOs) and `gemm_accel_4x4_cdc` (FIFOs 2 in / 4 out, so the sequencer stalls in LOAD and the credits bind) at nine array clocks, 3.1 to 97 ns, edge-sharing (10 and 20 ns at phase 0) and drifting (10.03 ns), plus a START at once after a reset with a 403 ns array clock; `ARRAY_CDC` = 0 builds (16×16, 4×4, 4×8) identical to `job_cycles()` whatever `clk_array_i` does; `soc:test_gemm` passes. FIFO invariants and "never written while full" asserted in every simulation. Planted bugs: 11 of 11 caught (room without the read in flight, no credit check, credit off by one, credits never returned, bubble fed as the stale head, shift or swap not gated by the stall, STREAM or LOAD advancing while stalled, core side released with `rst_i`, READY not held); 3 were missed by the first tests (shipping depths never stall in LOAD, credits never bind; a reset bug only bites if START beats the array's first edge) and the tests were fixed |
 | CI on push | green (lint + sim + formal on `ubuntu-24.04`) on branch `dma` at `2277923`, run 41911741373 (Phase G DMA engine, PyYAML 6.0.3 added); `systolic` last at `984cb52`; `main` last at `f1713af` (Phase E README) |
 
 ## Synthesis trend
@@ -245,6 +246,9 @@ route, `xc7a100tcsg324-1`, 10.000 ns, from
 | Date | Block | LUT | FF | BRAM | DSP | CARRY4 | WNS (ns) | Fmax (MHz) |
 |---|---|---|---|---|---|---|---|---|
 | 2026-11-05 | `gemm_accel` 16×16, 16 KiB buffers | 10,134 | 10,948 | 24 | 131 | 2,911 | +0.135 | 101.4 |
+| 2026-11-08 | same, `ARRAY_CDC` = 0 after the stream (Phase H slice 3): the direct path, cycle for cycle as before | 10,133 | 10,948 | 24 | 131 | 2,911 | +0.266 | 102.7 |
+
+`ARRAY_CDC` = 1 has two clocks: its row is in "CDC synthesis" below.
 
 ## M-extension synthesis (Phase H)
 
@@ -291,11 +295,17 @@ crossings bounded by `set_max_delay -datapath_only` (one source period) and
 `docs/reports/summary_ooc_cdc_fifo<W>x<D>.txt`, with `report_cdc`
 (`cdc_ooc_*.rpt`) and `report_bus_skew` (`bus_skew_ooc_*.rpt`). LUT is LUT
 cells, as elsewhere; LUTRAM (LUTs used as distributed RAM, the storage) is
-its own column. Append-only.
+its own column. Append-only. `make synth-accel ACCEL_CDC=1`: the whole
+accelerator built with `ARRAY_CDC` = 1 (the array on `clk_array`), same
+flow, [constr/accel_cdc_ooc.xdc](../constr/accel_cdc_ooc.xdc), which also
+bounds each FIFO's storage read and waives it in `report_cdc` (CDC-1, -13,
+-15, -26: the storage of an async FIFO is read only after its pointer has
+crossed, which the tool cannot see); BRAM, DSP and CARRY4 in the row.
 
 | Date | Block | LUT | LUTRAM | FF | WNS (ns) | Fmax (MHz) | report_cdc | Bus skew |
 |---|---|---|---|---|---|---|---|---|
 | 2026-11-07 | `cdc_async_fifo` 259×16 (the array's input stream) | 32 | 174 | 38 | +4.010 | 166.9 | 1 Info (CDC-3), 9 gray endpoints waived (CDC-6), nothing else | met, +4.072 / +4.254 |
+| 2026-11-08 | `gemm_accel` `ARRAY_CDC` = 1, 16×16 (24 BRAM, 131 DSP, 2,915 CARRY4; FIFOs 259×16 in, 512×32 out); against `ARRAY_CDC` = 0: +90 LUT, +516 LUTRAM, +101 FF | 10,223 | 516 | 11,049 | +0.137 | 101.4 | 3 Info (CDC-3 ×2, CDC-9 the reset), 20 gray endpoints (CDC-6) and 2,943 storage endpoints waived, nothing else | met, worst +3.673 of 4 |
 
 The first run found the gray pointer's top bit unconstrained: Vivado merges
 it with the binary pointer's (equal by construction), so a name filter on

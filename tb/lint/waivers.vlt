@@ -4,3 +4,10 @@
 // constant in the spec whether or not this RTL uses it. Waived for that file
 // and that rule only; every file under rtl/ is still linted with -Wall.
 lint_off -rule UNUSEDPARAM -file "*sw/dma-engine/rtl/dmaeng_pkg.sv"
+
+// ARRAY_CDC = 1: the array side's reset (gemm_accel's u_rst_a) resets the
+// array synchronously and is also the asynchronous source of the reset back
+// into clk_i (u_rst_c: asserted at once, released on clk_i). That is the
+// point of the second synchronizer, not a mixed reset style; waived for that
+// signal only.
+lint_off -rule SYNCASYNCNET -file "*rtl/cdc/cdc_reset_sync.sv" -match "*g_rst_cdc.u_rst_a.sync_q*"

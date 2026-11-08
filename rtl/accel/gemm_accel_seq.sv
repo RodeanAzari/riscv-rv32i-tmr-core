@@ -21,6 +21,22 @@
 // array with the data. Behind the array a row's sums are registered while
 // its old C line is read, then written back, plus the old line unless this
 // is the first tile along K.
+//
+// ARRAY_CDC = 1 (Phase H, array clock domain): the array runs on
+// clk_array_i, everything else here stays on clk_i. Golden model:
+// stream_job() in sw/model/accel_cdc_model.py, CYCLES included. The entries
+// above (each shift, the swap, each row of A, with their data) go through an
+// async FIFO instead of straight in; the array side pops one per clk_array
+// edge and feeds a bubble when it is empty. A row's sums come back through a
+// second one, and the pop of a row is what arr_valid was. The sequencer
+// reads its next entry only when the input FIFO has room for it and for the
+// one read in flight, and a row of A only with a credit (rows sent minus
+// rows received below OUT_DEPTH): the array cannot be stalled, so its
+// output FIFO must never be full. A tile still starts after the last write
+// of the one before, which keeps the shadow weights still behind a swap
+// whatever the clocks. The array side's reset is rst_array_i, synchronous to
+// clk_array_i (gemm_accel.sv makes both resets). ARRAY_CDC = 0 is the direct path,
+// cycle for cycle the Phase G sequencer (CYCLES = job_cycles()).
 module gemm_accel_seq #(
     parameter  int unsigned ROWS    = 16,
     parameter  int unsigned COLS    = 16,
@@ -28,6 +44,10 @@ module gemm_accel_seq #(
     parameter  int unsigned W_LINES = 1024,
     parameter  int unsigned C_LINES = 256,
     parameter  int unsigned DIM_W   = 16,
+    parameter  bit          ARRAY_CDC   = 1'b0,
+    parameter  int unsigned IN_DEPTH    = 16,  // ARRAY_CDC: entries to the array
+    parameter  int unsigned OUT_DEPTH   = 32,  // ARRAY_CDC: rows of sums back
+    parameter  int unsigned SYNC_STAGES = 2,   // ARRAY_CDC: synchronizer flops
     localparam int unsigned A_AW    = $clog2(A_LINES),
     localparam int unsigned W_AW    = $clog2(W_LINES),
     localparam int unsigned C_AW    = $clog2(C_LINES),
@@ -36,6 +56,8 @@ module gemm_accel_seq #(
 ) (
     input  logic                       clk_i,
     input  logic                       rst_i,
+    input  logic                       clk_array_i,   // the array's, if ARRAY_CDC
+    input  logic                       rst_array_i,   // ARRAY_CDC: on clk_array_i
 
     input  logic                       start_i,
     input  logic [DIM_W-1:0]           m_i,
@@ -93,6 +115,10 @@ module gemm_accel_seq #(
   logic             valid_q, swap_q, shift_q, row_ok_q;
   logic [COLS-1:0]  colmask_q;
 
+  // adv: the next entry may be read this cycle (always, unless ARRAY_CDC)
+  logic             adv, issue;
+  assign issue = adv && (state_q == S_LOAD || state_q == S_SWAP || state_q == S_STREAM);
+
   logic [COLS-1:0]  colmask;
   always_comb begin
     for (int c = 0; c < COLS; c++) begin
@@ -111,9 +137,9 @@ module gemm_accel_seq #(
       row_ok_q  <= 1'b0;
       colmask_q <= '0;
     end else begin
-      valid_q   <= state_q == S_STREAM;
-      swap_q    <= state_q == S_SWAP;
-      shift_q   <= state_q == S_LOAD;
+      valid_q   <= issue && state_q == S_STREAM;
+      swap_q    <= issue && state_q == S_SWAP;
+      shift_q   <= issue && state_q == S_LOAD;
       row_ok_q  <= k_row < {{(CNT_W-DIM_W){1'b0}}, k_q};
       colmask_q <= colmask;
     end
@@ -129,22 +155,158 @@ module gemm_accel_seq #(
   logic                        arr_valid;
   logic [COLS-1:0][ACC_W-1:0]  arr_c;
 
-  systolic_array #(
-      .ROWS   (ROWS),
-      .COLS   (COLS),
-      .DATA_W (DATA_W),
-      .ACC_W  (ACC_W)
-  ) u_array (
-      .clk_i     (clk_i),
-      .rst_i     (rst_i),
-      .valid_i   (valid_q),
-      .swap_i    (swap_q),
-      .a_i       (a_rdata_i),
-      .w_i       (w_in),
-      .w_shift_i (shift_q),
-      .valid_o   (arr_valid),
-      .c_o       (arr_c)
-  );
+  if (!ARRAY_CDC) begin : g_direct
+    assign adv = 1'b1;
+
+    systolic_array #(
+        .ROWS   (ROWS),
+        .COLS   (COLS),
+        .DATA_W (DATA_W),
+        .ACC_W  (ACC_W)
+    ) u_array (
+        .clk_i     (clk_i),
+        .rst_i     (rst_i),
+        .valid_i   (valid_q),
+        .swap_i    (swap_q),
+        .a_i       (a_rdata_i),
+        .w_i       (w_in),
+        .w_shift_i (shift_q),
+        .valid_o   (arr_valid),
+        .c_o       (arr_c)
+    );
+
+    logic unused_direct;
+    assign unused_direct = clk_array_i ^ rst_array_i;
+  end else begin : g_cdc
+    localparam int unsigned ENT_W  = 3 + ROWS * DATA_W + COLS * DATA_W;
+    localparam int unsigned SUM_W  = COLS * ACC_W;
+    localparam int unsigned IN_PW  = $clog2(IN_DEPTH) + 1;
+    localparam int unsigned OUT_PW = $clog2(OUT_DEPTH) + 1;
+    localparam int unsigned CRED_W = $clog2(OUT_DEPTH + 1);
+
+    // -- core side: push what the direct path would feed the array
+    logic              pend;              // an entry read last cycle, pushed now
+    logic [IN_PW-1:0]  in_used;
+    logic              in_full;
+    logic [CRED_W-1:0] cred_q;            // rows sent - rows received
+    logic              out_empty;
+    logic              room, credit;
+
+    assign pend   = valid_q || swap_q || shift_q;
+    assign room   = ({1'b0, in_used} + {{IN_PW{1'b0}}, pend}) < (IN_PW + 1)'(IN_DEPTH);
+    assign credit = cred_q < CRED_W'(OUT_DEPTH);
+    assign adv    = room && (state_q != S_STREAM || credit);
+    assign arr_valid = !out_empty;        // a row of sums, popped this cycle
+
+    always_ff @(posedge clk_i) begin
+      if (rst_i) cred_q <= '0;
+      else       cred_q <= cred_q + CRED_W'(issue && state_q == S_STREAM) - CRED_W'(arr_valid);
+    end
+
+    // -- array side
+    logic                       rst_a;
+    assign rst_a = rst_array_i;
+    logic                       in_empty;
+    logic [ENT_W-1:0]           ent;
+    logic                       a_valid, a_swap, a_shift;
+    logic [ROWS*DATA_W-1:0]     a_a;
+    logic [COLS-1:0][DATA_W-1:0] a_w;
+    logic                       a_valid_o;
+    logic [COLS-1:0][ACC_W-1:0] a_c;
+    logic                       out_full;
+    logic [OUT_PW-1:0]          out_used;
+
+`ifdef FORMAL
+    logic [IN_PW-1:0]                    f_in_wptr, f_in_rptr;
+    logic [IN_DEPTH-1:0][ENT_W-1:0]      f_in_mem;
+    logic [OUT_PW-1:0]                   f_out_wptr, f_out_rptr;
+    logic [OUT_DEPTH-1:0][SUM_W-1:0]     f_out_mem;
+`endif
+
+    cdc_async_fifo #(
+        .WIDTH       (ENT_W),
+        .DEPTH       (IN_DEPTH),
+        .SYNC_STAGES (SYNC_STAGES)
+    ) u_in (
+        .wr_clk_i   (clk_i),
+        .wr_rst_i   (rst_i),
+        .wr_en_i    (pend),
+        .wr_data_i  ({valid_q, swap_q, shift_q, a_rdata_i, w_in}),
+        .wr_full_o  (in_full),
+        .wr_used_o  (in_used),
+        .rd_clk_i   (clk_array_i),
+        .rd_rst_i   (rst_a),
+        .rd_en_i    (!in_empty),
+        .rd_data_o  (ent),
+        .rd_empty_o (in_empty)
+`ifdef FORMAL
+        ,
+        .f_wptr_o   (f_in_wptr),
+        .f_rptr_o   (f_in_rptr),
+        .f_mem_o    (f_in_mem)
+`endif
+    );
+
+    // an empty FIFO feeds a bubble: nothing valid, no swap, no shift
+    assign {a_valid, a_swap, a_shift, a_a, a_w} = ent;
+
+    systolic_array #(
+        .ROWS   (ROWS),
+        .COLS   (COLS),
+        .DATA_W (DATA_W),
+        .ACC_W  (ACC_W)
+    ) u_array (
+        .clk_i     (clk_array_i),
+        .rst_i     (rst_a),
+        .valid_i   (a_valid && !in_empty),
+        .swap_i    (a_swap && !in_empty),
+        .a_i       (a_a),
+        .w_i       (a_w),
+        .w_shift_i (a_shift && !in_empty),
+        .valid_o   (a_valid_o),
+        .c_o       (a_c)
+    );
+
+    cdc_async_fifo #(
+        .WIDTH       (SUM_W),
+        .DEPTH       (OUT_DEPTH),
+        .SYNC_STAGES (SYNC_STAGES)
+    ) u_out (
+        .wr_clk_i   (clk_array_i),
+        .wr_rst_i   (rst_a),
+        .wr_en_i    (a_valid_o),
+        .wr_data_i  (a_c),
+        .wr_full_o  (out_full),
+        .wr_used_o  (out_used),
+        .rd_clk_i   (clk_i),
+        .rd_rst_i   (rst_i),
+        .rd_en_i    (arr_valid),
+        .rd_data_o  (arr_c),
+        .rd_empty_o (out_empty)
+`ifdef FORMAL
+        ,
+        .f_wptr_o   (f_out_wptr),
+        .f_rptr_o   (f_out_rptr),
+        .f_mem_o    (f_out_mem)
+`endif
+    );
+
+`ifdef FORMAL
+    // Neither FIFO is ever written while full (a write would be dropped):
+    // the input by room (the read in flight counted), the output by
+    // credits. Checked in every simulation (cocotb builds with FORMAL).
+    always_comb begin
+      if (!rst_i && !rst_a) begin
+        assert (!(pend && in_full));
+        assert (!(a_valid_o && out_full));
+      end
+    end
+    logic unused_f;
+    assign unused_f = ^{f_in_wptr, f_in_rptr, f_in_mem, f_out_wptr, f_out_rptr, f_out_mem};
+`endif
+    logic unused_cdc;
+    assign unused_cdc = ^{in_full, out_full, out_used};
+  end
 
   // ---- reads ----
   assign a_raddr_o = a_addr_q[A_AW-1:0];
@@ -256,17 +418,17 @@ module gemm_accel_seq #(
             start_tile('0, '0);
           end
         end
-        S_LOAD: begin
+        S_LOAD: if (adv) begin
           w_addr_q <= w_addr_q - {{(CNT_W-DIM_W){1'b0}}, nt_n_q};
           li_q     <= li_q - 1'b1;
           if (li_q == '0) state_q <= S_SWAP;
         end
-        S_SWAP: begin
+        S_SWAP: if (adv) begin
           mi_q     <= '0;
           a_addr_q <= {{(CNT_W-DIM_W){1'b0}}, kt_q};
           state_q  <= S_STREAM;
         end
-        S_STREAM: begin
+        S_STREAM: if (adv) begin
           a_addr_q <= a_addr_q + {{(CNT_W-DIM_W){1'b0}}, kt_n_q};
           mi_q     <= mi_q + 1'b1;
           if (mi_q == m_q - 1'b1) state_q <= S_DRAIN;

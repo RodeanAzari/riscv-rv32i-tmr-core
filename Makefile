@@ -79,6 +79,9 @@ lint:
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module dmaeng $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module gemm_accel $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module gemm_accel -GROWS=4 -GCOLS=4 -GBUF_BYTES=2048 $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module gemm_accel -GARRAY_CDC=1 $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module gemm_accel -GARRAY_CDC=1 -DFORMAL $(RTL)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module gemm_accel -GARRAY_CDC=1 -GROWS=4 -GCOLS=4 -GBUF_BYTES=2048 -GARRAY_IN_DEPTH=2 -GARRAY_OUT_DEPTH=4 -DFORMAL $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module axi_xbar -GN=3 -GM=2 $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module axi_xbar -GN=3 -GM=2 -DFORMAL $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module cdc_async_fifo $(RTL)
@@ -431,10 +434,12 @@ synth-dma:
 
 # The GEMM accelerator alone, out of context (Phase G): the 16x16 array,
 # its buffers, sequencer and bus ports. Reports docs/reports/*_ooc_gemm_accel.*.
+# ACCEL_CDC=1: built with ARRAY_CDC = 1, the array on its own clock (Phase H),
+# two clocks and a report_cdc; reports *_ooc_gemm_accel_cdc.*.
 .PHONY: synth-accel
 synth-accel:
 	$(VIVADO) -mode batch -nojournal -notrace \
-		-source syn/synth_ooc.tcl -tclargs $(PART) gemm_accel
+		-source syn/synth_ooc.tcl -tclargs $(PART) gemm_accel $(if $(filter 1,$(ACCEL_CDC)),cdc)
 
 # The M-extension unit alone, out of context (Phase H): what MUL/DIV cost
 # before they are in the core. Reports docs/reports/*_ooc_riscv_muldiv.*.

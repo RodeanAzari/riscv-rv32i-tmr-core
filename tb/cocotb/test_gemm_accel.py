@@ -18,6 +18,16 @@ What matters and why:
   - while BUSY the buffers are the engine's: a bus access waits for the
     job to end and then sees its result; START while busy changes nothing;
   - sums along K wrap in INT32 like the model (saturation inputs).
+
+Built with ARRAY_CDC = 1 (gemm_accel*_cdc), the array runs on clk_array_i
+at another period and phase, and the reference for each job is
+sw/model/accel_cdc_model.py's stream_job() at those clocks: the bench
+records the core edge where the job starts (busy_o rising) and an array
+edge, so the model runs at the very phase the RTL saw, and CYCLES must
+match exactly, as must every byte of C. Each test picks its array clock
+from ARRAY_CLOCKS (logged); test_clock_ratios runs them all, edge-sharing
+ones included. With ARRAY_CDC = 0 the same tests show clk_array_i changes
+nothing.
 """
 
 import os
@@ -28,14 +38,29 @@ import sys
 import cocotb
 import numpy as np
 from cocotb.clock import Clock
-from cocotb.triggers import FallingEdge, RisingEdge
+from cocotb.triggers import FallingEdge, RisingEdge, Timer
+from cocotb.utils import get_sim_time
 
 from axil import OKAY, SLVERR, axi_read, axi_write
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sw" / "model"))
 import accel_model as am  # noqa: E402
+import accel_cdc_model as acm  # noqa: E402
 
 CLK_PERIOD_NS = 10
+CORE_PS = CLK_PERIOD_NS * 1000
+# clk_array_i: (period, offset of its first rising edge from the core's), ps.
+# Offset 0 shares edges with the core clock (every one at 10 ns, every
+# other at 20 ns); 10.03 ns drifts through every phase; at 97 ns the input
+# FIFO fills while the weights load.
+ARRAY_CLOCKS = [(10_000, 0), (10_000, 5_000), (10_030, 1_234), (13_700, 3_000),
+                (7_300, 1_000), (31_000, 17_000), (3_100, 700), (20_000, 0),
+                (97_000, 41_000)]
+# test_reset_slow_array: an array clock whose first edge after a reset comes
+# later than a START written at once (four register writes).
+SLOW_RESET_CLOCK = (403_000, 41_000)
+_clocks = []      # running clock tasks
+_cdc = {}         # array clock: period "ta", a rising edge "a0"; "rises" of busy_o
 MAX_BEATS = 16
 
 
@@ -54,6 +79,7 @@ class Bench:
         self.model = am.Accel(self.rows, self.cols, self.buf)
         self.np_rng = np.random.default_rng(rng.randrange(2**32))
         self.delay = 0.3   # chance a VALID or READY waits a cycle
+        self.cdc = bool(int(dut.ARRAY_CDC.value))
 
     def wait(self):
         return self.rng.random() < self.delay
@@ -65,15 +91,17 @@ class Bench:
         d.d_awlen_i.value = len(words) - 1
         d.d_awsize_i.value = 2
         d.d_awburst_i.value = 1
-        while True:
+        for _ in range(200_000):
             v = not self.wait()
             d.d_awvalid_i.value = int(v)
             hs = v and d.d_awready_o.value
             await FallingEdge(d.clk_i)
             if hs:
                 break
+        else:
+            raise AssertionError("AW never accepted")
         d.d_awvalid_i.value = 0
-        i = 0
+        i = cyc = 0
         while i < len(words):
             v = not self.wait()
             d.d_wvalid_i.value = int(v)
@@ -85,6 +113,8 @@ class Bench:
             await FallingEdge(d.clk_i)
             if hs:
                 i += 1
+            cyc += 1
+            assert cyc < 200_000, "W never accepted"
         d.d_wvalid_i.value = 0
         cyc = 0
         while True:
@@ -105,13 +135,15 @@ class Bench:
         d.d_arlen_i.value = beats - 1
         d.d_arsize_i.value = 2
         d.d_arburst_i.value = 1
-        while True:
+        for _ in range(200_000):
             v = not self.wait()
             d.d_arvalid_i.value = int(v)
             hs = v and d.d_arready_o.value
             await FallingEdge(d.clk_i)
             if hs:
                 break
+        else:
+            raise AssertionError("AR never accepted")
         d.d_arvalid_i.value = 0
         out = []
         cyc = 0
@@ -184,7 +216,23 @@ class Bench:
         await self.reg_write(am.REG_M, m)
         await self.reg_write(am.REG_K, k)
         await self.reg_write(am.REG_N, n)
-        await self.reg_write(am.REG_CTRL, am.CTRL_START)
+        if not self.cdc:
+            await self.reg_write(am.REG_CTRL, am.CTRL_START)
+            return
+        # the model runs the job at the phase between the core edge that
+        # took START and the array's edges
+        n0 = len(_cdc["rises"])
+        assert await axi_write(self.dut, am.REG_CTRL, am.CTRL_START) == OKAY
+        for _ in range(10):
+            if len(_cdc["rises"]) > n0:
+                break
+            await RisingEdge(self.dut.clk_i)
+        assert len(_cdc["rises"]) == n0 + 1, "START did not start one job"
+        e0 = _cdc["rises"][n0]
+        phase = (_cdc["a0"] - e0) % _cdc["ta"]
+        acm.stream_job(self.model, CORE_PS, _cdc["ta"], phase,
+                       in_depth=int(self.dut.ARRAY_IN_DEPTH.value),
+                       out_depth=int(self.dut.ARRAY_OUT_DEPTH.value))
 
     async def check(self, label):
         """Registers, then the whole C buffer, against the model."""
@@ -220,8 +268,31 @@ def rng_for(dut):
     return random.Random(seed)
 
 
-async def reset(dut):
-    cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start())
+async def watch_busy(dut, rises):
+    while True:
+        await RisingEdge(dut.u_seq.busy_o)
+        rises.append(get_sim_time("ps"))
+
+
+async def reset(dut, array_clock=None):
+    """Both clocks (the array's from ARRAY_CLOCKS: the one given, or one at
+    random), then a reset of a few core cycles."""
+    while _clocks:
+        _clocks.pop().cancel()
+    ta, off = array_clock or random.Random(int(os.environ.get("SEED", "1")) * 7919
+                                           + len(_cdc.get("used", []))).choice(ARRAY_CLOCKS)
+    _cdc.setdefault("used", []).append((ta, off))
+    dut._log.info(f"clk_array_i: {ta} ps, first edge {off} ps after the core's")
+    dut.clk_i.value = 0
+    dut.clk_array_i.value = 0
+    await Timer(1, unit="ns")
+    _clocks.append(cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start()))
+    if off:
+        await Timer(off, unit="ps")
+    _clocks.append(cocotb.start_soon(Clock(dut.clk_array_i, ta, unit="ps").start()))
+    await RisingEdge(dut.clk_array_i)
+    _cdc.update(ta=ta, a0=get_sim_time("ps"), rises=[])
+    _clocks.append(cocotb.start_soon(watch_busy(dut, _cdc["rises"])))
     for name in ("s_awvalid_i", "s_wvalid_i", "s_bready_i", "s_arvalid_i", "s_rready_i",
                  "d_awvalid_i", "d_wvalid_i", "d_bready_i", "d_arvalid_i", "d_rready_i",
                  "d_wlast_i"):
@@ -333,7 +404,7 @@ async def test_busy(dut):
     t1 = cocotb.utils.get_sim_time("ns")
     want = [int.from_bytes(bytes(b.model.c[4 * i:4 * i + 4]), "little") for i in range(4)]
     assert words == want, "a read during the job must see its result"
-    cyc = am.job_cycles(m, k, n, b.rows, b.cols)
+    cyc = b.model.cycles    # job_cycles() with ARRAY_CDC = 0
     assert (t1 - t0) / CLK_PERIOD_NS > cyc / 2, "the read did not wait for the job"
     assert await b.reg_read(am.REG_STATUS) == am.ST_DONE
     assert await b.reg_read(am.REG_CYCLES) == cyc, "START during the job touched CYCLES"
@@ -351,3 +422,58 @@ async def test_busy(dut):
     assert await b.reg_read(am.REG_K) == b.model.k
     # the fourth slot of the buffer window reads 0
     assert await b.burst_read(3 * b.buf, 2) == [0, 0]
+
+
+@cocotb.test()
+async def test_clock_ratios(dut):
+    """Every clock in ARRAY_CLOCKS in turn: the array faster, slower, equal
+    (edges shared and apart), drifting, far off. One-tile jobs with many
+    rows (the slow array then sets the pace, the input FIFO fills and the
+    credits run out) and multi-tile ones; CYCLES and C exact against the
+    model at each. With ARRAY_CDC = 0: identical to job_cycles() whatever
+    clk_array_i does."""
+    rng = rng_for(dut)
+    for clk in ARRAY_CLOCKS:
+        await reset(dut, clk)
+        b = Bench(dut, rng)
+        r, c = b.rows, b.cols
+        m_max = b.buf // (4 * c)                      # C lines: one column tile
+        shapes = [(m_max, r, c), (m_max // 2 + 1, r - 1, c), (r + 3, 2 * r + 1, c + 1),
+                  (1, 1, 1)]
+        for m, k, n in shapes:
+            await b.fill_c()
+            a, w = b.i8(m, k), b.i8(k, n)
+            await b.load(a, w)
+            await b.start(m, k, n)
+            await b.check(f"{m}x{k}x{n} at {clk}")
+            assert b.model.status == am.ST_DONE
+            assert np.array_equal(am.unpack_c(b.model.c, m, n, c), am.gemm(a, w))
+            if not b.cdc:
+                assert b.model.cycles == am.job_cycles(m, k, n, r, c)
+            dut._log.info(f"{clk}: {m}x{k}x{n} {b.model.cycles} cycles "
+                          f"(ARRAY_CDC=0: {am.job_cycles(m, k, n, r, c)})")
+
+
+@cocotb.test()
+async def test_reset_slow_array(dut):
+    """START at once after a reset, with the array clock forty times slower
+    than the core's (so its first edge comes after the registers are
+    written) and rst_i only three core cycles long: the array side has not
+    ticked when rst_i falls. The buffers outlive a reset, so the job
+    before it is simply run again. Each job leaves the FIFO pointers away
+    from zero (an odd number of rows): a core side that left reset before the
+    array side took its own would pop the old write pointer's entries into
+    the new job's C. With ARRAY_CDC the bus must wait out the reset."""
+    rng = rng_for(dut)
+    await reset(dut, SLOW_RESET_CLOCK)
+    b = Bench(dut, rng)
+    await b.fill_c()
+    for m in (1, 3, 5, 7):
+        a, w = b.i8(m, b.rows), b.i8(b.rows, b.cols)
+        await b.load(a, w)
+        await b.start(m, b.rows, b.cols)
+        await b.check(f"{m} rows")
+        await reset(dut, SLOW_RESET_CLOCK)
+        await b.start(m, b.rows, b.cols)
+        await b.check(f"{m} rows, started at once after a reset")
+        assert np.array_equal(am.unpack_c(b.model.c, m, b.cols, b.cols), am.gemm(a, w))

@@ -334,6 +334,28 @@ history, [formal-properties.md](formal-properties.md) and
      row the output FIFO could not take. C accumulation becomes pop-driven
      (read C on pop, add and write next cycle, 1 row/cycle). The weight-
      transform hook (box 3) sits on the array side of the input FIFO.
+     **Done 2026-11-08** (`gemm_accel_seq.sv` `g_cdc`, `gemm_accel.sv`
+     resets; measurements.md "Array clock domain: stream"): CYCLES equal to
+     the model at every clock tried. What it took beyond the plan:
+     - **Resets.** rst_i asserts the array side at once and is released on
+       clk_array (rst_a); the clk_i side stays in reset until rst_a has come
+       back through a second synchronizer (rst_c). Releasing the clk_i side
+       with rst_i let it read the array side's pre-reset write pointer as
+       entries whenever clk_array had not ticked yet (seen at 97 ns). And
+       since rst_c outlasts rst_i, every READY is held low while it is high:
+       the slaves' READYs are high in reset, so a master already out of
+       reset lost its handshake (seen as a hung bus).
+     - **What the tests must reach.** With IN_DEPTH ≥ ROWS the sequencer
+       never stalls in LOAD (the first stall lands on SWAP), and at
+       OUT_DEPTH 32 the credits never run out at any ratio: the shipping
+       build cannot show a bug in either. `gemm_accel_4x4_cdc` has 2 and 4.
+       A reset bug only bites if START lands before clk_array's first edge
+       after the reset, so `test_reset_slow_array` uses a 403 ns array clock;
+       otherwise the stray pops lap the pointers (and the credit counter)
+       back into step before any job and leave no trace.
+     - **XDC takes no `foreach`**: Vivado skips the loop with one critical
+       warning and applies nothing; `constr/accel_cdc_ooc.xdc` is written out
+       and `syn/synth_ooc.tcl` checks its cells were found.
   4. **Parameter** `ARRAY_CDC`, default 0: the direct path, cycle-exact, so
      every Phase G result and the CYCLES-equals-model tests stay valid (the
      MEM_WAIT / M_EXT pattern). The soc-v2.0 board build sets it, with

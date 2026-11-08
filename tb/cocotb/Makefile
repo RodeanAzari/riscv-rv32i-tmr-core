@@ -99,6 +99,8 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          gemm_accel_4x4:test_gemm_accel \
          gemm_accel_4x8:test_gemm_accel \
          gemm_accel:test_gemm_accel \
+         gemm_accel_4x4_cdc:test_gemm_accel \
+         gemm_accel_cdc:test_gemm_accel \
          soc:test_soc \
          soc:test_coremark \
          soc:test_boot \
@@ -167,6 +169,18 @@ ifdef TEST_ONE
     ARRAY_SHAPE         := $(subst x, ,$(patsubst systolic_array_%,%,$(TOPLEVEL)))
     COMPILE_ARGS        += -GROWS=$(word 1,$(ARRAY_SHAPE)) -GCOLS=$(word 2,$(ARRAY_SHAPE))
     TOPLEVEL            := systolic_array
+  endif
+  # gemm_accel[_<ROWS>x<COLS>]_cdc: built with ARRAY_CDC = 1 (Phase H), the
+  # array on clk_array_i; the tests then take CYCLES from accel_cdc_model.
+  # gemm_accel_cdc has the SoC's FIFOs (16 in, 32 out), whose credits never
+  # run out; the small ones have 2 in (fewer than ROWS, so the sequencer
+  # stalls in LOAD too, not only from SWAP on) and 4 out (the credits bind).
+  ifneq ($(filter gemm_accel%_cdc,$(TOPLEVEL)),)
+    ifneq ($(TOPLEVEL),gemm_accel_cdc)
+      COMPILE_ARGS      += -GARRAY_IN_DEPTH=2 -GARRAY_OUT_DEPTH=4
+    endif
+    TOPLEVEL            := $(patsubst %_cdc,%,$(TOPLEVEL))
+    COMPILE_ARGS        += -GARRAY_CDC=1
   endif
   # gemm_accel_<ROWS>x<COLS>: the accelerator at a small array, 2 KiB
   # buffers, so the tests reach every buffer limit quickly. Plain gemm_accel

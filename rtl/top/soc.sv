@@ -632,6 +632,7 @@ module soc #(
   ) u_accel (
       .clk_i       (clk_i),
       .rst_i       (rst_i),
+      .clk_array_i (clk_i),       // ARRAY_CDC = 0: unused
       .s_awaddr_i  (acc_awaddr[ACC_OFF_W-1:0]),
       .s_awvalid_i (acc_awvalid),
       .s_awready_o (acc_awready),

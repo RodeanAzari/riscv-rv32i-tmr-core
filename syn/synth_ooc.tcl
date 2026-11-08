@@ -8,6 +8,7 @@
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> riscv_core[_tmr] wait
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> riscv_core[_tmr] m
 #   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> cdc_async_fifo <width> <depth>
+#   vivado -mode batch -source syn/synth_ooc.tcl -tclargs <part> gemm_accel cdc
 #
 # Reports: docs/reports/*_ooc.* for the core, *_ooc_tmr.* for the TMR core,
 # which also gets a per-hierarchy utilization report and a check that three
@@ -61,6 +62,15 @@ if {($top eq "riscv_core" || $tmr) && [lindex $argv 2] eq "wait"} {
     set generics [list -generic MEM_WAIT=1]
     set title    "$top MEM_WAIT=1"
 }
+# "cdc" after gemm_accel: built with ARRAY_CDC = 1 (the array on its own
+# clock, Phase H), two clocks (constr/accel_cdc_ooc.xdc), reports
+# *_ooc_gemm_accel_cdc.* with a report_cdc
+if {$top eq "gemm_accel" && [lindex $argv 2] eq "cdc"} {
+    set sfx      "${sfx}_cdc"
+    set sub      "${sub}_cdc"
+    set generics [list -generic ARRAY_CDC=1]
+    set title    "$top ARRAY_CDC=1"
+}
 # "m" after the core or TMR core: built with M_EXT = 1 (RV32IM, Phase H),
 # reports *_ooc_m.* / *_ooc_tmr_m.* -- never in the same table as RV32I's
 if {($top eq "riscv_core" || $tmr) && [lindex $argv 2] eq "m"} {
@@ -95,12 +105,32 @@ if {[llength $sv] == 0} {
 # spec/dmaeng.yaml) first: packages compile before what imports them.
 set sv [concat [list [file join $repo sw dma-engine rtl dmaeng_pkg.sv]] $sv]
 read_verilog -sv $sv
-set cdc [expr {$top eq "cdc_async_fifo"}]
+set cdc [expr {$top eq "cdc_async_fifo" || [string match *_cdc $sfx]}]
 if {$cdc} {
-    # Its constraints name synthesized cells, so they are read after synthesis
-    # (and are used by implementation only).
+    # Their constraints name synthesized cells, so they are read after
+    # synthesis (and are used by implementation only).
     synth_design -top $top -part $part -mode out_of_context {*}$generics
-    read_xdc -mode out_of_context [file join $repo constr cdc_ooc.xdc]
+    set xdc [expr {$top eq "cdc_async_fifo" ? "cdc_ooc.xdc" : "accel_cdc_ooc.xdc"}]
+    read_xdc -mode out_of_context [file join $repo constr $xdc]
+    # XDC has no error command: a constraint whose cell search found
+    # nothing applies to nothing, silently. Check what the accelerator's
+    # constraints were meant to find.
+    if {$xdc eq "accel_cdc_ooc.xdc"} {
+        foreach f {u_in u_out} {
+            foreach sync {u_wptr_sync u_rptr_sync} {
+                set pat "*u_seq/g_cdc.$f/$sync/sync_q_reg*"
+                if {[llength [get_cells -hier -filter "NAME =~ $pat"]] == 0} {
+                    error "accel_cdc_ooc.xdc: nothing matches $pat"
+                }
+            }
+            if {[llength [get_cells -hier -filter "NAME =~ *u_seq/g_cdc.$f/mem_reg* && PRIMITIVE_GROUP == DMEM"]] == 0} {
+                error "accel_cdc_ooc.xdc: no distributed RAM in $f"
+            }
+        }
+        if {[llength [get_pins -hier -filter {NAME =~ *g_rst_cdc.u_rst_*/sync_q_reg*/PRE}]] != 4} {
+            error "accel_cdc_ooc.xdc: expected 4 reset synchronizer PRE pins"
+        }
+    }
 } else {
     read_xdc [file join $repo constr core_ooc.xdc]
     synth_design -top $top -part $part -mode out_of_context {*}$generics
@@ -147,7 +177,7 @@ if {$tmr} {
 # Fmax is computed, not asserted: slack against a known period tells us what
 # period the design would actually meet.  Fmax = 1000 / (period - WNS).
 
-set clk    [get_clocks [expr {$cdc ? "wr_clk" : "clk"}]]
+set clk    [get_clocks [expr {$top eq "cdc_async_fifo" ? "wr_clk" : "clk"}]]
 set period [get_property PERIOD $clk]
 set paths  [get_timing_paths -delay_type max -max_paths 1 -nworst 1]
 

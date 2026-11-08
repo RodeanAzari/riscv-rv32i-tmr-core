@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
 ---------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
-| Date         : Thu Nov  5 11:19:58 2026
+| Date         : Sun Nov  8 11:10:15 2026
 | Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
 | Command      : report_timing_summary -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/timing_ooc_gemm_accel.rpt
 | Design       : gemm_accel
@@ -138,7 +138,7 @@ Table of Contents
 
     WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints  
     -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------  
-      0.135        0.000                      0                21732        0.110        0.000                      0                21732        4.020        0.000                       0                 11533  
+      0.266        0.000                      0                21732        0.108        0.000                      0                21732        4.020        0.000                       0                 11533  
 
 
 All user specified timing constraints are met.
@@ -161,7 +161,7 @@ clk    {0.000 5.000}      10.000          100.000
 
 Clock             WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints  
 -----             -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------  
-clk                 0.135        0.000                      0                21732        0.110        0.000                      0                21732        4.020        0.000                       0                 11533  
+clk                 0.266        0.000                      0                21732        0.108        0.000                      0                21732        4.020        0.000                       0                 11533  
 
 
 ------------------------------------------------------------------------------------------------
@@ -192,24 +192,24 @@ Path Group    From Clock    To Clock          WNS(ns)      TNS(ns)  TNS Failing 
 From Clock:  clk
   To Clock:  clk
 
-Setup :            0  Failing Endpoints,  Worst Slack        0.135ns,  Total Violation        0.000ns
-Hold  :            0  Failing Endpoints,  Worst Slack        0.110ns,  Total Violation        0.000ns
+Setup :            0  Failing Endpoints,  Worst Slack        0.266ns,  Total Violation        0.000ns
+Hold  :            0  Failing Endpoints,  Worst Slack        0.108ns,  Total Violation        0.000ns
 PW    :            0  Failing Endpoints,  Worst Slack        4.020ns,  Total Violation        0.000ns
 ---------------------------------------------------------------------------------------------------
 
 
 Max Delay Paths
 --------------------------------------------------------------------------------------
-Slack (MET) :             0.135ns  (required time - arrival time)
-  Source:                 u_seq/shift_q_reg/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
-  Destination:            u_seq/u_array/g_row[6].g_pair[1].u_pe/w_shadow_q_reg[1][1]/CE
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
+Slack (MET) :             0.266ns  (required time - arrival time)
+  Source:                 u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/prod/CLK
+                            (rising edge-triggered cell DSP48E1 clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
+  Destination:            u_seq/g_direct.u_array/g_deskew[5].g_delay.sr_q_reg[2][29]_srl4___u_seq_g_direct.u_array_valid_q_reg_r_1/D
+                            (rising edge-triggered cell SRL16E clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
   Requirement:            10.000ns  (clk rise@10.000ns - clk rise@0.000ns)
-  Data Path Delay:        9.612ns  (logic 0.456ns (4.744%)  route 9.156ns (95.256%))
-  Logic Levels:           0  
+  Data Path Delay:        9.452ns  (logic 6.756ns (71.478%)  route 2.696ns (28.522%))
+  Logic Levels:           11  (CARRY4=9 LUT2=2)
   Clock Path Skew:        -0.049ns (DCD - SCD + CPR)
     Destination Clock Delay (DCD):    0.924ns = ( 10.924 - 10.000 ) 
     Source Clock Delay      (SCD):    0.973ns
@@ -224,26 +224,59 @@ Slack (MET) :             0.135ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk_i (IN)
-                         net (fo=11535, unset)        0.973     0.973    u_seq/clk_i
-    SLICE_X28Y51         FDRE                                         r  u_seq/shift_q_reg/C
+                         net (fo=11535, unset)        0.973     0.973    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/clk_i
+    DSP48_X1Y26          DSP48E1                                      r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/prod/CLK
   -------------------------------------------------------------------    -------------------
-    SLICE_X28Y51         FDRE (Prop_fdre_C_Q)         0.456     1.429 r  u_seq/shift_q_reg/Q
-                         net (fo=2048, routed)        9.156    10.585    u_seq/u_array/g_row[6].g_pair[1].u_pe/w_shadow_q_reg[1][0]_0[0]
-    SLICE_X42Y113        FDRE                                         r  u_seq/u_array/g_row[6].g_pair[1].u_pe/w_shadow_q_reg[1][1]/CE
+    DSP48_X1Y26          DSP48E1 (Prop_dsp48e1_CLK_P[16])
+                                                      4.009     4.982 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/prod/P[16]
+                         net (fo=2, routed)           1.221     6.203    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_in[0]
+    SLICE_X52Y64         LUT2 (Prop_lut2_I0_O)        0.124     6.327 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry_i_6__60/O
+                         net (fo=1, routed)           0.000     6.327    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry_i_6__60_n_0
+    SLICE_X52Y64         CARRY4 (Prop_carry4_S[0]_CO[3])
+                                                      0.532     6.859 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry_i_5__60/CO[3]
+                         net (fo=1, routed)           0.000     6.859    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry_i_5__60_n_0
+    SLICE_X52Y65         CARRY4 (Prop_carry4_CI_O[1])
+                                                      0.334     7.193 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__0_i_5__60/O[1]
+                         net (fo=1, routed)           0.719     7.912    u_seq/g_direct.u_array/g_row[14].g_pair[2].u_pe/lane_ext[1]_235[5]
+    SLICE_X47Y65         LUT2 (Prop_lut2_I1_O)        0.303     8.215 r  u_seq/g_direct.u_array/g_row[14].g_pair[2].u_pe/p_1_out_carry__0_i_3__60/O
+                         net (fo=1, routed)           0.000     8.215    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/g_deskew[5].g_delay.sr_q_reg[3][7]_u_seq_g_direct.u_array_valid_q_reg_r_2[1]
+    SLICE_X47Y65         CARRY4 (Prop_carry4_S[1]_CO[3])
+                                                      0.550     8.765 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__0/CO[3]
+                         net (fo=1, routed)           0.000     8.765    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__0_n_0
+    SLICE_X47Y66         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.114     8.879 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__1/CO[3]
+                         net (fo=1, routed)           0.000     8.879    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__1_n_0
+    SLICE_X47Y67         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.114     8.993 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__2/CO[3]
+                         net (fo=1, routed)           0.000     8.993    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__2_n_0
+    SLICE_X47Y68         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.114     9.107 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__3/CO[3]
+                         net (fo=1, routed)           0.000     9.107    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__3_n_0
+    SLICE_X47Y69         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.114     9.221 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__4/CO[3]
+                         net (fo=1, routed)           0.000     9.221    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__4_n_0
+    SLICE_X47Y70         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.114     9.335 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__5/CO[3]
+                         net (fo=1, routed)           0.000     9.335    u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__5_n_0
+    SLICE_X47Y71         CARRY4 (Prop_carry4_CI_O[1])
+                                                      0.334     9.669 r  u_seq/g_direct.u_array/g_row[15].g_pair[2].u_pe/p_1_out_carry__6/O[1]
+                         net (fo=1, routed)           0.756    10.425    u_seq/g_direct.u_array/p_1_out_15[29]
+    SLICE_X46Y67         SRL16E                                       r  u_seq/g_direct.u_array/g_deskew[5].g_delay.sr_q_reg[2][29]_srl4___u_seq_g_direct.u_array_valid_q_reg_r_1/D
   -------------------------------------------------------------------    -------------------
 
                          (clock clk rise edge)       10.000    10.000 r  
                                                       0.000    10.000 r  clk_i (IN)
-                         net (fo=11535, unset)        0.924    10.924    u_seq/u_array/g_row[6].g_pair[1].u_pe/clk_i
-    SLICE_X42Y113        FDRE                                         r  u_seq/u_array/g_row[6].g_pair[1].u_pe/w_shadow_q_reg[1][1]/C
+                         net (fo=11535, unset)        0.924    10.924    u_seq/g_direct.u_array/clk_i
+    SLICE_X46Y67         SRL16E                                       r  u_seq/g_direct.u_array/g_deskew[5].g_delay.sr_q_reg[2][29]_srl4___u_seq_g_direct.u_array_valid_q_reg_r_1/CLK
                          clock pessimism              0.000    10.924    
                          clock uncertainty           -0.035    10.889    
-    SLICE_X42Y113        FDRE (Setup_fdre_C_CE)      -0.169    10.720    u_seq/u_array/g_row[6].g_pair[1].u_pe/w_shadow_q_reg[1][1]
+    SLICE_X46Y67         SRL16E (Setup_srl16e_CLK_D)
+                                                     -0.198    10.691    u_seq/g_direct.u_array/g_deskew[5].g_delay.sr_q_reg[2][29]_srl4___u_seq_g_direct.u_array_valid_q_reg_r_1
   -------------------------------------------------------------------
-                         required time                         10.720    
-                         arrival time                         -10.585    
+                         required time                         10.691    
+                         arrival time                         -10.425    
   -------------------------------------------------------------------
-                         slack                                  0.135    
+                         slack                                  0.266    
 
 
 
@@ -251,16 +284,16 @@ Slack (MET) :             0.135ns  (required time - arrival time)
 
 Min Delay Paths
 --------------------------------------------------------------------------------------
-Slack (MET) :             0.110ns  (arrival time - required time)
-  Source:                 u_seq/u_array/g_row[6].g_pair[5].u_pe/w_shadow_q_reg[0][5]/C
+Slack (MET) :             0.108ns  (arrival time - required time)
+  Source:                 u_regs/cycles_q_reg[25]/C
                             (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
-  Destination:            u_seq/u_array/g_row[7].g_pair[5].u_pe/w_shadow_q_reg[0][5]/D
+  Destination:            u_regs/rdata_q_reg[25]/D
                             (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@5.000ns period=10.000ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
-  Data Path Delay:        0.209ns  (logic 0.141ns (67.433%)  route 0.068ns (32.567%))
-  Logic Levels:           0  
+  Data Path Delay:        0.250ns  (logic 0.186ns (74.329%)  route 0.064ns (25.671%))
+  Logic Levels:           1  (LUT5=1)
   Clock Path Skew:        0.022ns (DCD - SCD - CPR)
     Destination Clock Delay (DCD):    0.432ns
     Source Clock Delay      (SCD):    0.410ns
@@ -270,25 +303,27 @@ Slack (MET) :             0.110ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk_i (IN)
-                         net (fo=11535, unset)        0.410     0.410    u_seq/u_array/g_row[6].g_pair[5].u_pe/clk_i
-    SLICE_X79Y29         FDRE                                         r  u_seq/u_array/g_row[6].g_pair[5].u_pe/w_shadow_q_reg[0][5]/C
+                         net (fo=11535, unset)        0.410     0.410    u_regs/clk_i
+    SLICE_X77Y55         FDRE                                         r  u_regs/cycles_q_reg[25]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X79Y29         FDRE (Prop_fdre_C_Q)         0.141     0.551 r  u_seq/u_array/g_row[6].g_pair[5].u_pe/w_shadow_q_reg[0][5]/Q
-                         net (fo=2, routed)           0.068     0.619    u_seq/u_array/g_row[7].g_pair[5].u_pe/D[5]
-    SLICE_X79Y29         FDRE                                         r  u_seq/u_array/g_row[7].g_pair[5].u_pe/w_shadow_q_reg[0][5]/D
+    SLICE_X77Y55         FDRE (Prop_fdre_C_Q)         0.141     0.551 r  u_regs/cycles_q_reg[25]/Q
+                         net (fo=2, routed)           0.064     0.615    u_regs/cycles_q_reg[25]
+    SLICE_X76Y55         LUT5 (Prop_lut5_I4_O)        0.045     0.660 r  u_regs/rdata_q[25]_i_1__0/O
+                         net (fo=1, routed)           0.000     0.660    u_regs/p_0_in[25]
+    SLICE_X76Y55         FDRE                                         r  u_regs/rdata_q_reg[25]/D
   -------------------------------------------------------------------    -------------------
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk_i (IN)
-                         net (fo=11535, unset)        0.432     0.432    u_seq/u_array/g_row[7].g_pair[5].u_pe/clk_i
-    SLICE_X79Y29         FDRE                                         r  u_seq/u_array/g_row[7].g_pair[5].u_pe/w_shadow_q_reg[0][5]/C
+                         net (fo=11535, unset)        0.432     0.432    u_regs/clk_i
+    SLICE_X76Y55         FDRE                                         r  u_regs/rdata_q_reg[25]/C
                          clock pessimism              0.000     0.432    
-    SLICE_X79Y29         FDRE (Hold_fdre_C_D)         0.078     0.510    u_seq/u_array/g_row[7].g_pair[5].u_pe/w_shadow_q_reg[0][5]
+    SLICE_X76Y55         FDRE (Hold_fdre_C_D)         0.121     0.553    u_regs/rdata_q_reg[25]
   -------------------------------------------------------------------
-                         required time                         -0.510    
-                         arrival time                           0.619    
+                         required time                         -0.553    
+                         arrival time                           0.660    
   -------------------------------------------------------------------
-                         slack                                  0.110    
+                         slack                                  0.108    
 
 
 
@@ -302,9 +337,9 @@ Period(ns):         10.000
 Sources:            { clk_i }
 
 Check Type        Corner  Lib Pin      Reference Pin  Required(ns)  Actual(ns)  Slack(ns)  Location      Pin
-Min Period        n/a     DSP48E1/CLK  n/a            3.884         10.000      6.116      DSP48_X0Y19   u_seq/use_a_q_reg/CLK
-Low Pulse Width   Slow    SRL16E/CLK   n/a            0.980         5.000       4.020      SLICE_X14Y61  u_seq/u_array/g_deskew[0].g_delay.sr_q_reg[4][0]_srl6___u_seq_u_array_valid_q_reg_r_3/CLK
-High Pulse Width  Slow    SRL16E/CLK   n/a            0.980         5.000       4.020      SLICE_X14Y61  u_seq/u_array/g_deskew[0].g_delay.sr_q_reg[4][0]_srl6___u_seq_u_array_valid_q_reg_r_3/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            3.884         10.000      6.116      DSP48_X2Y22   u_seq/use_a_q_reg/CLK
+Low Pulse Width   Slow    SRL16E/CLK   n/a            0.980         5.000       4.020      SLICE_X34Y68  u_seq/g_direct.u_array/g_deskew[0].g_delay.sr_q_reg[4][0]_srl6___u_seq_g_direct.u_array_valid_q_reg_r_3/CLK
+High Pulse Width  Slow    SRL16E/CLK   n/a            0.980         5.000       4.020      SLICE_X34Y68  u_seq/g_direct.u_array/g_deskew[0].g_delay.sr_q_reg[4][0]_srl6___u_seq_g_direct.u_array_valid_q_reg_r_3/CLK
 
 
 

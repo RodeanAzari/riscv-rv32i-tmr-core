@@ -16,9 +16,29 @@
 // Each buffer is 32-bit banks of ram_dp: an A line (ROWS bytes) is ROWS/4
 // banks side by side, a W line COLS/4, a C line COLS. Port A of every bank is
 // the engine's read; port B is the bus's, or while busy the engine's C write.
+//
+// ARRAY_CDC = 1 puts the systolic array alone on clk_array_i (Phase H, array
+// clock domain; gemm_accel_seq.sv), through FIFOs of ARRAY_IN_DEPTH entries
+// to it and ARRAY_OUT_DEPTH rows back (the defaults cost no cycle at any
+// clock ratio the golden model tried; smaller ones are for tests). Everything
+// else, the buses and CYCLES included, stays on clk_i. With 0, clk_array_i
+// is unused.
+//
+// Resets with ARRAY_CDC: rst_i (synchronous to clk_i) resets the array side
+// at once, released on clk_array (rst_a); the clk_i side stays in reset
+// until rst_a has been seen back on clk_i (rst_c). So the clk_i side never
+// runs while the array side still holds pointers from before the reset,
+// however short rst_i and however slow clk_array. rst_c outlasts rst_i, so
+// the bus masters may already be running: every READY here is held low
+// while rst_c is high (the slaves' READYs are high in reset, and a
+// handshake then would be lost), so an access in that window waits. With 0,
+// rst_c is rst_i and nothing is held.
 module gemm_accel #(
     parameter  int unsigned ROWS      = 16,
     parameter  int unsigned COLS      = 16,
+    parameter  bit          ARRAY_CDC = 1'b0,
+    parameter  int unsigned ARRAY_IN_DEPTH  = 16,
+    parameter  int unsigned ARRAY_OUT_DEPTH = 32,
     parameter  int unsigned BUF_BYTES = 16384,
     parameter  int unsigned OFF_W     = 12,
     localparam int unsigned ADDR_W    = 32,
@@ -27,6 +47,7 @@ module gemm_accel #(
 ) (
     input  logic              clk_i,
     input  logic              rst_i,
+    input  logic              clk_array_i,
 
     // registers, AXI4-Lite
     input  logic [OFF_W-1:0]  s_awaddr_i,
@@ -92,6 +113,35 @@ module gemm_accel #(
   localparam logic [1:0] SLOT_W_ = 2'd1;
   localparam logic [1:0] SLOT_C = 2'd2;
 
+  // ---- resets ----
+  logic rst_c, rst_a;    // the clk_i side, the clk_array side
+  if (ARRAY_CDC) begin : g_rst_cdc
+    cdc_reset_sync u_rst_a (
+        .clk_i  (clk_array_i),
+        .arst_i (rst_i),
+        .rst_o  (rst_a)
+    );
+    cdc_reset_sync u_rst_c (
+        .clk_i  (clk_i),
+        .arst_i (rst_a),
+        .rst_o  (rst_c)
+    );
+  end else begin : g_rst
+    assign rst_c = rst_i;
+    assign rst_a = rst_i;      // unused
+  end
+
+  // READYs held while the clk_i side outlasts rst_i in reset (ARRAY_CDC)
+  logic hold;
+  logic s_awready, s_wready, s_arready, d_arready, d_awready, d_wready;
+  assign hold        = ARRAY_CDC && rst_c;
+  assign s_awready_o = s_awready && !hold;
+  assign s_wready_o  = s_wready && !hold;
+  assign s_arready_o = s_arready && !hold;
+  assign d_arready_o = d_arready && !hold;
+  assign d_awready_o = d_awready && !hold;
+  assign d_wready_o  = d_wready && !hold;
+
   if (ROWS % 4 != 0 || COLS % 4 != 0) begin : g_lanes
     $error("gemm_accel: ROWS and COLS must be multiples of 4 (32-bit banks)");
   end
@@ -105,20 +155,20 @@ module gemm_accel #(
       .DIM_W (DIM_W)
   ) u_regs (
       .clk_i       (clk_i),
-      .rst_i       (rst_i),
+      .rst_i       (rst_c),
       .s_awaddr_i  (s_awaddr_i),
       .s_awvalid_i (s_awvalid_i),
-      .s_awready_o (s_awready_o),
+      .s_awready_o (s_awready),
       .s_wdata_i   (s_wdata_i),
       .s_wstrb_i   (s_wstrb_i),
       .s_wvalid_i  (s_wvalid_i),
-      .s_wready_o  (s_wready_o),
+      .s_wready_o  (s_wready),
       .s_bresp_o   (s_bresp_o),
       .s_bvalid_o  (s_bvalid_o),
       .s_bready_i  (s_bready_i),
       .s_araddr_i  (s_araddr_i),
       .s_arvalid_i (s_arvalid_i),
-      .s_arready_o (s_arready_o),
+      .s_arready_o (s_arready),
       .s_rdata_o   (s_rdata_o),
       .s_rresp_o   (s_rresp_o),
       .s_rvalid_o  (s_rvalid_o),
@@ -141,31 +191,36 @@ module gemm_accel #(
   logic                  e_c_we;
 
   gemm_accel_seq #(
-      .ROWS    (ROWS),
-      .COLS    (COLS),
-      .A_LINES (A_LINES),
-      .W_LINES (W_LINES),
-      .C_LINES (C_LINES),
-      .DIM_W   (DIM_W)
+      .ROWS        (ROWS),
+      .COLS        (COLS),
+      .ARRAY_CDC   (ARRAY_CDC),
+      .IN_DEPTH    (ARRAY_IN_DEPTH),
+      .OUT_DEPTH   (ARRAY_OUT_DEPTH),
+      .A_LINES     (A_LINES),
+      .W_LINES     (W_LINES),
+      .C_LINES     (C_LINES),
+      .DIM_W       (DIM_W)
   ) u_seq (
-      .clk_i     (clk_i),
-      .rst_i     (rst_i),
-      .start_i   (start),
-      .m_i       (m),
-      .k_i       (k),
-      .n_i       (n),
-      .busy_o    (busy),
-      .done_o    (done),
-      .error_o   (error),
-      .a_raddr_o (e_a_raddr),
-      .a_rdata_i (e_a_rdata),
-      .w_raddr_o (e_w_raddr),
-      .w_rdata_i (e_w_rdata),
-      .c_raddr_o (e_c_raddr),
-      .c_rdata_i (e_c_rdata),
-      .c_we_o    (e_c_we),
-      .c_waddr_o (e_c_waddr),
-      .c_wdata_o (e_c_wdata)
+      .clk_i       (clk_i),
+      .rst_i       (rst_c),
+      .clk_array_i (clk_array_i),
+      .rst_array_i (rst_a),
+      .start_i     (start),
+      .m_i         (m),
+      .k_i         (k),
+      .n_i         (n),
+      .busy_o      (busy),
+      .done_o      (done),
+      .error_o     (error),
+      .a_raddr_o   (e_a_raddr),
+      .a_rdata_i   (e_a_rdata),
+      .w_raddr_o   (e_w_raddr),
+      .w_rdata_i   (e_w_rdata),
+      .c_raddr_o   (e_c_raddr),
+      .c_rdata_i   (e_c_rdata),
+      .c_we_o      (e_c_we),
+      .c_waddr_o   (e_c_waddr),
+      .c_wdata_o   (e_c_wdata)
   );
 
   // ---- the bus side: one word at a time, waiting while busy ----
@@ -178,13 +233,13 @@ module gemm_accel #(
       .WORDS (1 << WIN_W)
   ) u_port (
       .clk_i       (clk_i),
-      .rst_i       (rst_i),
+      .rst_i       (rst_c),
       .s_araddr_i  (d_araddr_i),
       .s_arlen_i   (d_arlen_i),
       .s_arsize_i  (d_arsize_i),
       .s_arburst_i (d_arburst_i),
       .s_arvalid_i (d_arvalid_i),
-      .s_arready_o (d_arready_o),
+      .s_arready_o (d_arready),
       .s_rdata_o   (d_rdata_o),
       .s_rresp_o   (d_rresp_o),
       .s_rlast_o   (d_rlast_o),
@@ -195,12 +250,12 @@ module gemm_accel #(
       .s_awsize_i  (d_awsize_i),
       .s_awburst_i (d_awburst_i),
       .s_awvalid_i (d_awvalid_i),
-      .s_awready_o (d_awready_o),
+      .s_awready_o (d_awready),
       .s_wdata_i   (d_wdata_i),
       .s_wstrb_i   (d_wstrb_i),
       .s_wlast_i   (d_wlast_i),
       .s_wvalid_i  (d_wvalid_i),
-      .s_wready_o  (d_wready_o),
+      .s_wready_o  (d_wready),
       .s_bresp_o   (d_bresp_o),
       .s_bvalid_o  (d_bvalid_o),
       .s_bready_i  (d_bready_i),
@@ -222,7 +277,7 @@ module gemm_accel #(
   logic [1:0]        rd_slot_q;
   logic [SLOT_W-1:0] rd_word_q;
   always_ff @(posedge clk_i) begin
-    if (rst_i) begin
+    if (rst_c) begin
       rd_slot_q <= '0;
       rd_word_q <= '0;
     end else if (bus_en) begin
