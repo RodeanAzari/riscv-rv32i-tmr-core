@@ -24,6 +24,7 @@ xsim.dir/
 *.vstf
 results.xml
 results_*.xml
+tb/aclk/build/
 
 # Formal
 syn/*_formal/

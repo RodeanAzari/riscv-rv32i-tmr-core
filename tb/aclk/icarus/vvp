@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# vvp for cocotb (make aclk-check): OSS CAD Suite's own vvp wrapper sets
+# PYTHONHOME to the suite's Python, and cocotb's embedded interpreter (the
+# venv's, on the system Python) then cannot import its standard library.
+# This runs the suite's vvp binary the same way, without PYTHONHOME.
+top="$(dirname "$(readlink -f "$(command -v iverilog)")")/.."
+top="$(readlink -f "$top")"
+exec "$top"/lib/ld-linux-x86-64.so.2 --inhibit-cache --inhibit-rpath "" \
+    --library-path "$top"/lib "$top"/libexec/vvp "$@"

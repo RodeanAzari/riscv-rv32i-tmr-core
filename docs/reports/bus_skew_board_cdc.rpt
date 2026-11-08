@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
 ---------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
-| Date         : Sun Nov  8 11:56:18 2026
+| Date         : Sun Nov  8 13:46:01 2026
 | Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
 | Command      : report_bus_skew -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/bus_skew_board_cdc.rpt
 | Design       : arty_a7_top
@@ -24,16 +24,16 @@ Id  Position  From                            To                              Co
 --  --------  ------------------------------  ------------------------------  ------  ---------------  ----------  ---------
 1   6         [get_cells -of [all_fanin -startpoints_only -flat [get_pins -of [get_cells -hier -filter {NAME =~ *u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0]*}] -filter {REF_PIN_NAME == D}]]]
                                               [get_cells -hier -filter {NAME =~ *u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0]*}]
-                                                                              Slow              5.000       0.989      4.011
+                                                                              Slow              5.000       0.660      4.340
 2   7         [get_cells -of [all_fanin -startpoints_only -flat [get_pins -of [get_cells -hier -filter {NAME =~ *u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0]*}] -filter {REF_PIN_NAME == D}]]]
                                               [get_cells -hier -filter {NAME =~ *u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0]*}]
-                                                                              Slow              5.000       0.947      4.053
+                                                                              Slow              5.000       1.342      3.658
 3   11        [get_cells -of [all_fanin -startpoints_only -flat [get_pins -of [get_cells -hier -filter {NAME =~ *u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0]*}] -filter {REF_PIN_NAME == D}]]]
                                               [get_cells -hier -filter {NAME =~ *u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0]*}]
-                                                                              Slow              5.000       1.060      3.940
+                                                                              Slow              5.000       0.735      4.265
 4   12        [get_cells -of [all_fanin -startpoints_only -flat [get_pins -of [get_cells -hier -filter {NAME =~ *u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0]*}] -filter {REF_PIN_NAME == D}]]]
                                               [get_cells -hier -filter {NAME =~ *u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0]*}]
-                                                                              Slow              5.000       1.202      3.798
+                                                                              Slow              5.000       0.806      4.194
 
 
 2. Bus Skew Report Per Constraint
@@ -47,26 +47,26 @@ Endpoints: 5
 From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
 --------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
 clk_mmcm              g_array_clk.clk_mmcm_a
-                                            u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][0]/D
-                                                                            u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][4]/D
-                                                                                                            Slow         0.989      4.011
+                                            u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][3]/D
+                                                                            u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][0]/D
+                                                                                                            Slow         0.660      4.340
 
 
-Slack (MET) :             4.011ns  (requirement - actual skew)
-  Endpoint Source:        u_soc/u_accel/u_seq/g_cdc.u_in/wgray_q_reg[0]/C
+Slack (MET) :             4.340ns  (requirement - actual skew)
+  Endpoint Source:        u_soc/u_accel/u_seq/g_cdc.u_in/wgray_q_reg[3]/C
                             (rising edge-triggered cell FDRE clocked by clk_mmcm)
-  Endpoint Destination:   u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][0]/D
+  Endpoint Destination:   u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][3]/D
                             (rising edge-triggered cell FDRE clocked by g_array_clk.clk_mmcm_a)
-  Reference Source:       u_soc/u_accel/u_seq/g_cdc.u_in/wbin_q_reg[4]/C
+  Reference Source:       u_soc/u_accel/u_seq/g_cdc.u_in/wgray_q_reg[0]/C
                             (rising edge-triggered cell FDRE clocked by clk_mmcm)
-  Reference Destination:  u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][4]/D
+  Reference Destination:  u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][0]/D
                             (rising edge-triggered cell FDRE clocked by g_array_clk.clk_mmcm_a)
   Path Type:              Bus Skew (Max at Slow Process Corner)
   Requirement:            5.000ns
-  Endpoint Relative Delay:    1.533ns
-  Reference Relative Delay:   0.038ns
-  Relative CRPR:              0.506ns
-  Actual Bus Skew:            0.989ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+  Endpoint Relative Delay:    1.434ns
+  Reference Relative Delay:   0.285ns
+  Relative CRPR:              0.489ns
+  Actual Bus Skew:            0.660ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
 
 Endpoint path:
     Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
@@ -81,12 +81,12 @@ Endpoint path:
                                                       0.088     2.803 r  u_mmcm/CLKOUT0
                          net (fo=1, routed)           1.719     4.522    clk_mmcm
     BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.096     4.618 r  u_bufg/O
-                         net (fo=3021, routed)        1.625     6.244    u_soc/u_accel/u_seq/g_cdc.u_in/clk
-    SLICE_X50Y65         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/wgray_q_reg[0]/C
+                         net (fo=3068, routed)        1.639     6.258    u_soc/u_accel/u_seq/g_cdc.u_in/clk
+    SLICE_X39Y56         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/wgray_q_reg[3]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X50Y65         FDRE (Prop_fdre_C_Q)         0.518     6.762 r  u_soc/u_accel/u_seq/g_cdc.u_in/wgray_q_reg[0]/Q
-                         net (fo=1, routed)           0.778     7.540    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/D[0]
-    SLICE_X49Y65         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][0]/D
+    SLICE_X39Y56         FDRE (Prop_fdre_C_Q)         0.419     6.677 r  u_soc/u_accel/u_seq/g_cdc.u_in/wgray_q_reg[3]/Q
+                         net (fo=1, routed)           0.599     7.275    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/D[3]
+    SLICE_X40Y57         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][3]/D
   -------------------------------------------------------------------    -------------------
 
                          (clock g_array_clk.clk_mmcm_a rise edge)
@@ -99,15 +99,15 @@ Endpoint path:
                                                       0.083     2.796 r  g_array_clk.u_mmcm_array/CLKOUT0
                          net (fo=1, routed)           1.639     4.435    g_array_clk.clk_mmcm_a
     BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.091     4.526 r  g_array_clk.u_bufg_array/O
-                         net (fo=11237, routed)       1.504     6.031    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/clk_array
-    SLICE_X49Y65         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][0]/C
-                         clock pessimism              0.071     6.101    
-    SLICE_X49Y65         FDRE (Setup_fdre_C_D)       -0.095     6.006    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][0]
+                         net (fo=11246, routed)       1.514     6.041    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/clk_array
+    SLICE_X40Y57         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][3]/C
+                         clock pessimism              0.071     6.111    
+    SLICE_X40Y57         FDRE (Setup_fdre_C_D)       -0.270     5.841    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][3]
   -------------------------------------------------------------------
-                         data arrival                           7.540    
-                         clock arrival                          6.006    
+                         data arrival                           7.275    
+                         clock arrival                          5.841    
   -------------------------------------------------------------------
-                         relative delay                         1.533    
+                         relative delay                         1.434    
 
 Reference path:
     Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
@@ -122,12 +122,12 @@ Reference path:
                                                       0.083     2.656 r  u_mmcm/CLKOUT0
                          net (fo=1, routed)           1.639     4.295    clk_mmcm
     BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.091     4.386 r  u_bufg/O
-                         net (fo=3021, routed)        1.508     5.895    u_soc/u_accel/u_seq/g_cdc.u_in/clk
-    SLICE_X47Y63         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/wbin_q_reg[4]/C
+                         net (fo=3068, routed)        1.515     5.902    u_soc/u_accel/u_seq/g_cdc.u_in/clk
+    SLICE_X43Y56         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/wgray_q_reg[0]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X47Y63         FDRE (Prop_fdre_C_Q)         0.367     6.262 r  u_soc/u_accel/u_seq/g_cdc.u_in/wbin_q_reg[4]/Q
-                         net (fo=4, routed)           0.269     6.530    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/D[4]
-    SLICE_X48Y63         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][4]/D
+    SLICE_X43Y56         FDRE (Prop_fdre_C_Q)         0.367     6.269 r  u_soc/u_accel/u_seq/g_cdc.u_in/wgray_q_reg[0]/Q
+                         net (fo=1, routed)           0.513     6.782    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/D[0]
+    SLICE_X43Y57         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][0]/D
   -------------------------------------------------------------------    -------------------
 
                          (clock g_array_clk.clk_mmcm_a rise edge)
@@ -140,15 +140,15 @@ Reference path:
                                                       0.088     2.950 r  g_array_clk.u_mmcm_array/CLKOUT0
                          net (fo=1, routed)           1.719     4.669    g_array_clk.clk_mmcm_a
     BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.096     4.765 r  g_array_clk.u_bufg_array/O
-                         net (fo=11237, routed)       1.627     6.393    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/clk_array
-    SLICE_X48Y63         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][4]/C
-                         clock pessimism             -0.071     6.322    
-    SLICE_X48Y63         FDRE (Hold_fdre_C_D)         0.170     6.492    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][4]
+                         net (fo=11246, routed)       1.632     6.398    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/clk_array
+    SLICE_X43Y57         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][0]/C
+                         clock pessimism             -0.071     6.327    
+    SLICE_X43Y57         FDRE (Hold_fdre_C_D)         0.169     6.496    u_soc/u_accel/u_seq/g_cdc.u_in/u_wptr_sync/sync_q_reg[0][0]
   -------------------------------------------------------------------
-                         data arrival                           6.530    
-                         clock arrival                          6.492    
+                         data arrival                           6.782    
+                         clock arrival                          6.496    
   -------------------------------------------------------------------
-                         relative delay                         0.038    
+                         relative delay                         0.285    
 
 
 
@@ -162,10 +162,10 @@ From Clock            To Clock              Endpoint Pin                    Refe
 g_array_clk.clk_mmcm_a
                       clk_mmcm              u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][1]/D
                                                                             u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][3]/D
-                                                                                                            Slow         0.947      4.053
+                                                                                                            Slow         1.342      3.658
 
 
-Slack (MET) :             4.053ns  (requirement - actual skew)
+Slack (MET) :             3.658ns  (requirement - actual skew)
   Endpoint Source:        u_soc/u_accel/u_seq/g_cdc.u_in/rgray_q_reg[1]/C
                             (rising edge-triggered cell FDRE clocked by g_array_clk.clk_mmcm_a)
   Endpoint Destination:   u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][1]/D
@@ -176,10 +176,10 @@ Slack (MET) :             4.053ns  (requirement - actual skew)
                             (rising edge-triggered cell FDRE clocked by clk_mmcm)
   Path Type:              Bus Skew (Max at Slow Process Corner)
   Requirement:            5.000ns
-  Endpoint Relative Delay:    1.965ns
-  Reference Relative Delay:   0.559ns
-  Relative CRPR:              0.459ns
-  Actual Bus Skew:            0.947ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+  Endpoint Relative Delay:    2.130ns
+  Reference Relative Delay:   0.299ns
+  Relative CRPR:              0.489ns
+  Actual Bus Skew:            1.342ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
 
 Endpoint path:
     Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
@@ -194,12 +194,12 @@ Endpoint path:
                                                       0.088     2.950 r  g_array_clk.u_mmcm_array/CLKOUT0
                          net (fo=1, routed)           1.719     4.669    g_array_clk.clk_mmcm_a
     BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.096     4.765 r  g_array_clk.u_bufg_array/O
-                         net (fo=11237, routed)       1.609     6.375    u_soc/u_accel/u_seq/g_cdc.u_in/clk_array
-    SLICE_X53Y78         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/rgray_q_reg[1]/C
+                         net (fo=11246, routed)       1.618     6.384    u_soc/u_accel/u_seq/g_cdc.u_in/clk_array
+    SLICE_X34Y74         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/rgray_q_reg[1]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X53Y78         FDRE (Prop_fdre_C_Q)         0.456     6.831 r  u_soc/u_accel/u_seq/g_cdc.u_in/rgray_q_reg[1]/Q
-                         net (fo=2, routed)           1.051     7.881    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/rgray_q[1]
-    SLICE_X50Y64         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][1]/D
+    SLICE_X34Y74         FDRE (Prop_fdre_C_Q)         0.518     6.902 r  u_soc/u_accel/u_seq/g_cdc.u_in/rgray_q_reg[1]/Q
+                         net (fo=2, routed)           1.111     8.013    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/rgray_q[1]
+    SLICE_X37Y57         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][1]/D
   -------------------------------------------------------------------    -------------------
 
                          (clock clk_mmcm rise edge)
@@ -212,15 +212,15 @@ Endpoint path:
                                                       0.083     2.656 r  u_mmcm/CLKOUT0
                          net (fo=1, routed)           1.639     4.295    clk_mmcm
     BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.091     4.386 r  u_bufg/O
-                         net (fo=3021, routed)        1.506     5.893    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/clk
-    SLICE_X50Y64         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][1]/C
-                         clock pessimism              0.071     5.963    
-    SLICE_X50Y64         FDRE (Setup_fdre_C_D)       -0.047     5.916    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][1]
+                         net (fo=3068, routed)        1.518     5.905    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/clk
+    SLICE_X37Y57         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][1]/C
+                         clock pessimism              0.071     5.975    
+    SLICE_X37Y57         FDRE (Setup_fdre_C_D)       -0.093     5.882    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][1]
   -------------------------------------------------------------------
-                         data arrival                           7.881    
-                         clock arrival                          5.916    
+                         data arrival                           8.013    
+                         clock arrival                          5.882    
   -------------------------------------------------------------------
-                         relative delay                         1.965    
+                         relative delay                         2.130    
 
 Reference path:
     Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
@@ -235,12 +235,12 @@ Reference path:
                                                       0.083     2.796 r  g_array_clk.u_mmcm_array/CLKOUT0
                          net (fo=1, routed)           1.639     4.435    g_array_clk.clk_mmcm_a
     BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.091     4.526 r  g_array_clk.u_bufg_array/O
-                         net (fo=11237, routed)       1.503     6.030    u_soc/u_accel/u_seq/g_cdc.u_in/clk_array
-    SLICE_X51Y63         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/rgray_q_reg[3]/C
+                         net (fo=11246, routed)       1.514     6.041    u_soc/u_accel/u_seq/g_cdc.u_in/clk_array
+    SLICE_X39Y57         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/rgray_q_reg[3]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X51Y63         FDRE (Prop_fdre_C_Q)         0.367     6.397 r  u_soc/u_accel/u_seq/g_cdc.u_in/rgray_q_reg[3]/Q
-                         net (fo=5, routed)           0.568     6.965    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/rgray_q[3]
-    SLICE_X50Y64         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][3]/D
+    SLICE_X39Y57         FDRE (Prop_fdre_C_Q)         0.367     6.408 r  u_soc/u_accel/u_seq/g_cdc.u_in/rgray_q_reg[3]/Q
+                         net (fo=5, routed)           0.309     6.716    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/rgray_q[3]
+    SLICE_X38Y56         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][3]/D
   -------------------------------------------------------------------    -------------------
 
                          (clock clk_mmcm rise edge)
@@ -253,15 +253,15 @@ Reference path:
                                                       0.088     2.803 r  u_mmcm/CLKOUT0
                          net (fo=1, routed)           1.719     4.522    clk_mmcm
     BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.096     4.618 r  u_bufg/O
-                         net (fo=3021, routed)        1.627     6.246    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/clk
-    SLICE_X50Y64         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][3]/C
-                         clock pessimism             -0.071     6.175    
-    SLICE_X50Y64         FDRE (Hold_fdre_C_D)         0.231     6.406    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][3]
+                         net (fo=3068, routed)        1.639     6.258    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/clk
+    SLICE_X38Y56         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][3]/C
+                         clock pessimism             -0.071     6.187    
+    SLICE_X38Y56         FDRE (Hold_fdre_C_D)         0.230     6.417    u_soc/u_accel/u_seq/g_cdc.u_in/u_rptr_sync/sync_q_reg[0][3]
   -------------------------------------------------------------------
-                         data arrival                           6.965    
-                         clock arrival                          6.406    
+                         data arrival                           6.716    
+                         clock arrival                          6.417    
   -------------------------------------------------------------------
-                         relative delay                         0.559    
+                         relative delay                         0.299    
 
 
 
@@ -273,26 +273,26 @@ Endpoints: 6
 From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
 --------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
 g_array_clk.clk_mmcm_a
-                      clk_mmcm              u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][5]/D
-                                                                            u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][2]/D
-                                                                                                            Slow         1.060      3.940
+                      clk_mmcm              u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][0]/D
+                                                                            u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][3]/D
+                                                                                                            Slow         0.735      4.265
 
 
-Slack (MET) :             3.940ns  (requirement - actual skew)
-  Endpoint Source:        u_soc/u_accel/u_seq/g_cdc.u_out/wbin_q_reg[5]/C
+Slack (MET) :             4.265ns  (requirement - actual skew)
+  Endpoint Source:        u_soc/u_accel/u_seq/g_cdc.u_out/wgray_q_reg[0]/C
                             (rising edge-triggered cell FDRE clocked by g_array_clk.clk_mmcm_a)
-  Endpoint Destination:   u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][5]/D
+  Endpoint Destination:   u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][0]/D
                             (rising edge-triggered cell FDRE clocked by clk_mmcm)
-  Reference Source:       u_soc/u_accel/u_seq/g_cdc.u_out/wgray_q_reg[2]/C
+  Reference Source:       u_soc/u_accel/u_seq/g_cdc.u_out/wgray_q_reg[3]/C
                             (rising edge-triggered cell FDRE clocked by g_array_clk.clk_mmcm_a)
-  Reference Destination:  u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][2]/D
+  Reference Destination:  u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][3]/D
                             (rising edge-triggered cell FDRE clocked by clk_mmcm)
   Path Type:              Bus Skew (Max at Slow Process Corner)
   Requirement:            5.000ns
-  Endpoint Relative Delay:    1.929ns
-  Reference Relative Delay:   0.524ns
-  Relative CRPR:              0.345ns
-  Actual Bus Skew:            1.060ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+  Endpoint Relative Delay:    1.761ns
+  Reference Relative Delay:   0.504ns
+  Relative CRPR:              0.521ns
+  Actual Bus Skew:            0.735ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
 
 Endpoint path:
     Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
@@ -307,12 +307,12 @@ Endpoint path:
                                                       0.088     2.950 r  g_array_clk.u_mmcm_array/CLKOUT0
                          net (fo=1, routed)           1.719     4.669    g_array_clk.clk_mmcm_a
     BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.096     4.765 r  g_array_clk.u_bufg_array/O
-                         net (fo=11237, routed)       1.716     6.482    u_soc/u_accel/u_seq/g_cdc.u_out/clk_array
-    SLICE_X77Y52         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/wbin_q_reg[5]/C
+                         net (fo=11246, routed)       1.634     6.400    u_soc/u_accel/u_seq/g_cdc.u_out/clk_array
+    SLICE_X43Y51         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/wgray_q_reg[0]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X77Y52         FDRE (Prop_fdre_C_Q)         0.456     6.938 r  u_soc/u_accel/u_seq/g_cdc.u_out/wbin_q_reg[5]/Q
-                         net (fo=4, routed)           0.952     7.889    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/D[5]
-    SLICE_X77Y51         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][5]/D
+    SLICE_X43Y51         FDRE (Prop_fdre_C_Q)         0.456     6.856 r  u_soc/u_accel/u_seq/g_cdc.u_out/wgray_q_reg[0]/Q
+                         net (fo=1, routed)           0.820     7.676    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/D[0]
+    SLICE_X42Y51         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][0]/D
   -------------------------------------------------------------------    -------------------
 
                          (clock clk_mmcm rise edge)
@@ -325,15 +325,15 @@ Endpoint path:
                                                       0.083     2.656 r  u_mmcm/CLKOUT0
                          net (fo=1, routed)           1.639     4.295    clk_mmcm
     BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.091     4.386 r  u_bufg/O
-                         net (fo=3021, routed)        1.598     5.985    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/clk
-    SLICE_X77Y51         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][5]/C
-                         clock pessimism              0.071     6.055    
-    SLICE_X77Y51         FDRE (Setup_fdre_C_D)       -0.095     5.960    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][5]
+                         net (fo=3068, routed)        1.516     5.903    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/clk
+    SLICE_X42Y51         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][0]/C
+                         clock pessimism              0.071     5.973    
+    SLICE_X42Y51         FDRE (Setup_fdre_C_D)       -0.058     5.915    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][0]
   -------------------------------------------------------------------
-                         data arrival                           7.889    
-                         clock arrival                          5.960    
+                         data arrival                           7.676    
+                         clock arrival                          5.915    
   -------------------------------------------------------------------
-                         relative delay                         1.929    
+                         relative delay                         1.761    
 
 Reference path:
     Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
@@ -348,12 +348,12 @@ Reference path:
                                                       0.083     2.796 r  g_array_clk.u_mmcm_array/CLKOUT0
                          net (fo=1, routed)           1.639     4.435    g_array_clk.clk_mmcm_a
     BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.091     4.526 r  g_array_clk.u_bufg_array/O
-                         net (fo=11237, routed)       1.724     6.250    u_soc/u_accel/u_seq/g_cdc.u_out/clk_array
-    SLICE_X77Y49         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/wgray_q_reg[2]/C
+                         net (fo=11246, routed)       1.512     6.039    u_soc/u_accel/u_seq/g_cdc.u_out/clk_array
+    SLICE_X43Y53         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/wgray_q_reg[3]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X77Y49         FDRE (Prop_fdre_C_Q)         0.367     6.617 r  u_soc/u_accel/u_seq/g_cdc.u_out/wgray_q_reg[2]/Q
-                         net (fo=1, routed)           0.541     7.158    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/D[2]
-    SLICE_X76Y49         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][2]/D
+    SLICE_X43Y53         FDRE (Prop_fdre_C_Q)         0.367     6.406 r  u_soc/u_accel/u_seq/g_cdc.u_out/wgray_q_reg[3]/Q
+                         net (fo=1, routed)           0.515     6.921    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/D[3]
+    SLICE_X42Y53         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][3]/D
   -------------------------------------------------------------------    -------------------
 
                          (clock clk_mmcm rise edge)
@@ -366,15 +366,15 @@ Reference path:
                                                       0.088     2.803 r  u_mmcm/CLKOUT0
                          net (fo=1, routed)           1.719     4.522    clk_mmcm
     BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.096     4.618 r  u_bufg/O
-                         net (fo=3021, routed)        1.856     6.475    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/clk
-    SLICE_X76Y49         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][2]/C
-                         clock pessimism             -0.071     6.404    
-    SLICE_X76Y49         FDRE (Hold_fdre_C_D)         0.230     6.634    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][2]
+                         net (fo=3068, routed)        1.635     6.254    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/clk
+    SLICE_X42Y53         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][3]/C
+                         clock pessimism             -0.071     6.183    
+    SLICE_X42Y53         FDRE (Hold_fdre_C_D)         0.233     6.416    u_soc/u_accel/u_seq/g_cdc.u_out/u_wptr_sync/sync_q_reg[0][3]
   -------------------------------------------------------------------
-                         data arrival                           7.158    
-                         clock arrival                          6.634    
+                         data arrival                           6.921    
+                         clock arrival                          6.416    
   -------------------------------------------------------------------
-                         relative delay                         0.524    
+                         relative delay                         0.504    
 
 
 
@@ -386,26 +386,26 @@ Endpoints: 6
 From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
 --------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
 clk_mmcm              g_array_clk.clk_mmcm_a
-                                            u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][0]/D
-                                                                            u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][5]/D
-                                                                                                            Slow         1.202      3.798
+                                            u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][1]/D
+                                                                            u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][4]/D
+                                                                                                            Slow         0.806      4.194
 
 
-Slack (MET) :             3.798ns  (requirement - actual skew)
-  Endpoint Source:        u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[0]/C
+Slack (MET) :             4.194ns  (requirement - actual skew)
+  Endpoint Source:        u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[1]/C
                             (rising edge-triggered cell FDRE clocked by clk_mmcm)
-  Endpoint Destination:   u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][0]/D
+  Endpoint Destination:   u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][1]/D
                             (rising edge-triggered cell FDRE clocked by g_array_clk.clk_mmcm_a)
-  Reference Source:       u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[5]/C
+  Reference Source:       u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[4]/C
                             (rising edge-triggered cell FDRE clocked by clk_mmcm)
-  Reference Destination:  u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][5]/D
+  Reference Destination:  u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][4]/D
                             (rising edge-triggered cell FDRE clocked by g_array_clk.clk_mmcm_a)
   Path Type:              Bus Skew (Max at Slow Process Corner)
   Requirement:            5.000ns
-  Endpoint Relative Delay:    1.806ns
-  Reference Relative Delay:   0.170ns
-  Relative CRPR:              0.433ns
-  Actual Bus Skew:            1.202ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+  Endpoint Relative Delay:    1.523ns
+  Reference Relative Delay:   0.195ns
+  Relative CRPR:              0.522ns
+  Actual Bus Skew:            0.806ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
 
 Endpoint path:
     Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
@@ -420,12 +420,12 @@ Endpoint path:
                                                       0.088     2.803 r  u_mmcm/CLKOUT0
                          net (fo=1, routed)           1.719     4.522    clk_mmcm
     BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.096     4.618 r  u_bufg/O
-                         net (fo=3021, routed)        1.856     6.475    u_soc/u_accel/u_seq/g_cdc.u_out/clk
-    SLICE_X75Y49         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[0]/C
+                         net (fo=3068, routed)        1.635     6.254    u_soc/u_accel/u_seq/g_cdc.u_out/clk
+    SLICE_X47Y51         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[1]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X75Y49         FDRE (Prop_fdre_C_Q)         0.456     6.931 r  u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[0]/Q
-                         net (fo=2, routed)           1.013     7.944    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/rgray_q[0]
-    SLICE_X76Y50         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][0]/D
+    SLICE_X47Y51         FDRE (Prop_fdre_C_Q)         0.456     6.710 r  u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[1]/Q
+                         net (fo=2, routed)           0.830     7.540    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/rgray_q[1]
+    SLICE_X45Y51         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][1]/D
   -------------------------------------------------------------------    -------------------
 
                          (clock g_array_clk.clk_mmcm_a rise edge)
@@ -438,15 +438,15 @@ Endpoint path:
                                                       0.083     2.796 r  g_array_clk.u_mmcm_array/CLKOUT0
                          net (fo=1, routed)           1.639     4.435    g_array_clk.clk_mmcm_a
     BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.091     4.526 r  g_array_clk.u_bufg_array/O
-                         net (fo=11237, routed)       1.595     6.122    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/clk_array
-    SLICE_X76Y50         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][0]/C
-                         clock pessimism              0.071     6.192    
-    SLICE_X76Y50         FDRE (Setup_fdre_C_D)       -0.054     6.138    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][0]
+                         net (fo=11246, routed)       1.513     6.040    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/clk_array
+    SLICE_X45Y51         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][1]/C
+                         clock pessimism              0.071     6.110    
+    SLICE_X45Y51         FDRE (Setup_fdre_C_D)       -0.093     6.017    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][1]
   -------------------------------------------------------------------
-                         data arrival                           7.944    
-                         clock arrival                          6.138    
+                         data arrival                           7.540    
+                         clock arrival                          6.017    
   -------------------------------------------------------------------
-                         relative delay                         1.806    
+                         relative delay                         1.523    
 
 Reference path:
     Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
@@ -461,12 +461,12 @@ Reference path:
                                                       0.083     2.656 r  u_mmcm/CLKOUT0
                          net (fo=1, routed)           1.639     4.295    clk_mmcm
     BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.091     4.386 r  u_bufg/O
-                         net (fo=3021, routed)        1.597     5.984    u_soc/u_accel/u_seq/g_cdc.u_out/clk
-    SLICE_X75Y53         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[5]/C
+                         net (fo=3068, routed)        1.513     5.900    u_soc/u_accel/u_seq/g_cdc.u_out/clk
+    SLICE_X46Y54         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[4]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X75Y53         FDRE (Prop_fdre_C_Q)         0.367     6.351 r  u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[5]/Q
-                         net (fo=4, routed)           0.401     6.751    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/rgray_q[5]
-    SLICE_X75Y52         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][5]/D
+    SLICE_X46Y54         FDRE (Prop_fdre_C_Q)         0.418     6.318 r  u_soc/u_accel/u_seq/g_cdc.u_out/rgray_q_reg[4]/Q
+                         net (fo=2, routed)           0.376     6.693    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/rgray_q[4]
+    SLICE_X45Y54         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][4]/D
   -------------------------------------------------------------------    -------------------
 
                          (clock g_array_clk.clk_mmcm_a rise edge)
@@ -479,15 +479,15 @@ Reference path:
                                                       0.088     2.950 r  g_array_clk.u_mmcm_array/CLKOUT0
                          net (fo=1, routed)           1.719     4.669    g_array_clk.clk_mmcm_a
     BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.096     4.765 r  g_array_clk.u_bufg_array/O
-                         net (fo=11237, routed)       1.716     6.482    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/clk_array
-    SLICE_X75Y52         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][5]/C
-                         clock pessimism             -0.071     6.411    
-    SLICE_X75Y52         FDRE (Hold_fdre_C_D)         0.170     6.581    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][5]
+                         net (fo=11246, routed)       1.633     6.399    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/clk_array
+    SLICE_X45Y54         FDRE                                         r  u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][4]/C
+                         clock pessimism             -0.071     6.328    
+    SLICE_X45Y54         FDRE (Hold_fdre_C_D)         0.170     6.498    u_soc/u_accel/u_seq/g_cdc.u_out/u_rptr_sync/sync_q_reg[0][4]
   -------------------------------------------------------------------
-                         data arrival                           6.751    
-                         clock arrival                          6.581    
+                         data arrival                           6.693    
+                         clock arrival                          6.498    
   -------------------------------------------------------------------
-                         relative delay                         0.170    
+                         relative delay                         0.195    
 
 
 

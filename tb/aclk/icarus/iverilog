@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# The iverilog on PATH, unchanged: cocotb takes iverilog and vvp from one
+# directory (ICARUS_BIN_DIR), and only vvp needs wrapping (see vvp here).
+here="$(dirname "$(readlink -f "$0")")"
+for d in $(echo "$PATH" | tr ':' ' '); do
+  if [ -x "$d/iverilog" ] && [ "$(readlink -f "$d")" != "$here" ]; then
+    exec "$d/iverilog" "$@"
+  fi
+done
+echo "iverilog not found on PATH" >&2
+exit 1

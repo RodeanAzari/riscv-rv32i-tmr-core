@@ -238,6 +238,17 @@ ifdef TEST_ONE
   ifeq ($(TOPLEVEL),axi_xbar)
     COMPILE_ARGS        += -GN=3 -GM=2 -GS_BASE=64\'h2000000000000000 -GS_MASK=64\'hFFFFF000F0000000
   endif
+  # aclk_tb: the array clock control driving AMD's MMCME2_ADV model from the
+  # Vivado install (Phase H box 4). Icarus, not Verilator (the unisim is
+  # timed Verilog), and local only: make aclk-check, not in make sim.
+  ifeq ($(TOPLEVEL),aclk_tb)
+    UNISIM              ?= $(HOME)/Xilinx/2025.2/data/verilog/src
+    SIM                 := icarus
+    ICARUS_BIN_DIR      := $(REPO)/tb/aclk/icarus
+    VERILOG_SOURCES     := $(REPO)/tb/aclk/aclk_tb.sv $(REPO)/rtl/periph/array_clk_ctl.sv \
+                           $(REPO)/rtl/cdc/cdc_sync.sv $(UNISIM)/unisims/MMCME2_ADV.v $(UNISIM)/glbl.v
+    COMPILE_ARGS        := -DFORMAL -s glbl
+  endif
   # The fault campaign breaks the pipeline's invariants on purpose, so the
   # core's in-RTL properties (FORMAL, --assert) would stop it at the first
   # flip: its build leaves them out, and has a build directory of its own.

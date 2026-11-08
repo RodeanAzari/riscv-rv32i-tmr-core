@@ -1,0 +1,44 @@
+# gemmtest on the Arty A7-100T, single core 100 MHz, systolic array on its own MMCME2_ADV (ARRAY_CDC = 1, make impl CDC=1, VCO 800 MHz), reprogrammed by the core through the DRP (ACLK, sw/lib/aclk.c): /8 = 100 MHz as configured, /10 = 80 MHz, back to /8. Loaded with scripts/load.py after a DTR board reset, 2026-11-08; five runs, all 22/22.
+# Checked by scripts/gemm_board_check.py: every job's CYCLES equals sw/model/accel_cdc_model.py at a phase the clocks allow (phase 0 at /8; 0, 2.5, 5, 7.5 or 10 ns at /10), 13 jobs x 5 runs, 0 failures. /8 jobs identical in every run; /10 jobs differ by one cycle between runs (the relock's phase): run 1 below, the /10 cycles of runs 2-5 after it.
+
+gemmtest: 16x16 array, 16384-byte buffers, status 0x0
+gemmtest: 1x1x1 ok, job 52 cycles, call 746, core 123
+gemmtest: 16x16x16 ok, job 67 cycles, call 2630, core 285920
+gemmtest: 5x7x9 ok, job 56 cycles, call 2468, core 22931
+gemmtest: 3x33x17 ok, job 309 cycles, call 5954, core 117565
+gemmtest: 2x40x3 ok, job 153 cycles, call 5701, core 16944
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 809584
+gemmtest: array clock /10, rc 0, 141 cycles
+gemmtest: 1x1x1 ok, job 62 cycles, call 756, core 124
+gemmtest: 16x16x16 ok, job 81 cycles, call 2640, core 289072
+gemmtest: 5x7x9 ok, job 66 cycles, call 2478, core 23181
+gemmtest: 3x33x17 ok, job 371 cycles, call 6014, core 116224
+gemmtest: 2x40x3 ok, job 183 cycles, call 5731, core 16952
+gemmtest: 24x20x24 ok, job 353 cycles, call 11775, core 816064
+gemmtest: array clock /8, rc 0, 141 cycles
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 815488
+gemmtest: last a 0x3000 w 0x33c0 c 0x4a00
+gemmtest: 22/22 ok
+
+rv32i bootloader: send a program (scripts/load.py), or r to rerun the last one
+
+run 2 /10 jobs: 62 81 66 371 183 353 
+run 3 /10 jobs: 61 80 66 371 183 353 
+run 4 /10 jobs: 62 81 67 371 184 354 
+run 5 /10 jobs: 62 81 67 371 183 353 
+
+# scripts/gemm_board_check.py on run 1:
+ok   /8  1x1x1: 52 cycles, phase [0] ps
+ok   /8  16x16x16: 67 cycles, phase [0] ps
+ok   /8  5x7x9: 56 cycles, phase [0] ps
+ok   /8  3x33x17: 309 cycles, phase [0] ps
+ok   /8  2x40x3: 153 cycles, phase [0] ps
+ok   /8  24x20x24: 291 cycles, phase [0] ps
+ok   /10 1x1x1: 62 cycles, phase [0, 5000, 7500, 10000] ps
+ok   /10 16x16x16: 81 cycles, phase [0, 7500, 10000] ps
+ok   /10 5x7x9: 66 cycles, phase [2500] ps
+ok   /10 3x33x17: 371 cycles, phase [0, 7500, 10000] ps
+ok   /10 2x40x3: 183 cycles, phase [2500, 5000, 7500, 10000] ps
+ok   /10 24x20x24: 353 cycles, phase [2500, 5000, 7500, 10000] ps
+ok   /8  24x20x24: 291 cycles, phase [0] ps
+13 jobs, 0 failures

@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
 ---------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
-| Date         : Sun Nov  8 11:56:18 2026
+| Date         : Sun Nov  8 13:46:01 2026
 | Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
 | Command      : report_clock_interaction -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/clock_interaction_board_cdc.rpt
 | Design       : arty_a7_top
@@ -18,9 +18,9 @@ Clock Interaction Table
                                                 WNS                            TNS Failing  TNS Total    WNS Path         Clock-Pair           Inter-Clock              
 From Clock              To Clock                Clock Edges  WNS(ns)  TNS(ns)    Endpoints    Endpoints  Requirement(ns)  Classification       Constraints              
 ----------------------  ----------------------  -----------  -------  -------  -----------  -----------  ---------------  -------------------  -----------------------  
-clk_mmcm                clk_mmcm                rise - rise     0.33     0.00            0        11526            10.00  Clean                Timed                    
-clk_mmcm                g_array_clk.clk_mmcm_a  rise - rise     1.76     0.00            0         2443            10.00  Ignored              Max Delay Datapath Only  
-g_array_clk.clk_mmcm_a  clk_mmcm                rise - rise     6.96     0.00            0          525            10.00  Ignored              Max Delay Datapath Only  
-g_array_clk.clk_mmcm_a  g_array_clk.clk_mmcm_a  rise - rise     0.13     0.00            0        33206            10.00  Clean                Timed                    
+clk_mmcm                clk_mmcm                rise - rise     0.17     0.00            0        11682            10.00  Clean                Timed                    
+clk_mmcm                g_array_clk.clk_mmcm_a  rise - rise     1.59     0.00            0         2443            10.00  Ignored              Max Delay Datapath Only  
+g_array_clk.clk_mmcm_a  clk_mmcm                rise - rise     6.86     0.00            0          525            10.00  Ignored              Max Delay Datapath Only  
+g_array_clk.clk_mmcm_a  g_array_clk.clk_mmcm_a  rise - rise     0.17     0.00            0        33215            10.00  Clean                Timed                    
 
 

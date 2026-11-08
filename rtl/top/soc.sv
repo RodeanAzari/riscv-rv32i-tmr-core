@@ -21,6 +21,9 @@
 //                            flipped in copy B's pc, once (ignored without TMR)
 //   0x1000_0018  BUSERR   R: bit 0 = an AXI access answered SLVERR/DECERR
 //                            (sticky; a load from it read 0)   W: clears it
+//   0x1000_001C  ACLK     the array MMCM's DRP, RST and LOCKED
+//                            (rtl/periph/array_clk_ctl.sv; word stores
+//                            only); reads 0 without ARRAY_CDC
 //   0x2000_0000  AXI      the AXI4-Lite region (Phase G): the DMA engine's
 //                            registers at 0x2000_0000-0x2000_0FFF (DMA-Engine's
 //                            map, rtl/bus/dmaeng.sv); the GEMM accelerator's
@@ -68,6 +71,16 @@ module soc #(
     input  logic       clk_i,
     input  logic       rst_i,
     input  logic       clk_array_i,
+    // the array MMCM's reset, lock and DRP (ACLK; DCLK is clk_i). With
+    // ARRAY_CDC = 0 the outputs are 0 and the inputs unused.
+    output logic        aclk_rst_o,
+    input  logic        aclk_locked_i,
+    output logic        drp_den_o,
+    output logic        drp_dwe_o,
+    output logic [6:0]  drp_daddr_o,
+    output logic [15:0] drp_di_o,
+    input  logic [15:0] drp_do_i,
+    input  logic        drp_drdy_i,
     output logic [3:0] led_o,
     output logic       uart_tx_o,
     input  logic       uart_rx_i,
@@ -100,6 +113,7 @@ module soc #(
   localparam logic [2:0] IO_CYCLE   = 3'd4;
   localparam logic [2:0] IO_TMR     = 3'd5;
   localparam logic [2:0] IO_BUSERR  = 3'd6;
+  localparam logic [2:0] IO_ACLK    = 3'd7;
   localparam logic [3:0] REGION_AXI = 4'h2;
   localparam int unsigned DMA_OFF_W = 12;      // the DMA's 4 KiB register window
   localparam int unsigned ACC_OFF_W = 12;      // the accelerator's, likewise
@@ -628,6 +642,43 @@ module soc #(
       .m_rready_o  (acc_rready)
   );
 
+  // ---- array clock control (ACLK) ----
+  // The accelerator is held in reset while the array MMCM is in reset or
+  // not locked (array_clk_ctl.sv), so it never runs on an unlocked clock.
+  logic        accel_rst, aclk_hold;
+  logic [31:0] aclk_rdata;
+
+  if (ARRAY_CDC) begin : g_aclk
+    array_clk_ctl u_aclk (
+        .clk_i         (clk_i),
+        .rst_i         (rst_i),
+        .we_i          (io_we && (dmem_addr[4:2] == IO_ACLK)),
+        .wdata_i       (dmem_wdata),
+        .rdata_o       (aclk_rdata),
+        .array_rst_o   (aclk_hold),
+        .mmcm_rst_o    (aclk_rst_o),
+        .mmcm_locked_i (aclk_locked_i),
+        .drp_den_o     (drp_den_o),
+        .drp_dwe_o     (drp_dwe_o),
+        .drp_daddr_o   (drp_daddr_o),
+        .drp_di_o      (drp_di_o),
+        .drp_do_i      (drp_do_i),
+        .drp_drdy_i    (drp_drdy_i)
+    );
+  end else begin : g_aclk_none
+    assign aclk_rdata  = '0;
+    assign aclk_hold   = 1'b0;
+    assign aclk_rst_o  = 1'b0;
+    assign drp_den_o   = 1'b0;
+    assign drp_dwe_o   = 1'b0;
+    assign drp_daddr_o = '0;
+    assign drp_di_o    = '0;
+    logic unused_aclk;
+    assign unused_aclk = ^{aclk_locked_i, drp_do_i, drp_drdy_i};
+  end
+
+  assign accel_rst = rst_i || aclk_hold;
+
   gemm_accel #(
       .ROWS      (16),
       .COLS      (16),
@@ -636,7 +687,7 @@ module soc #(
       .ARRAY_CDC (ARRAY_CDC)
   ) u_accel (
       .clk_i       (clk_i),
-      .rst_i       (rst_i),
+      .rst_i       (accel_rst),
       .clk_array_i (clk_array_i),
       .s_awaddr_i  (acc_awaddr[ACC_OFF_W-1:0]),
       .s_awvalid_i (acc_awvalid),
@@ -819,6 +870,7 @@ module soc #(
         IO_CYCLE:   io_rdata_q <= cycle_q;
         IO_TMR:     io_rdata_q <= tmr_mismatches;
         IO_BUSERR:  io_rdata_q <= {31'b0, bus_err};
+        IO_ACLK:    io_rdata_q <= aclk_rdata;
         default:    io_rdata_q <= '0;
       endcase
     end

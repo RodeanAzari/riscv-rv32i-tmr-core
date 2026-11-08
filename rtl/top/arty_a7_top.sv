@@ -9,13 +9,18 @@
 // is where the clock is chosen, and its deskew is part of the timing.
 //
 // Array clock (ARRAY_CDC = 1, make impl CDC=1; Phase H): the systolic array
-// runs on clk_array, from a second MMCM, 100 MHz by default. Its own MMCM,
-// not a second output of the core's: reprogramming an MMCM (DRP, box 4)
-// holds it in reset, which would stop the core's clock too. With
-// ARRAY_CDC = 0 there is no second MMCM and clk_array is clk.
+// runs on clk_array, from a second MMCM, 100 MHz at configuration. Its own
+// MMCM, not a second output of the core's: software reprograms it through
+// its DRP (the SoC's ACLK register, rtl/periph/array_clk_ctl.sv), which
+// holds it in reset and would stop the core's clock too. VCO 800 MHz (x8),
+// so CLKOUT0's integer divide alone gives 100 MHz (/8) and 80 (/10) without
+// touching the VCO, lock or filter settings. DCLK is the core clock. The
+// SoC holds the accelerator in reset while this MMCM is unlocked; the
+// SoC's own reset does not wait for it. With ARRAY_CDC = 0 there is no
+// second MMCM and clk_array is clk.
 //
-// Reset: held while the red RESET button (active low) is pressed or an MMCM
-// is not locked, and for RST_HOLD clocks after all clear. The request is
+// Reset: held while the red RESET button (active low) is pressed or the
+// core's MMCM is not locked, and for RST_HOLD clocks after all clear. The request is
 // synchronised first -- both sources are asynchronous to the core clock --
 // and the release then shifts in a 1 per clock. Out of configuration the
 // chain is all zeros (a Xilinx flop powers up to its INIT value, 0), so the
@@ -27,7 +32,7 @@
 // ILA = 0, the default, they are left unconnected and trimmed, so the timing
 // and utilization the reports track are the design's own.
 //
-// MMCME2_BASE and BUFG are Xilinx primitives. Lint reads stand-in models of
+// MMCME2_BASE, MMCME2_ADV and BUFG are Xilinx primitives. Lint reads stand-in models of
 // them from tb/models/; Vivado uses the real ones. Simulation runs soc.sv,
 // not this module.
 module arty_a7_top #(
@@ -70,23 +75,38 @@ module arty_a7_top #(
       .O (clk)
   );
 
-  logic clk_array, locked_array;
+  logic        clk_array, locked_array, aclk_rst, drp_den, drp_dwe, drp_drdy;
+  logic [6:0]  drp_daddr;
+  logic [15:0] drp_di, drp_do;
   if (ARRAY_CDC) begin : g_array_clk
     logic clk_fb_a, clk_mmcm_a;
 
-    MMCME2_BASE #(
+    // sw/model/mmcm_drp.py's MULT, DIVCLK, OUT0_DIV
+    MMCME2_ADV #(
         .CLKIN1_PERIOD    (10.0),
         .DIVCLK_DIVIDE    (1),
-        .CLKFBOUT_MULT_F  (10.0),
-        .CLKOUT0_DIVIDE_F (10.0)
+        .CLKFBOUT_MULT_F  (8.0),
+        .CLKOUT0_DIVIDE_F (8.0)
     ) u_mmcm_array (
         .CLKIN1   (clk100_i),
+        .CLKIN2   (1'b0),
+        .CLKINSEL (1'b1),
         .CLKFBIN  (clk_fb_a),
         .CLKFBOUT (clk_fb_a),
         .CLKOUT0  (clk_mmcm_a),
         .LOCKED   (locked_array),
+        .DCLK     (clk),
+        .DADDR    (drp_daddr),
+        .DEN      (drp_den),
+        .DWE      (drp_dwe),
+        .DI       (drp_di),
+        .DO       (drp_do),
+        .DRDY     (drp_drdy),
+        .PSCLK    (1'b0),
+        .PSEN     (1'b0),
+        .PSINCDEC (1'b0),
         .PWRDWN   (1'b0),
-        .RST      (1'b0)
+        .RST      (aclk_rst)
     );
 
     BUFG u_bufg_array (
@@ -96,6 +116,10 @@ module arty_a7_top #(
   end else begin : g_array_clk_none
     assign clk_array    = clk;
     assign locked_array = 1'b1;
+    assign drp_do       = '0;
+    assign drp_drdy     = 1'b0;
+    logic unused_drp;
+    assign unused_drp = ^{aclk_rst, drp_den, drp_dwe, drp_daddr, drp_di};
   end
 
   // ---- reset ----
@@ -104,7 +128,7 @@ module arty_a7_top #(
   logic                rst;
 
   always_ff @(posedge clk) begin
-    rst_req_q <= {rst_req_q[0], !rst_ni || !locked || !locked_array};
+    rst_req_q <= {rst_req_q[0], !rst_ni || !locked};
     if (rst_req_q[1]) rst_n_q <= '0;
     else              rst_n_q <= {rst_n_q[RST_HOLD-2:0], 1'b1};
   end
@@ -131,6 +155,14 @@ module arty_a7_top #(
       .clk_i                   (clk),
       .rst_i                   (rst),
       .clk_array_i             (clk_array),
+      .aclk_rst_o              (aclk_rst),
+      .aclk_locked_i           (locked_array),
+      .drp_den_o               (drp_den),
+      .drp_dwe_o               (drp_dwe),
+      .drp_daddr_o             (drp_daddr),
+      .drp_di_o                (drp_di),
+      .drp_do_i                (drp_do),
+      .drp_drdy_i              (drp_drdy),
       .led_o                   (led_o),
       .uart_tx_o               (uart_tx_o),
       .uart_rx_i               (uart_rx_i),

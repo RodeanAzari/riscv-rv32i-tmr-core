@@ -112,11 +112,13 @@ gemm-model:
 # layouts, registers, tiling, refused shapes and cycle count around
 # gemm_model's arithmetic, checked against gemm() on the unpacked matrices.
 # Then the same with the array on its own clock (sw/model/accel_cdc_model.py,
-# Phase H): CYCLES edge by edge, C from the stream it schedules.
+# Phase H): CYCLES edge by edge, C from the stream it schedules; and the
+# array MMCM's DRP (sw/model/mmcm_drp.py, box 4).
 .PHONY: accel-model
 accel-model:
 	$(GEMM_PY) sw/model/accel_model.py
 	$(GEMM_PY) sw/model/accel_cdc_model.py
+	$(GEMM_PY) sw/model/mmcm_drp.py
 
 # The DMA engine's golden model (sw/model/dmaeng_model.py, ported from
 # DMA-Engine's QEMU device) replays DMA-Engine's golden trace and runs the
@@ -307,10 +309,11 @@ $(FW_BUILD)/boot_dma_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/dmatest.bin 
 	python3 scripts/mkimage.py $(FW_BUILD)/boot.bin $(FW_BUILD)/apps/dmatest.bin $@
 
 # The GEMM accelerator self-test (sw/apps/gemmtest.c) with its driver
-# (sw/lib/gemm.c), which moves the matrices with the DMA driver.
-$(FW_BUILD)/apps/gemmtest.elf: sw/apps/gemmtest.c sw/lib/gemm.c sw/lib/gemm.h sw/lib/dma.c sw/lib/dma.h $(DMA_INC)/dmaeng_regs.h $(APP_DEPS)
+# (sw/lib/gemm.c), which moves the matrices with the DMA driver, and the
+# array clock driver (sw/lib/aclk.c).
+$(FW_BUILD)/apps/gemmtest.elf: sw/apps/gemmtest.c sw/lib/gemm.c sw/lib/gemm.h sw/lib/dma.c sw/lib/dma.h sw/lib/aclk.c sw/lib/aclk.h $(DMA_INC)/dmaeng_regs.h $(APP_DEPS)
 	@mkdir -p $(@D)
-	$(RISCV_PREFIX)gcc $(APP_CFLAGS) -I$(DMA_INC) -o $@ sw/app/crt0.S sw/lib/io.c sw/lib/dma.c sw/lib/gemm.c $< -lgcc
+	$(RISCV_PREFIX)gcc $(APP_CFLAGS) -I$(DMA_INC) -o $@ sw/app/crt0.S sw/lib/io.c sw/lib/dma.c sw/lib/gemm.c sw/lib/aclk.c $< -lgcc
 
 apps: $(FW_BUILD)/boot_gemm_sim.hex
 
@@ -460,6 +463,28 @@ CDC_FIFO ?= 259x16
 synth-cdc:
 	$(VIVADO) -mode batch -nojournal -notrace \
 		-source syn/synth_ooc.tcl -tclargs $(PART) cdc_async_fifo $(subst x, ,$(CDC_FIFO))
+
+# --- array clock control against AMD's own code (Phase H box 4) -----------
+# Local only: reads the Vivado install (VIVADO_DATA), as synth does. First
+# the golden model's DRP words (sw/model/mmcm_drp.py) against AMD's
+# mmcm_pll_count_calc for every divide 1-128; then array_clk_ctl.sv driving
+# AMD's MMCME2_ADV simulation model (Icarus, tb/cocotb/test_aclk.py):
+# 100 -> 80 -> 100 -> 80 MHz measured on its output.
+VIVADO_DATA ?= $(HOME)/Xilinx/2025.2/data
+ACLK_BUILD  := tb/aclk/build
+
+.PHONY: aclk-check
+aclk-check:
+	@test -f $(VIVADO_DATA)/ip/xilinx/clk_wiz_v6_0/mmcm_pll_drp_func_7s_mmcm.vh || \
+		{ echo "aclk-check: no Vivado data at $(VIVADO_DATA)"; exit 1; }
+	$(GEMM_PY) sw/model/mmcm_drp.py
+	@mkdir -p $(ACLK_BUILD)
+	iverilog -g2005 -I $(VIVADO_DATA)/ip/xilinx/clk_wiz_v6_0 -o $(ACLK_BUILD)/table.vvp tb/aclk/amd_divider_table.v
+	vvp -n $(ACLK_BUILD)/table.vvp | grep -v finish > $(ACLK_BUILD)/amd.txt
+	$(GEMM_PY) sw/model/mmcm_drp.py --table > $(ACLK_BUILD)/model.txt
+	diff $(ACLK_BUILD)/amd.txt $(ACLK_BUILD)/model.txt
+	@echo "aclk-check: model's DRP words = AMD's, divides 1-$$(wc -l < $(ACLK_BUILD)/model.txt)"
+	$(MAKE) -C tb/cocotb TEST_ONE=aclk_tb:test_aclk UNISIM=$(VIVADO_DATA)/verilog/src
 
 # --- TMR fault injection ---------------------------------------------------
 # The documented campaign (CLAUDE.md 5.7): FAULTS random single-bit flips into

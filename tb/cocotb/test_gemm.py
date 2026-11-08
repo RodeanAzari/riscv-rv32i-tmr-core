@@ -18,10 +18,17 @@ What matters and why:
   - the job's cycle count on the SoC is the contract measured in the
     block test: utilization figures quoted from it hold here too.
 
-Built with ARRAY_CDC = 1 (soc_cdc), the array runs on clk_array_i at
-ARRAY_PS, slower than the core, and each job's cycles must equal
-sw/model/accel_cdc_model.py's at the phase that job started at (the core
-edge where the accelerator's busy rose, against the array clock's edges).
+Built with ARRAY_CDC = 1 (soc_cdc), the array runs on clk_array_i from a
+stand-in for the array MMCM (mmcm_bfm.py: the golden model's registers and
+rules, DRP latency, runt pulses before LOCKED), and gemmtest reprograms it
+through the ACLK register (sw/lib/aclk.c): the shapes at /8 (as the core,
+20 ns), again at /10 (25 ns, slower than the core, so the input FIFO
+fills), then back at /8. Each job's cycles must equal
+sw/model/accel_cdc_model.py's at the clock and phase that job started on
+(the core edge where the accelerator's busy rose, against that clock's
+edges); the clock must have gone through exactly those periods; and at
+every array clock edge while the MMCM is in reset or unlocked, the array
+side of the accelerator must be in reset.
 """
 
 from pathlib import Path
@@ -31,25 +38,37 @@ import sys
 import cocotb
 import numpy as np
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge, Timer
+from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge
 from cocotb.utils import get_sim_time
 
+from mmcm_bfm import MmcmBfm
 from test_demo import CLK_PERIOD_NS, CLKS_PER_BIT, uart_out
 from test_soc import assert_no_tmr_mismatch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sw" / "model"))
 import accel_model as am  # noqa: E402
 import accel_cdc_model as acm  # noqa: E402
+import mmcm_drp as md  # noqa: E402
 
-# soc_cdc: the array's clock, slower than the core's (20 ns), so the input
-# FIFO fills; its first edge this far after the core clock's start
-ARRAY_PS, ARRAY_OFFSET_PS = 31_000, 7_000
+# soc_cdc: the board's array clock periods, scaled as the core's (10 ns on
+# the board, 20 here); /8 at configuration, gemmtest's /10, then /8 again
+ARRAY_PERIODS_PS = [20_000, 25_000, 20_000]
 
 
 async def watch_busy(dut, rises):
     while True:
         await RisingEdge(dut.u_accel.u_seq.busy_o)
         rises.append(get_sim_time("ps"))
+
+
+async def watch_held(dut, bfm, bad):
+    """No array clock edge while the MMCM is unsafe unless the array side
+    is in reset."""
+    rst_a = dut.u_accel.rst_a
+    while True:
+        await RisingEdge(dut.clk_array_i)
+        if bfm.unsafe() and not int(rst_a.value):
+            bad.append(get_sim_time("ps"))
 
 
 def ram_bytes(dut, addr, length):
@@ -68,13 +87,14 @@ async def test_gemmtest(dut):
     cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start())
     dut.uart_rx_i.value = 1
     dut.rst_i.value = 1
-    rises, a0 = [], None
+    rises, bfm, unheld = [], None, []
     if cdc:
-        await Timer(ARRAY_OFFSET_PS, unit="ps")
-        cocotb.start_soon(Clock(dut.clk_array_i, ARRAY_PS, unit="ps").start())
-        await RisingEdge(dut.clk_array_i)
-        a0 = get_sim_time("ps")
+        # a different phase against the core's edges at every lock
+        bfm = MmcmBfm(dut, scale=CLK_PERIOD_NS * 1000 // md.IN_PS,
+                      offsets=(7_000, 3_300, 11_900))
+        bfm.start()
         cocotb.start_soon(watch_busy(dut, rises))
+        cocotb.start_soon(watch_held(dut, bfm, unheld))
     await ClockCycles(dut.clk_i, 5)
     await FallingEdge(dut.clk_i)
     dut.rst_i.value = 0
@@ -99,18 +119,26 @@ async def test_gemmtest(dut):
     assert "FAIL" not in text and "WRONG" not in text
 
     jobs = re.findall(r"gemmtest: (\d+)x(\d+)x(\d+) ok, job (\d+) cycles", text)
+    changes = re.findall(r"gemmtest: array clock /(\d+), rc (-?\d+)", text)
     assert len(jobs) >= 6, "gemmtest ran fewer shapes than it has"
     if cdc:
+        assert changes == [("10", "0"), ("8", "0")], f"clock changes: {changes}"
+        assert [p for _, p in bfm.segments] == ARRAY_PERIODS_PS, f"array clock periods {bfm.segments}"
+        assert not unheld, f"array clock edges outside reset while unlocked at {unheld[:5]} ps"
+        assert bfm.model.regs[md.CLKOUT0_REG1] & 0x1000, "CLKOUT0's enable bit not kept"
         # the shapes' jobs, then the one refused shape
         assert len(rises) == len(jobs) + 1, f"{len(rises)} jobs started, {len(jobs)} reported + 1 refused"
+    else:
+        assert not changes, "the clock control answered without ARRAY_CDC"
     for i, (m, k, n, cyc) in enumerate(jobs):
         m, k, n, cyc = int(m), int(k), int(n), int(cyc)
         want = am.job_cycles(m, k, n, 16, 16)
         if cdc:
             acc = am.Accel()
             acc.m, acc.k, acc.n = m, k, n
-            phase = (a0 - rises[i]) % ARRAY_PS
-            want = acm.stream_job(acc, CLK_PERIOD_NS * 1000, ARRAY_PS, phase)
+            e0, period = [seg for seg in bfm.segments if seg[0] <= rises[i]][-1]
+            phase = (e0 - rises[i]) % period
+            want = acm.stream_job(acc, CLK_PERIOD_NS * 1000, period, phase)
         assert cyc == want, f"{m}x{k}x{n}: job {cyc} cycles, model {want}"
         util = m * k * n / (cyc * 256)
         dut._log.info(f"{m}x{k}x{n}: {cyc} cycles, PE utilization {100 * util:.1f}%")

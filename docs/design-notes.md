@@ -386,7 +386,46 @@ history, [formal-properties.md](formal-properties.md) and
      - `gemm_accel` feeds the array-side reset synchronizer from a registered
        copy of `rst_i`, so `rst_i` itself stays a purely synchronous reset
        (no SYNCASYNCNET up the hierarchy, a glitch-free source).
-  5. Then box 4 (DRP registers) and the 80-vs-100 MHz regression and board run.
+  5. **Box 4, DRP** (2026-11-08; `rtl/periph/array_clk_ctl.sv`,
+     `sw/model/mmcm_drp.py`, `sw/lib/aclk.c`; measurements.md "Array clock:
+     DRP"). One I/O register, ACLK (0x1000_001C): raw DRP access (address,
+     data, write, GO; DO and BUSY back), the MMCM's RST as written, LOCKED
+     synchronised. Software does AMD's flow (the clocking wizard's own state
+     machine, read from the Vivado install, not memory): RST, per register
+     read then write (read & mask) | bits, release, wait LOCKED. Decisions:
+     - **VCO 800 MHz (x8), only CLKOUT0's divide changes**: /8 = 100 MHz,
+       /10 = 80, integer both, so the lock and filter tables (VCO-dependent)
+       are never rewritten. Faster or finer clocks (P5) need M, lock and
+       filter too: the register gives raw access, the model and check do not
+       cover it yet.
+     - **Hardware holds the accelerator in reset** while RST is high or
+       LOCKED (synchronised) low, ORed into its rst_i, whatever software
+       does; its existing reset synchronizers (slice 3) then keep the clk_i
+       side and the READYs held until clk_array has run clean edges. So a
+       change is "stop" by reset: the job in flight is lost, registers come
+       back at reset values, the buffers keep their contents; software
+       changes the clock between jobs. The SoC's own reset no longer waits
+       for the array's LOCKED.
+     - DCLK is the core clock (no crossing); DEN once, never again before
+       DRDY (UG472), proven by a DEN count in the test, not just asserted.
+     - **Checked against AMD's own code**, local only (`make aclk-check`):
+       the model's DRP words against `mmcm_pll_count_calc` for divides
+       1-128, and the RTL driving AMD's `MMCME2_ADV` model under Icarus
+       (100 → 80 → 100 → 80 MHz measured on its output; relock 0.91 µs).
+       OSS CAD Suite's `vvp` wrapper sets PYTHONHOME to its own Python,
+       which cocotb's embedded venv Python cannot start with:
+       `tb/aclk/icarus/` runs the same binary without it (cocotb otherwise
+       fails silently and the simulator spins with no stimulus).
+     - The SoC test (`soc_cdc:test_gemm`) drives the array clock from
+       `tb/cocotb/mmcm_bfm.py`: the model's registers and rules, random
+       DRDY latency, runt pulses between RST and LOCKED, a new phase per
+       lock. An in-RTL assertion on an input must compare values sampled at
+       one edge: written combinationally, it fired on DRDY falling in the
+       same timestep as busy.
+     - On the board both MMCMs share the oscillator: at /10 an array edge
+       meets a core edge every 50 ns, so a job starts at one of five phases
+       (0, 2.5, 5, 7.5, 10 ns); `scripts/gemm_board_check.py` requires each
+       job's CYCLES to be the model's at one of them.
   Above core clock the array gains little (fed one row per core cycle; only
   the drain shortens); that is fine for P5, whose point is the errors.
 

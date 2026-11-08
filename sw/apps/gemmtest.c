@@ -8,12 +8,18 @@
  *   2. shapes from 1x1x1 to several tiles each way, K and N on and off the
  *      16-lane edges: C exact, the job's cycles from CYCLES, the whole call's
  *      (DMA in, job, DMA out) and the core's own multiply, timed
- *   3. a shape the buffers cannot hold: refused, nothing run
+ *   3. with an array clock to control (ARRAY_CDC; sw/lib/aclk.h): the array
+ *      MMCM reprogrammed to divide 10 (80 MHz on the board), the shapes
+ *      again, then back to 8 (100 MHz) and one more; each change locks and
+ *      leaves the accelerator idle
+ *   4. a shape the buffers cannot hold: refused, nothing run
  *
  * Prints a line per shape and a summary; the test reads "gemmtest: N/N ok",
- * each shape's job cycles (which must equal the golden model's), and the
- * last shape's matrix addresses, and checks that C in RAM itself.
+ * each shape's job cycles (which must equal the golden model's at the clock
+ * it ran on), and the last shape's matrix addresses, and checks that C in
+ * RAM itself.
  */
+#include "aclk.h"
 #include "gemm.h"
 #include "io.h"
 
@@ -113,6 +119,22 @@ int main(void)
     };
     for (uint32_t i = 0; i < sizeof shapes / sizeof shapes[0]; i++)
         one(shapes[i][0], shapes[i][1], shapes[i][2]);
+
+    if (aclk_present()) {
+        static const uint8_t divides[] = {10, 8};
+        for (uint32_t d = 0; d < sizeof divides; d++) {
+            uint32_t t0 = CYCLE;
+            int rc = aclk_set_divide(divides[d]);
+            uint32_t t = CYCLE - t0;
+            check(rc == 0, "array clock locks");
+            check(GEMM_REG(GEMM_STATUS) == 0, "idle after the clock change");
+            printf_("gemmtest: array clock /%u, rc %d, %u cycles\r\n", divides[d], rc, t);
+            if (d == 0)
+                for (uint32_t i = 0; i < sizeof shapes / sizeof shapes[0]; i++)
+                    one(shapes[i][0], shapes[i][1], shapes[i][2]);
+        }
+        one(24, 20, 24);
+    }
     printf_("gemmtest: last a 0x%x w 0x%x c 0x%x\r\n",
             (uint32_t)(uintptr_t)a, (uint32_t)(uintptr_t)w, (uint32_t)(uintptr_t)c);
 
