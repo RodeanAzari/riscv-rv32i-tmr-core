@@ -335,7 +335,7 @@ A phase is done when **every** box is checked. No partial credit.
 ### Phase H — Integration + DFT
 - [ ] M extension (RV32IM), first thing after Phase G: a parameter defaulting to off so every Stage 1 result stays valid for RV32I; riscv-formal M checks, UVM golden model + coverage, TMR, CoreMark, synth trend rerun with RV32IM in their own rows
 - [ ] Array clock domain (P5 and P7 depend on it): `clk_array` from its own MMCM output, defaulting to the core clock; async FIFOs for data, pulse or handshake synchronizers for control and status, a reset synchronizer in `clk_array`; `set_clock_groups -asynchronous` in the XDC; Vivado `report_cdc` shows no unsafe crossings
-- [ ] Weight-transform stage in the weight-load path, identity by default, the array itself untouched
+- [x] Weight-transform stage in the weight-load path, identity by default, the array itself untouched: on clk_i before the input FIFO (P5 0009), `WX_EXT` ports with load order and sideband (P5 0010), contract in `rtl/accel/gemm_accel_seq.sv`; `test_weight_order`, `test_weight_transform`
 - [x] MMCM DRP behind core-accessible registers: software changes `clk_array` at runtime (part of `soc-v2.0`, which P5 and P7 wait on): ACLK, `rtl/periph/array_clk_ctl.sv`, `sw/lib/aclk.c`; on the board 100 → 80 → 100 MHz by the core, `docs/reports/gemmtest_board_cdc_drp.txt`
 - [ ] End-to-end on hardware: C program loads weights via DMA, launches GEMM, reads results
 - [ ] Full regression and the hardware GEMM test pass with `clk_array` at a different frequency from the core (e.g. 80 MHz vs. 100 MHz)

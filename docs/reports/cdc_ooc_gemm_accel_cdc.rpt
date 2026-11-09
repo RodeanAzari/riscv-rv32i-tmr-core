@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
 ---------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
-| Date         : Sun Nov  8 12:02:25 2026
+| Date         : Mon Nov  9 11:24:47 2026
 | Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
 | Command      : report_cdc -details -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/cdc_ooc_gemm_accel_cdc.rpt
 | Design       : gemm_accel

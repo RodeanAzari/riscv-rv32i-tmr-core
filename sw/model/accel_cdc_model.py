@@ -87,24 +87,19 @@ def tiles(acc):
     m, k, n = acc.m, acc.k, acc.n
     kt_n, nt_n = am.ceil_div(k, r), am.ceil_div(n, c)
     abuf = np.frombuffer(bytes(acc.a), dtype=np.int8).astype(np.int64)
-    wbuf = np.frombuffer(bytes(acc.w), dtype=np.int8).astype(np.int64)
+    beats = iter(am.weight_beats(acc.w, k, n, r, c))
     out = []
-    for nt in range(nt_n):
-        col_ok = (nt * c + np.arange(c)) < n
-        for kt in range(kt_n):
-            ent = []
-            for i in range(r - 1, -1, -1):          # row ROWS - 1 first
-                kk = kt * r + i
-                row = np.zeros(c, dtype=np.int64)
-                if kk < k:
-                    line = kk * nt_n + nt
-                    row = np.where(col_ok, wbuf[line * c:(line + 1) * c], 0)
-                ent.append(("shift", row))
-            ent.append(("swap", None))
-            for mm in range(m):
-                line = mm * kt_n + kt
-                ent.append(("row", abuf[line * r:(line + 1) * r]))
-            out.append((nt, kt, ent))
+    for nt, kt in am.tile_order(k, n, r, c):
+        ent = []
+        for _ in range(r):                          # row ROWS - 1 first
+            b = next(beats)
+            lanes = b.w if acc.wx is None else np.asarray(acc.wx(b), dtype=np.int64)
+            ent.append(("shift", np.where(b.pad, 0, ((lanes + 128) & 0xFF) - 128)))
+        ent.append(("swap", None))
+        for mm in range(m):
+            line = mm * kt_n + kt
+            ent.append(("row", abuf[line * r:(line + 1) * r]))
+        out.append((nt, kt, ent))
     return out
 
 
@@ -293,6 +288,7 @@ def clone(acc):
     b = am.Accel(acc.rows, acc.cols, acc.buf_bytes)
     b.a[:], b.w[:], b.c[:] = acc.a, acc.w, acc.c
     b.m, b.k, b.n = acc.m, acc.k, acc.n
+    b.wx = acc.wx
     return b
 
 
@@ -363,6 +359,17 @@ def main():
                     if cyc < lo:
                         fail(f"{name}: {cyc} cycles, below the bound {lo}")
                     count(f"{rows}x{cols} through the FIFOs, C exact, CYCLES >= bound")
+
+            # a weight transform (w ^ 1) goes through the stream as it is:
+            # C of the transformed W, the CYCLES of the identity
+            wx = clone(acc)
+            wx.wx = lambda b: b.w ^ 1
+            t_array = CLOCKS[int(rng.integers(len(CLOCKS)))][1]
+            phase = int(rng.integers(t_array))
+            if stream_job(wx, 10_000, t_array, phase) != stream_job(clone(acc), 10_000, t_array, phase):
+                fail(f"{rows}x{cols} {m}x{k}x{n} w ^ 1: CYCLES differ from the identity's")
+            check_c(wx, a, w ^ 1, bytes(acc.c), f"{rows}x{cols} {m}x{k}x{n} w ^ 1")
+            count(f"{rows}x{cols} transform w ^ 1 through the FIFOs")
 
         # refused shapes: nothing computed, CHECK_CYCLES, whatever the clocks
         for m, k, n in ((0, 1, 1), (1, 0, 1), (1, 1, 0), (buf // rows + 1, 1, 1)):

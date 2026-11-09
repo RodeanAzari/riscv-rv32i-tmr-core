@@ -34,6 +34,10 @@
 // while rst_c is high (the slaves' READYs are high in reset, and a
 // handshake then would be lost), so an access in that window waits. With 0,
 // rst_c is rst_i and nothing is held.
+//
+// wx_*: the weight-transform hook (Phase H), on clk_i; ports, timing and
+// load order in gemm_accel_seq.sv's header. WX_EXT = 0 (default) is the
+// identity and leaves wx_w_i unused; 1 loads wx_w_i into the array.
 module gemm_accel #(
     parameter  int unsigned ROWS      = 16,
     parameter  int unsigned COLS      = 16,
@@ -42,9 +46,12 @@ module gemm_accel #(
     parameter  int unsigned ARRAY_OUT_DEPTH = 32,
     parameter  int unsigned BUF_BYTES = 16384,
     parameter  int unsigned OFF_W     = 12,
+    parameter  bit          WX_EXT    = 1'b0,
     localparam int unsigned ADDR_W    = 32,
     localparam int unsigned DATA_W    = 32,
-    localparam int unsigned STRB_W    = DATA_W / 8
+    localparam int unsigned STRB_W    = DATA_W / 8,
+    localparam int unsigned DIM_W     = 16,
+    localparam int unsigned ROW_W     = $clog2(ROWS)
 ) (
     input  logic              clk_i,
     input  logic              rst_i,
@@ -94,10 +101,19 @@ module gemm_accel #(
     output logic              d_wready_o,
     output logic [1:0]        d_bresp_o,
     output logic              d_bvalid_o,
-    input  logic              d_bready_i
+    input  logic              d_bready_i,
+
+    // weight-transform hook (gemm_accel_seq.sv)
+    output logic              wx_start_o,
+    output logic              wx_valid_o,
+    output logic [DIM_W-1:0]  wx_kt_o,
+    output logic [DIM_W-1:0]  wx_nt_o,
+    output logic [ROW_W-1:0]  wx_row_o,
+    output logic [COLS-1:0]   wx_pad_o,
+    output logic [COLS*8-1:0] wx_w_o,
+    input  logic [COLS*8-1:0] wx_w_i
 );
 
-  localparam int unsigned DIM_W   = 16;
   localparam int unsigned NB_A    = ROWS / 4;           // banks per line
   localparam int unsigned NB_W    = COLS / 4;
   localparam int unsigned NB_C    = COLS;
@@ -203,7 +219,8 @@ module gemm_accel #(
       .A_LINES     (A_LINES),
       .W_LINES     (W_LINES),
       .C_LINES     (C_LINES),
-      .DIM_W       (DIM_W)
+      .DIM_W       (DIM_W),
+      .WX_EXT      (WX_EXT)
   ) u_seq (
       .clk_i       (clk_i),
       .rst_i       (rst_c),
@@ -224,7 +241,15 @@ module gemm_accel #(
       .c_rdata_i   (e_c_rdata),
       .c_we_o      (e_c_we),
       .c_waddr_o   (e_c_waddr),
-      .c_wdata_o   (e_c_wdata)
+      .c_wdata_o   (e_c_wdata),
+      .wx_start_o  (wx_start_o),
+      .wx_valid_o  (wx_valid_o),
+      .wx_kt_o     (wx_kt_o),
+      .wx_nt_o     (wx_nt_o),
+      .wx_row_o    (wx_row_o),
+      .wx_pad_o    (wx_pad_o),
+      .wx_w_o      (wx_w_o),
+      .wx_w_i      (wx_w_i)
   );
 
   // ---- the bus side: one word at a time, waiting while busy ----

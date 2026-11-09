@@ -333,7 +333,8 @@ history, [formal-properties.md](formal-properties.md) and
      holds **credits** (rows sent − rows received ≤ depth) and never sends a
      row the output FIFO could not take. C accumulation becomes pop-driven
      (read C on pop, add and write next cycle, 1 row/cycle). The weight-
-     transform hook (box 3) sits on the array side of the input FIFO.
+     transform hook (box 3) was planned on the array side of the input
+     FIFO; moved to the clk_i side (see 6).
      **Done 2026-11-08** (`gemm_accel_seq.sv` `g_cdc`, `gemm_accel.sv`
      resets; measurements.md "Array clock domain: stream"): CYCLES equal to
      the model at every clock tried. What it took beyond the plan:
@@ -426,6 +427,41 @@ history, [formal-properties.md](formal-properties.md) and
        meets a core edge every 50 ns, so a job starts at one of five phases
        (0, 2.5, 5, 7.5, 10 ns); `scripts/gemm_board_check.py` requires each
        job's CYCLES to be the model's at one of them.
+  6. **Box 3, weight-transform hook** (2026-11-09; P5's requests 0009 and
+     0010; `gemm_accel_seq.sv` header has the port contract, the model
+     `weight_beats()` and `Accel.wx` in `accel_model.py`). Decisions:
+     - **On clk_i, before the input FIFO** (whatever ARRAY_CDC), not the
+       array side first planned: P5 overclocks clk_array to make the
+       *array* fail, and its transform adds ±ε·z that the update replays
+       from the seed; a transform under the overclock would corrupt z and
+       break replay. Only the array sees clk_array.
+     - **Plugged in by ports, not by editing**: P5 consumes the SoC as a
+       submodule. `WX_EXT` (soc, gemm_accel, sequencer; default 0 =
+       identity, `wx_w_i` unused) makes the array load `wx_w_i`; the beat
+       always goes out on `wx_*` (open and trimmed on the board top).
+       Same pattern as the DRP ports.
+     - **Combinational, no stall, no latency**: the hook sees the beat
+       registered with the shift (`shift_q`), returns lanes the same
+       cycle, so CYCLES never change with the transform. A unit with state
+       (P5's PRNG) precomputes for the next beat. A latency would mean
+       delaying the control word too; not asked for.
+     - **Pad lanes go in as 0 after the hook**, whatever it returns: a
+       transform cannot make A's padding bytes (unmasked) count, or write
+       non-zero C past N.
+     - **Sideband**: valid (= the shift), kt, nt, row within the tile, pad per
+       lane, a start pulse when a shape is accepted (none for a refused
+       one). Order: tiles N outer, K inner; rows ROWS-1 down to 0; every
+       row of every tile including all-pad rows; each weight exactly once
+       per job (M is streamed in one pass per tile).
+     - Tests: `test_weight_order` records every beat at the ports against
+       `weight_beats()` and, independently, each W[k][n] once at its lane;
+       `test_weight_transform` (builds `gemm_accel_4x4_wx`,
+       `gemm_accel_4x4_cdc_wx`) runs w ^ 1 at every clock of ARRAY_CLOCKS:
+       C = gemm(A, W ^ 1), CYCLES as the identity's. The bench drives
+       `wx_w_i` at the falling edge from that cycle's `wx_w_o`, which is a
+       combinational hook's timing; the builds without WX_EXT drive garbage
+       there. Five planted bugs (hook ignored, pad not re-zeroed, row
+       unregistered, start on a refused shape, kt/nt swapped) each caught.
   Above core clock the array gains little (fed one row per core cycle; only
   the drain shortens); that is fine for P5, whose point is the errors.
 

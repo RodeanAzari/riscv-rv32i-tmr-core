@@ -28,6 +28,15 @@ match exactly, as must every byte of C. Each test picks its array clock
 from ARRAY_CLOCKS (logged); test_clock_ratios runs them all, edge-sharing
 ones included. With ARRAY_CDC = 0 the same tests show clk_array_i changes
 nothing.
+
+The weight-transform hook (wx_*, contract in gemm_accel_seq.sv): the bench
+drives wx_w_i at every falling edge of clk_i from that cycle's wx_w_o, which
+is how a combinational hook behaves (the beat is stable from one rising edge
+to the next, where it is taken). Built with WX_EXT = 1 (*_wx) every test
+runs through it, identity unless one sets a transform; built without, the
+bench drives garbage there, which must change nothing. test_weight_order
+checks every beat against weight_beats(), the documented load order (P5's
+request 0010); test_weight_transform, C of the transformed W (0009).
 """
 
 import os
@@ -62,6 +71,9 @@ SLOW_RESET_CLOCK = (403_000, 41_000)
 _clocks = []      # running clock tasks
 _cdc = {}         # array clock: period "ta", a rising edge "a0"; "rises" of busy_o
 MAX_BEATS = 16
+# the hook: "fn" maps wx_w_o (an int, lane j at bits 8j) to wx_w_i, None is
+# the identity; "log" records start pulses and beats when it is a list
+_hook = {"fn": None, "log": None}
 
 
 def shape_of(dut):
@@ -274,6 +286,29 @@ async def watch_busy(dut, rises):
         rises.append(get_sim_time("ps"))
 
 
+async def drive_hook(dut, rng):
+    """At each falling edge of clk_i: wx_w_i from this cycle's beat, and the
+    record, if one is kept."""
+    ext = bool(int(dut.WX_EXT.value))
+    cols = int(dut.COLS.value)
+    while True:
+        await FallingEdge(dut.clk_i)
+        w = int(dut.wx_w_o.value)
+        if ext:
+            dut.wx_w_i.value = w if _hook["fn"] is None else _hook["fn"](w)
+        else:
+            dut.wx_w_i.value = rng.getrandbits(8 * cols)
+        log = _hook["log"]
+        if log is not None:
+            if int(dut.wx_start_o.value):
+                log.append("start")
+            if int(dut.wx_valid_o.value):
+                pad = int(dut.wx_pad_o.value)
+                log.append((int(dut.wx_kt_o.value), int(dut.wx_nt_o.value), int(dut.wx_row_o.value),
+                            tuple(bool(pad >> j & 1) for j in range(cols)),
+                            tuple((((w >> 8 * j) & 0xFF) ^ 0x80) - 0x80 for j in range(cols))))
+
+
 async def reset(dut, array_clock=None):
     """Both clocks (the array's from ARRAY_CLOCKS: the one given, or one at
     random), then a reset of a few core cycles."""
@@ -293,6 +328,8 @@ async def reset(dut, array_clock=None):
     await RisingEdge(dut.clk_array_i)
     _cdc.update(ta=ta, a0=get_sim_time("ps"), rises=[])
     _clocks.append(cocotb.start_soon(watch_busy(dut, _cdc["rises"])))
+    _hook.update(fn=None, log=None)
+    _clocks.append(cocotb.start_soon(drive_hook(dut, random.Random(ta + off))))
     for name in ("s_awvalid_i", "s_wvalid_i", "s_bready_i", "s_arvalid_i", "s_rready_i",
                  "d_awvalid_i", "d_wvalid_i", "d_bready_i", "d_arvalid_i", "d_rready_i",
                  "d_wlast_i"):
@@ -477,3 +514,83 @@ async def test_reset_slow_array(dut):
         await b.start(m, b.rows, b.cols)
         await b.check(f"{m} rows, started at once after a reset")
         assert np.array_equal(am.unpack_c(b.model.c, m, b.cols, b.cols), am.gemm(a, w))
+
+
+def expected_beats(model, k, n):
+    """The record weight_beats() says one job leaves."""
+    out = ["start"]
+    for bt in am.weight_beats(model.w, k, n, model.rows, model.cols):
+        out.append((bt.kt, bt.nt, bt.row, tuple(bool(p) for p in bt.pad),
+                    tuple(int(x) for x in bt.w)))
+    return out
+
+
+@cocotb.test()
+async def test_weight_order(dut):
+    """Every beat at the hook against weight_beats(): tile, row, pad flag and
+    weight on every lane, in order, one start pulse before the first. K and
+    N off the tile edges, M over several array heights (M never repeats a
+    load), every weight seen exactly once; a refused shape sends neither a
+    start nor a beat."""
+    await reset(dut)
+    b = Bench(dut, rng_for(dut))
+    r, c = b.rows, b.cols
+    shapes = [(1, 1, 1), (3 * r + 1, 2 * r + 3, c + 1), (2 * r, r - 1, 2 * c + 3), (5, 3 * r, c)]
+    shapes = [s_ for s_ in shapes if b.fits(*s_)]
+    for m, k, n in shapes:
+        await b.fill_c()
+        a, w = b.i8(m, k), b.i8(k, n)
+        await b.load(a, w)
+        _hook["log"] = []
+        await b.start(m, k, n)
+        await b.check(f"{m}x{k}x{n}")
+        got, want = _hook["log"], expected_beats(b.model, k, n)
+        _hook["log"] = None
+        assert len(got) == len(want), f"{m}x{k}x{n}: {len(got)} records, want {len(want)}"
+        for i, (g, x) in enumerate(zip(got, want)):
+            assert g == x, f"{m}x{k}x{n}: record {i} is {g}, want {x}"
+        # independently of weight_beats: each weight of W once, at its lane
+        seen = {}
+        for kt, nt, row, pad, lanes in got[1:]:
+            for j in range(c):
+                kk, nn = kt * r + row, nt * c + j
+                assert pad[j] == (kk >= k or nn >= n), f"pad flag at ({kk}, {nn})"
+                if not pad[j]:
+                    assert (kk, nn) not in seen and lanes[j] == w[kk, nn], f"weight ({kk}, {nn})"
+                    seen[(kk, nn)] = 1
+        assert len(seen) == k * n
+    _hook["log"] = []
+    await b.start(0, 1, 1)
+    await b.check("refused")
+    assert _hook["log"] == [], f"a refused shape sent {_hook['log'][:3]}"
+    _hook["log"] = None
+    dut._log.info(f"{len(shapes)} jobs, every beat as weight_beats()")
+
+
+@cocotb.test()
+async def test_weight_transform(dut):
+    """With WX_EXT = 1, a transform on every lane (w XOR 1, pad lanes too):
+    C is the GEMM of the transformed W and pad lanes still go in as 0, at
+    every clock of ARRAY_CLOCKS with ARRAY_CDC, so the transform is applied
+    before the crossing (the beats are only on clk_i). CYCLES as the
+    model's, unchanged by the transform. With WX_EXT = 0 the bench drives
+    garbage on wx_w_i and C is the plain GEMM."""
+    rng = rng_for(dut)
+    ext = bool(int(dut.WX_EXT.value))
+    for clk in ARRAY_CLOCKS if ext else ARRAY_CLOCKS[:2]:
+        await reset(dut, clk)
+        b = Bench(dut, rng)
+        r, c = b.rows, b.cols
+        if ext:
+            ones = int.from_bytes(bytes([1] * c), "little")
+            _hook["fn"] = lambda w: w ^ ones
+            b.model.wx = lambda bt: bt.w ^ 1
+        for m, k, n in ((1, 1, 1), (r + 3, 2 * r + 1, c + 1), (2, r - 1, 2 * c - 1)):
+            await b.fill_c()
+            a, w = b.i8(m, k), b.i8(k, n)
+            await b.load(a, w)
+            await b.start(m, k, n)
+            await b.check(f"{m}x{k}x{n} at {clk}")
+            want = am.gemm(a, w ^ 1) if ext else am.gemm(a, w)
+            assert np.array_equal(am.unpack_c(b.model.c, m, n, c), want)
+    dut._log.info("transform applied" if ext else "wx_w_i ignored")

@@ -37,6 +37,27 @@
 // whatever the clocks. The array side's reset is rst_array_i, synchronous to
 // clk_array_i (gemm_accel.sv makes both resets). ARRAY_CDC = 0 is the direct path,
 // cycle for cycle the Phase G sequencer (CYCLES = job_cycles()).
+//
+// Weight-transform hook (Phase H; P5's requests 0009 and 0010), on clk_i, so
+// before the input FIFO whatever ARRAY_CDC: each weight shift goes out on
+// wx_* and, with WX_EXT = 1, what comes back on wx_w_i is what the array
+// loads (identity with 0, wx_w_i unused). Golden model: weight_beats() and
+// Accel.wx in sw/model/accel_model.py. Contract, all on clk_i:
+//   wx_start_o  one cycle when a job's shape is accepted, before its first
+//               beat (a refused shape sends neither)
+//   wx_valid_o  a beat: one weight shift, COLS lanes; at most one a cycle,
+//               not every cycle (gaps between rows with ARRAY_CDC)
+//   wx_kt_o, wx_nt_o, wx_row_o   the beat's tile and row: lane j holds
+//               W[kt*ROWS + row][nt*COLS + j]
+//   wx_pad_o    per lane, the row is past K or the column past N; such a
+//               lane carries 0 on wx_w_o and goes in as 0 whatever wx_w_i is
+//   wx_w_o      the weights, INT8 per lane, lane j at bits j*8 +: 8
+//   wx_w_i      the transformed weights, same layout, combinational from
+//               the same cycle's beat (no latency, no stall)
+// The sideband and weights are meaningful only with wx_valid_o. Order: per
+// tile, N outer and K inner, rows ROWS - 1 down to 0, every row of every
+// tile (all-pad rows too); each weight is in exactly one beat of a job, and
+// M never repeats a load.
 module gemm_accel_seq #(
     parameter  int unsigned ROWS    = 16,
     parameter  int unsigned COLS    = 16,
@@ -48,11 +69,13 @@ module gemm_accel_seq #(
     parameter  int unsigned IN_DEPTH    = 16,  // ARRAY_CDC: entries to the array
     parameter  int unsigned OUT_DEPTH   = 32,  // ARRAY_CDC: rows of sums back
     parameter  int unsigned SYNC_STAGES = 2,   // ARRAY_CDC: synchronizer flops
+    parameter  bit          WX_EXT      = 1'b0, // weights through wx_w_i
     localparam int unsigned A_AW    = $clog2(A_LINES),
     localparam int unsigned W_AW    = $clog2(W_LINES),
     localparam int unsigned C_AW    = $clog2(C_LINES),
     localparam int unsigned DATA_W  = 8,
-    localparam int unsigned ACC_W   = 32
+    localparam int unsigned ACC_W   = 32,
+    localparam int unsigned ROW_W   = $clog2(ROWS)
 ) (
     input  logic                       clk_i,
     input  logic                       rst_i,
@@ -75,7 +98,17 @@ module gemm_accel_seq #(
     input  logic [COLS*ACC_W-1:0]      c_rdata_i,
     output logic                       c_we_o,
     output logic [C_AW-1:0]            c_waddr_o,
-    output logic [COLS*ACC_W-1:0]      c_wdata_o
+    output logic [COLS*ACC_W-1:0]      c_wdata_o,
+
+    // weight-transform hook (header)
+    output logic                       wx_start_o,
+    output logic                       wx_valid_o,
+    output logic [DIM_W-1:0]           wx_kt_o,
+    output logic [DIM_W-1:0]           wx_nt_o,
+    output logic [ROW_W-1:0]           wx_row_o,
+    output logic [COLS-1:0]            wx_pad_o,
+    output logic [COLS*DATA_W-1:0]     wx_w_o,
+    input  logic [COLS*DATA_W-1:0]     wx_w_i
 );
 
   localparam int unsigned LOG_R = $clog2(ROWS);
@@ -114,6 +147,7 @@ module gemm_accel_seq #(
   // ---- the array's inputs, one cycle behind the reads ----
   logic             valid_q, swap_q, shift_q, row_ok_q;
   logic [COLS-1:0]  colmask_q;
+  logic [LOG_R-1:0] row_q;                      // the shift's row of the tile
 
   // adv: the next entry may be read this cycle (always, unless ARRAY_CDC)
   logic             adv, issue;
@@ -136,21 +170,34 @@ module gemm_accel_seq #(
       shift_q   <= 1'b0;
       row_ok_q  <= 1'b0;
       colmask_q <= '0;
+      row_q     <= '0;
     end else begin
       valid_q   <= issue && state_q == S_STREAM;
       swap_q    <= issue && state_q == S_SWAP;
       shift_q   <= issue && state_q == S_LOAD;
       row_ok_q  <= k_row < {{(CNT_W-DIM_W){1'b0}}, k_q};
       colmask_q <= colmask;
+      row_q     <= li_q;
     end
   end
 
-  logic [COLS-1:0][DATA_W-1:0] w_in;
+  // the weights as read (pad lanes 0), through the hook, pad lanes 0 again
+  logic [COLS-1:0]             pad;
+  logic [COLS-1:0][DATA_W-1:0] w_rd, w_in;
   always_comb begin
     for (int c = 0; c < COLS; c++) begin
-      w_in[c] = (row_ok_q && colmask_q[c]) ? w_rdata_i[c*DATA_W +: DATA_W] : '0;
+      pad[c]  = !(row_ok_q && colmask_q[c]);
+      w_rd[c] = pad[c] ? '0 : w_rdata_i[c*DATA_W +: DATA_W];
+      w_in[c] = pad[c] ? '0 : (WX_EXT ? wx_w_i[c*DATA_W +: DATA_W] : w_rd[c]);
     end
   end
+
+  assign wx_valid_o = shift_q;
+  assign wx_kt_o    = kt_q;
+  assign wx_nt_o    = nt_q;
+  assign wx_row_o   = row_q;
+  assign wx_pad_o   = pad;
+  assign wx_w_o     = w_rd;
 
   logic                        arr_valid;
   logic [COLS-1:0][ACC_W-1:0]  arr_c;
@@ -357,6 +404,7 @@ module gemm_accel_seq #(
   assign busy_o  = state_q != S_IDLE;
   assign done_o  = tile_end && last_kt && last_nt;
   assign error_o = state_q == S_CHK2 && !shape_ok();
+  assign wx_start_o = state_q == S_CHK2 && shape_ok();
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
@@ -468,6 +516,7 @@ module gemm_accel_seq #(
   // Line numbers wrap in the buffers' address widths: past K the reads are
   // masked, and an accepted shape never needs more.
   logic unused_seq;
-  assign unused_seq = ^{a_addr_q[CNT_W-1:A_AW], w_addr_q[CNT_W-1:W_AW], c_ptr_q[CNT_W-1:C_AW]};
+  assign unused_seq = ^{a_addr_q[CNT_W-1:A_AW], w_addr_q[CNT_W-1:W_AW], c_ptr_q[CNT_W-1:C_AW],
+                        WX_EXT ? 1'b0 : ^wx_w_i};
 
 endmodule

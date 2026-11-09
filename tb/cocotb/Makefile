@@ -101,6 +101,8 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          gemm_accel:test_gemm_accel \
          gemm_accel_4x4_cdc:test_gemm_accel \
          gemm_accel_cdc:test_gemm_accel \
+         gemm_accel_4x4_wx:test_gemm_accel \
+         gemm_accel_4x4_cdc_wx:test_gemm_accel \
          soc:test_soc \
          soc:test_coremark \
          soc:test_boot \
@@ -178,6 +180,13 @@ ifdef TEST_ONE
     ARRAY_SHAPE         := $(subst x, ,$(patsubst systolic_array_%,%,$(TOPLEVEL)))
     COMPILE_ARGS        += -GROWS=$(word 1,$(ARRAY_SHAPE)) -GCOLS=$(word 2,$(ARRAY_SHAPE))
     TOPLEVEL            := systolic_array
+  endif
+  # gemm_accel*_wx: built with WX_EXT = 1 (Phase H, the weight-transform
+  # hook), the array loading wx_w_i, which the bench drives (identity, or a
+  # transform in test_weight_transform). Stripped first, then as without.
+  ifneq ($(filter gemm_accel%_wx,$(TOPLEVEL)),)
+    TOPLEVEL            := $(patsubst %_wx,%,$(TOPLEVEL))
+    COMPILE_ARGS        += -GWX_EXT=1
   endif
   # gemm_accel[_<ROWS>x<COLS>]_cdc: built with ARRAY_CDC = 1 (Phase H), the
   # array on clk_array_i; the tests then take CYCLES from accel_cdc_model.

@@ -66,7 +66,10 @@ module soc #(
     parameter bit          M_EXT     = 1'b0,
     // The systolic array on clk_array_i (gemm_accel ARRAY_CDC, Phase H).
     // With 0, clk_array_i is unused.
-    parameter bit          ARRAY_CDC = 1'b0
+    parameter bit          ARRAY_CDC = 1'b0,
+    // Weight-transform hook (gemm_accel WX_EXT, Phase H): with 1 the array
+    // loads wx_w_i; with 0 (identity) wx_w_i is unused.
+    parameter bit          WX_EXT    = 1'b0
 ) (
     input  logic       clk_i,
     input  logic       rst_i,
@@ -81,6 +84,16 @@ module soc #(
     output logic [15:0] drp_di_o,
     input  logic [15:0] drp_do_i,
     input  logic        drp_drdy_i,
+    // the accelerator's weight-transform hook, on clk_i (contract in
+    // rtl/accel/gemm_accel_seq.sv); a 16x16 array
+    output logic         wx_start_o,
+    output logic         wx_valid_o,
+    output logic [15:0]  wx_kt_o,
+    output logic [15:0]  wx_nt_o,
+    output logic [3:0]   wx_row_o,
+    output logic [15:0]  wx_pad_o,
+    output logic [127:0] wx_w_o,
+    input  logic [127:0] wx_w_i,
     output logic [3:0] led_o,
     output logic       uart_tx_o,
     input  logic       uart_rx_i,
@@ -684,7 +697,8 @@ module soc #(
       .COLS      (16),
       .BUF_BYTES (ACC_BUF),
       .OFF_W     (ACC_OFF_W),
-      .ARRAY_CDC (ARRAY_CDC)
+      .ARRAY_CDC (ARRAY_CDC),
+      .WX_EXT    (WX_EXT)
   ) u_accel (
       .clk_i       (clk_i),
       .rst_i       (accel_rst),
@@ -730,7 +744,15 @@ module soc #(
       .d_wready_o  (xbuf_wready),
       .d_bresp_o   (xbuf_bresp),
       .d_bvalid_o  (xbuf_bvalid),
-      .d_bready_i  (xbuf_bready)
+      .d_bready_i  (xbuf_bready),
+      .wx_start_o  (wx_start_o),
+      .wx_valid_o  (wx_valid_o),
+      .wx_kt_o     (wx_kt_o),
+      .wx_nt_o     (wx_nt_o),
+      .wx_row_o    (wx_row_o),
+      .wx_pad_o    (wx_pad_o),
+      .wx_w_o      (wx_w_o),
+      .wx_w_i      (wx_w_i)
   );
 
   logic unused_acc;

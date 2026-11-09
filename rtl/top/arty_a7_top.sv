@@ -144,6 +144,12 @@ module arty_a7_top #(
   logic [31:0] mem_wb_pc, mem_wb_instr, wb_rd_wdata;
   logic [4:0]  wb_rd_addr;
   logic        wb_rd_we, halt;
+  // The weight-transform hook: identity here (soc's WX_EXT = 0), so its
+  // outputs are open; P5 plugs its own unit in at its own top.
+  logic         wx_start, wx_valid;
+  logic [15:0]  wx_kt, wx_nt, wx_pad;
+  logic [3:0]   wx_row;
+  logic [127:0] wx_w;
 
   soc #(
       .CLK_HZ    (CLK_HZ),
@@ -163,6 +169,14 @@ module arty_a7_top #(
       .drp_di_o                (drp_di),
       .drp_do_i                (drp_do),
       .drp_drdy_i              (drp_drdy),
+      .wx_start_o              (wx_start),
+      .wx_valid_o              (wx_valid),
+      .wx_kt_o                 (wx_kt),
+      .wx_nt_o                 (wx_nt),
+      .wx_row_o                (wx_row),
+      .wx_pad_o                (wx_pad),
+      .wx_w_o                  (wx_w),
+      .wx_w_i                  ('0),
       .led_o                   (led_o),
       .uart_tx_o               (uart_tx_o),
       .uart_rx_i               (uart_rx_i),

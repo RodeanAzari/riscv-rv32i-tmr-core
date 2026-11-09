@@ -40,6 +40,18 @@ measured change): 3 cycles of shape check, then per tile, N outer and K
 inner, ROWS cycles shifting the weights in, one swap cycle, M rows streamed,
 and LATENCY + 2 cycles until the last row's sum is in C, one tile after the
 other with no overlap. LATENCY = ROWS + COLS/2 - 1 (systolic_array.sv).
+
+Weight-transform hook (Phase H, P5's requests 0009/0010): every weight passes
+through a transform on its way into the array, identity unless one is set
+(Accel.wx). weight_beats() is the load order, the contract the RTL's hook
+ports (gemm_accel.sv, wx_*) follow: per tile, N outer and K inner, one beat
+per row from row ROWS - 1 down to 0, COLS lanes a beat. A beat carries the
+tile's kt and nt, its row r (so lane j holds W[kt*ROWS + r][nt*COLS + j]),
+a pad flag per lane (row past K or column past N; such a lane carries 0) and
+the weights. Every beat of every tile is sent, all-pad rows included; each
+weight is in exactly one beat of a job (no tile is loaded twice). The
+transform sees each beat and returns COLS lanes; pad lanes go into the array
+as 0 whatever it returns.
 """
 
 from pathlib import Path
@@ -96,6 +108,40 @@ def unpack_c(buf, m, n, cols):
     return words.reshape(m, nt * cols)[:, :n].astype(np.int64)
 
 
+class Beat:
+    """One weight shift at the hook: tile (kt, nt), row r of the tile, COLS
+    lanes of weights (INT8, 0 on pad lanes) and their pad flags."""
+
+    def __init__(self, kt, nt, row, w, pad):
+        self.kt, self.nt, self.row, self.w, self.pad = kt, nt, row, w, pad
+
+
+def tile_order(k, n, rows, cols):
+    """The job's tiles, (nt, kt), N outer and K inner."""
+    return [(nt, kt) for nt in range(ceil_div(n, cols)) for kt in range(ceil_div(k, rows))]
+
+
+def weight_beats(wbuf, k, n, rows, cols):
+    """Every weight shift of a job, in order, from the W buffer's bytes:
+    per tile (tile_order), rows ROWS - 1 down to 0. M does not change it."""
+    nt_n = ceil_div(n, cols)
+    wb = np.frombuffer(bytes(wbuf), dtype=np.int8).astype(np.int64)
+    out = []
+    for nt, kt in tile_order(k, n, rows, cols):
+        pad_col = (nt * cols + np.arange(cols)) >= n
+        for row in range(rows - 1, -1, -1):
+            kk = kt * rows + row
+            if kk < k:
+                line = kk * nt_n + nt
+                pad = pad_col.copy()
+                w = np.where(pad, 0, wb[line * cols:(line + 1) * cols])
+            else:
+                pad = np.ones(cols, dtype=bool)
+                w = np.zeros(cols, dtype=np.int64)
+            out.append(Beat(kt, nt, row, w, pad))
+    return out
+
+
 # --- the device ---------------------------------------------------------------
 
 class Accel:
@@ -107,6 +153,7 @@ class Accel:
         self.m = self.k = self.n = 0
         self.status = 0
         self.cycles = 0
+        self.wx = None   # weight transform: wx(beat) -> COLS lanes, or None
 
     # bus side
     def buf_write(self, off, data):
@@ -153,27 +200,25 @@ class Accel:
             return
         kt_n, nt_n = ceil_div(k, r), ceil_div(n, c)
         abuf = np.frombuffer(bytes(self.a), dtype=np.int8).astype(np.int64)
-        wbuf = np.frombuffer(bytes(self.w), dtype=np.int8).astype(np.int64)
-        for nt in range(nt_n):
-            col_ok = (nt * c + np.arange(c)) < n
-            for kt in range(kt_n):
-                # the tile of weights the array holds: rows past K and
-                # columns past N are zeros
-                tile = np.zeros((r, c), dtype=np.int64)
-                for i in range(r):
-                    kk = kt * r + i
-                    if kk < k:
-                        line = kk * nt_n + nt
-                        tile[i] = np.where(col_ok, wbuf[line * c:(line + 1) * c], 0)
-                for mm in range(m):
-                    line = mm * kt_n + kt
-                    arow = abuf[line * r:(line + 1) * r]
-                    psum = wrap32(arow @ tile)
-                    cl = (mm * nt_n + nt) * c * 4
-                    if kt > 0:
-                        old = np.frombuffer(bytes(self.c[cl:cl + 4 * c]), dtype="<i4")
-                        psum = wrap32(psum + old)
-                    self.c[cl:cl + 4 * c] = psum.astype("<i4").tobytes()
+        beats = iter(weight_beats(self.w, k, n, r, c))
+        for nt, kt in tile_order(k, n, r, c):
+            # the tile of weights the array holds, beat by beat through the
+            # transform: rows past K and columns past N are zeros
+            tile = np.zeros((r, c), dtype=np.int64)
+            for _ in range(r):
+                b = next(beats)
+                assert (b.kt, b.nt) == (kt, nt)
+                lanes = b.w if self.wx is None else np.asarray(self.wx(b), dtype=np.int64)
+                tile[b.row] = np.where(b.pad, 0, ((lanes + 128) & 0xFF) - 128)
+            for mm in range(m):
+                line = mm * kt_n + kt
+                arow = abuf[line * r:(line + 1) * r]
+                psum = wrap32(arow @ tile)
+                cl = (mm * nt_n + nt) * c * 4
+                if kt > 0:
+                    old = np.frombuffer(bytes(self.c[cl:cl + 4 * c]), dtype="<i4")
+                    psum = wrap32(psum + old)
+                self.c[cl:cl + 4 * c] = psum.astype("<i4").tobytes()
         self.status = ST_DONE
         self.cycles = job_cycles(m, k, n, r, c)
 
@@ -296,6 +341,47 @@ def main():
         if acc.status != ST_DONE or not np.array_equal(unpack_c(acc.c, m, cols, cols), gemm(a, w)):
             fail(f"{rows}x{cols} full buffer")
         count(f"{rows}x{cols} full buffer")
+
+    # The weight-transform hook. The load order: every weight in exactly one
+    # beat, at the lane and row its indices say, pad exactly past K or N,
+    # one beat per row of every tile.
+    for rows, cols, buf in ((4, 4, 1024), (16, 16, 16384), (4, 8, 4096)):
+        for k, n in ((1, 1), (rows, cols), (rows + 1, cols - 1), (3 * rows - 1, 2 * cols + 3)):
+            w = i8(k, n)
+            pw = bytearray(pack_w(w, cols))
+            nw = ceil_div(n, cols) * cols
+            for kk in range(k):                       # garbage past N
+                for j in range(n, nw):
+                    pw[kk * nw + j] = int(rng.integers(256))
+            beats = weight_beats(pw, k, n, rows, cols)
+            if len(beats) != ceil_div(k, rows) * ceil_div(n, cols) * rows:
+                fail(f"{rows}x{cols} beats per job, {k}x{n}")
+            seen = {}
+            for b in beats:
+                for j in range(cols):
+                    kk, nn = b.kt * rows + b.row, b.nt * cols + j
+                    if b.pad[j] != (kk >= k or nn >= n):
+                        fail(f"{rows}x{cols} pad flag at ({kk}, {nn})")
+                    if b.pad[j]:
+                        if b.w[j] != 0:
+                            fail(f"{rows}x{cols} pad lane not 0 at ({kk}, {nn})")
+                        continue
+                    if (kk, nn) in seen or b.w[j] != w[kk, nn]:
+                        fail(f"{rows}x{cols} weight ({kk}, {nn}) twice or wrong")
+                    seen[(kk, nn)] = 1
+            if len(seen) != k * n:
+                fail(f"{rows}x{cols} weights missing, {k}x{n}")
+            count(f"{rows}x{cols} load order")
+        # A transform (w XOR 1 on every lane, pad lanes included): C is the
+        # GEMM of the transformed W, and pad lanes still go in as 0.
+        acc = Accel(rows, cols, buf)
+        acc.wx = lambda b: b.w ^ 1
+        for m, k, n in ((1, 1, 1), (5, rows + 1, cols - 1), (2 * rows + 3, 2 * rows - 1, 2 * cols + 1)):
+            a, w = i8(m, k), i8(k, n)
+            run_job(acc, a, w, rng)
+            if acc.status != ST_DONE or not np.array_equal(unpack_c(acc.c, m, n, cols), gemm(a, w ^ 1)):
+                fail(f"{rows}x{cols} transform w ^ 1, {m}x{k}x{n}")
+            count(f"{rows}x{cols} transform w ^ 1")
 
     # Saturation: every product at an extreme, K over several tiles.
     acc = Accel()
