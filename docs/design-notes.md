@@ -315,8 +315,17 @@ history, [formal-properties.md](formal-properties.md) and
   `quaigh atpg` (full scan: flops as inputs and outputs, which the chains
   provide; flops left off a chain must then be subtracted, from
   `report_dft_plan`), quoting Quaigh's collapsed ("unique") fault count.
-  Fault's `atpg` simulation is not used. Next: try it on a sky130 netlist
-  of the core (~7k cells) for run time before the SoC's size.
+  Fault's `atpg` simulation is not used.
+  **Feasibility on the core (2026-11-09, not a result: a pre-scan
+  netlist, nothing committed):** run #1's config synthesized on the current
+  RTL (6,656 cells, 1,496 `dfxtp_2`), `fault cut` with a sky130 cell config
+  (`dffMatches` `sky130_fd_sc_hd__dfxtp_2` D/Q/CLK, `muxInfo`
+  `sky130_fd_sc_hd__mux2_1` A0/A1/S/X), `nl2bench` with the tt liberty:
+  1,635 inputs, 2,044 outputs, 17k gates; `quaigh atpg` in 2 min 15 s:
+  40,703 / 41,192 unique faults (98.81%), 476 proven unobservable, 1,588
+  patterns after compaction. The SoC (array, DMA, crossbar) is several
+  times larger; the run-#2 number comes from the netlist with OpenROAD's
+  chains in it (their muxes add faults) and gets its own report file.
   **Run #2 memories (to decide):** the SoC has 80 KiB of RAM (32 KiB main,
   3 × 16 KiB accelerator buffers), far beyond flip-flops. The PDK has
   OpenRAM macros `sky130_sram_1kbyte_1rw1r_32x256_8` and
