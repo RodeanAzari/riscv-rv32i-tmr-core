@@ -161,6 +161,7 @@ trims logic the OOC run keeps.
 | 2026-11-08 | Array on its own clock (`ARRAY_CDC` = 1, `make impl CDC=1`, `summary_board_cdc.txt`): a second MMCM, 100 MHz, async FIFOs both ways; against the GEMM row above +86 LUT, +103 FF (+516 LUTRAM, not in LUT). Worst over both clocks +0.128 ns, the array's reset fanning out to the shadow weights (inside `clk_array`); worst hold +0.030 ns. 2,964 timed paths cross the two clocks, every one with a bound (`constr/accel_cdc.xdc`; the build refuses a bitstream otherwise) | 13290 | 12460 | 32 | 100 MHz + 100 MHz array | +0.330 | 103.4 |
 | 2026-11-08 | Array clock reprogrammable (box 4, `summary_board_cdc.txt`): the array MMCM an `MMCME2_ADV` with its DRP on the core clock (VCO 800 MHz, /8), the ACLK register (`array_clk_ctl.sv`); against the row above +11 LUT, +55 FF. Worst path now inside the DMA engine (`u_axi` `dst_q` → `n_q`), a placement shift, not the new logic; worst over both clocks +0.166 ns, hold +0.018 ns; 2,964 crossing paths, all bounded; `report_cdc` unchanged | 13301 | 12515 | 32 | 100 MHz + 100 MHz array | +0.170 | 101.7 |
 | 2026-11-09 | Weight-transform hook (box 3, `WX_EXT` = 0, `summary_board_cdc.txt`): its outputs open on the board top, so trimmed; against the row above −9 LUT, −6 FF (placement noise). Worst over both clocks +0.303 ns, hold +0.035 ns; 2,964 crossing paths, all bounded; `report_cdc` unchanged (4 Info on the accelerator, the two board-input CDC-2) | 13292 | 12509 | 32 | 100 MHz + 100 MHz array | +0.303 | 103.1 |
+| 2026-11-10 | Default build (`ARRAY_CDC` = 0) with the weight-transform hook (box 3, `WX_EXT` = 0, `summary_board.txt`), the bitstream matbench ran on; against the Phase G build: −3 LUT, +9 FF, the hook trimmed | 13201 | 12366 | 32 | 100 MHz | +0.263 | 102.7 |
 
 At 50 MHz the critical path was the one the OOC flow could not time: a block
 RAM's output (load data) through alignment, the forwarding mux and the branch
@@ -256,6 +257,30 @@ route, `xc7a100tcsg324-1`, 10.000 ns, from
 | 2026-11-09 | same, with the weight-transform hook (Phase H box 3), `WX_EXT` = 0 (identity); the `wx_*` outputs are ports out of context (in the SoC they are open and trimmed) | 10,152 | 10,958 | 24 | 131 | 2,911 | +0.362 | 103.8 |
 
 `ARRAY_CDC` = 1 has two clocks: its row is in "CDC synthesis" below.
+
+## Accelerator against software matmul (Phase H)
+
+`sw/apps/matbench.c` on the board ([matbench_board.txt](reports/matbench_board.txt);
+Arty A7, 100 MHz, `ARRAY_CDC` = 0, three runs identical): the same INT8 GEMM
+on the core alone, through the accelerator as software calls it (DMA in, job,
+DMA out), and the job alone; the two results compared by hash, 7/7 equal.
+Cycles of the 100 MHz core clock. **RV32I** software: an INT8 shift-add
+multiply (faster than libgcc's general one).
+
+| Shape | Software | Call | Job | Speedup (call) | Speedup (job) |
+|---|---|---|---|---|---|
+| 8×8×8 | 35,945 | 3,488 | 53 | 10.3× | 678× |
+| 16×16×16 | 289,817 | 2,631 | 61 | 110× | 4,751× |
+| 32×32×32 | 2,294,537 | 8,106 | 299 | 283× | 7,674× |
+| 48×48×48 | 7,723,305 | 17,293 | 813 | 447× | 9,500× |
+| 56×56×56 | 12,216,633 | 40,980 | 1,571 | 298× | 7,776× |
+| 128×16×16 | 2,280,201 | 12,959 | 173 | 176× | 13,180× |
+| 20×50×30 | 2,092,329 | 16,158 | 499 | 129× | 4,193× |
+
+The call is what software sees. Off the 16 grid (56, 20×50×30) the DMA moves a
+row per descriptor, so 56³ costs 2.4× 48³'s call for 1.6× its MACs. 8×8×8's
+call is slower than 16×16×16's: the same per-row DMA. An RV32IM baseline
+(`matbench_m`, mul in hardware) follows on an `M=1` board build.
 
 ## Accelerator PE utilization (Phase H)
 

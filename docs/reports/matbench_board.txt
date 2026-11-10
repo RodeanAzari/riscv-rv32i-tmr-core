@@ -1,0 +1,14 @@
+# matbench (sw/apps/matbench.c) on the Arty A7-100T, single core RV32I, 100 MHz, ARRAY_CDC = 0, bitstream from make impl at 2a6b117+ (summary_board.txt), loaded with the bootloader after a DTR reset, 2026-11-10. Three runs, identical; run 1 below.
+# sw = the core alone (INT8 shift-add multiply); call = sw/lib/gemm.c (DMA in, job, DMA out); job = the CYCLES register. Speedup = sw/call / sw/job. All cycles of the 100 MHz core clock.
+
+matbench: 16x16 array, software rv32i shift-add
+matbench: 8x8x8 ok, sw 35945, call 3488, job 53, speedup 10.3 / 678.2
+matbench: 16x16x16 ok, sw 289817, call 2631, job 61, speedup 110.2 / 4751.1
+matbench: 32x32x32 ok, sw 2294537, call 8106, job 299, speedup 283.1 / 7674.0
+matbench: 48x48x48 ok, sw 7723305, call 17293, job 813, speedup 446.6 / 9499.8
+matbench: 56x56x56 ok, sw 12216633, call 40980, job 1571, speedup 298.1 / 7776.3
+matbench: 128x16x16 ok, sw 2280201, call 12959, job 173, speedup 176.0 / 13180.4
+matbench: 20x50x30 ok, sw 2092329, call 16158, job 499, speedup 129.5 / 4193.0
+matbench: 7/7 ok
+
+# runs 2 and 3: identical to run 1, line for line

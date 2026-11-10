@@ -317,6 +317,22 @@ $(FW_BUILD)/apps/gemmtest.elf: sw/apps/gemmtest.c sw/lib/gemm.c sw/lib/gemm.h sw
 
 apps: $(FW_BUILD)/boot_gemm_sim.hex
 
+# The accelerator against software matmul (sw/apps/matbench.c, Phase H),
+# twice: RV32I (shift-add multiply) and RV32IM (matbench_m: mul, for a board
+# built with M=1). Same driver as gemmtest, no array clock.
+MATBENCH_DEPS := sw/apps/matbench.c sw/lib/gemm.c sw/lib/gemm.h sw/lib/dma.c sw/lib/dma.h $(DMA_INC)/dmaeng_regs.h $(APP_DEPS)
+MATBENCH_SRCS := sw/app/crt0.S sw/lib/io.c sw/lib/dma.c sw/lib/gemm.c sw/apps/matbench.c
+
+$(FW_BUILD)/apps/matbench.elf: $(MATBENCH_DEPS)
+	@mkdir -p $(@D)
+	$(RISCV_PREFIX)gcc $(APP_CFLAGS) -I$(DMA_INC) -o $@ $(MATBENCH_SRCS) -lgcc
+
+$(FW_BUILD)/apps/matbench_m.elf: $(MATBENCH_DEPS)
+	@mkdir -p $(@D)
+	$(RISCV_PREFIX)gcc $(subst -march=rv32i ,-march=rv32im ,$(APP_CFLAGS)) -I$(DMA_INC) -o $@ $(MATBENCH_SRCS) -lgcc
+
+apps: $(FW_BUILD)/apps/matbench_m.bin
+
 # For simulation (tb/cocotb/test_gemm.py): the bootloader with gemmtest saved.
 $(FW_BUILD)/boot_gemm_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/gemmtest.bin scripts/mkimage.py
 	python3 scripts/mkimage.py $(FW_BUILD)/boot.bin $(FW_BUILD)/apps/gemmtest.bin $@
