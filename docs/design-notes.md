@@ -292,7 +292,8 @@ history, [formal-properties.md](formal-properties.md) and
   script substituted into the Classic flow after synthesis), not a config
   switch. **Coverage needs ATPG**, which neither tool does; an open ATPG
   (e.g. Fault) or a stated proxy (scan-reachable flop fraction) is a
-  decision for run #2.
+  decision for run #2. **Decided with the user 2026-11-09: an open ATPG
+  (Fault or similar) for a real coverage number.**
   **Run #2 memories (to decide):** the SoC has 80 KiB of RAM (32 KiB main,
   3 × 16 KiB accelerator buffers), far beyond flip-flops. The PDK has
   OpenRAM macros `sky130_sram_1kbyte_1rw1r_32x256_8` and
@@ -301,7 +302,8 @@ history, [formal-properties.md](formal-properties.md) and
   As built: main RAM 16 × 2 KiB, A and W 4 banks × 4 KiB = 8 × 2 KiB each,
   C 16 banks × 1 KiB = 16 × 1 KiB: 48 macros. The alternative is smaller
   memories for the ASIC build only (parameters), which changes what run #2
-  measures.
+  measures. **Decided with the user 2026-11-09: the 48 SRAM macros**, the SoC's
+  memories as built.
 - **Array clock domain (Phase H box 2; decided 2026-11-07; slice 1 built).**
   **Only `systolic_array` moves to `clk_array`**; the sequencer, buffers and
   registers stay on the core clock. Why: P5 overclocks `clk_array` to provoke
