@@ -304,11 +304,19 @@ history, [formal-properties.md](formal-properties.md) and
   works** (`-g Quaigh -b <nl2bench .bench>`): s27 cut, ATPG, 5 compacted
   vectors, 86.7% reported. Quaigh is open source, unlike the bundled
   Atalanta/PODEM (proprietary, non-commercial), so it is the one to use;
-  the PRNG path never. Before quoting a coverage number: find why a
-  full-scan s27 is not ~100% (Fault's fault list may count the bypassed
-  clock/reset and tie pins), and try it on a sky130 netlist of the core
-  (cell models, `--sclConfig` for sky130's flop names, run time at ~7k
-  cells before the SoC's size).
+  the PRNG path never.
+  **Fault's own coverage number is wrong (understated).** Every fault it
+  left uncovered on s27 is on a flop's next-state path: the cut flops'
+  pseudo-outputs are escaped names (`\_20_.d`) that its simulation never
+  observes. Quaigh 0.0.6 alone on the same `.bench` (`quaigh atpg`, SAT-
+  complete) sees all 4 outputs and detects **34/34 unique faults (100%)**,
+  7 patterns. So the flow for run #2: OpenROAD inserts the chains in the
+  LibreLane flow; coverage = netlist → `fault cut` → `nl2bench` →
+  `quaigh atpg` (full scan: flops as inputs and outputs, which the chains
+  provide; flops left off a chain must then be subtracted, from
+  `report_dft_plan`), quoting Quaigh's collapsed ("unique") fault count.
+  Fault's `atpg` simulation is not used. Next: try it on a sky130 netlist
+  of the core (~7k cells) for run time before the SoC's size.
   **Run #2 memories (to decide):** the SoC has 80 KiB of RAM (32 KiB main,
   3 × 16 KiB accelerator buffers), far beyond flip-flops. The PDK has
   OpenRAM macros `sky130_sram_1kbyte_1rw1r_32x256_8` and
