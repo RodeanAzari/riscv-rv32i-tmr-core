@@ -513,6 +513,36 @@ once 20% of the cycle is reserved for the memory outside the block. At 35 ns,
 with the delay cells excluded, timing is met at every corner. Each attempt is
 a row in the ASIC table in [docs/measurements.md](docs/measurements.md).
 
+### Scan test coverage: a tool problem and the workaround
+
+Phase H adds scan chains to the chip (run #2) and reports their stuck-at test
+coverage. LibreLane has no scan step, but the OpenROAD inside it does
+(`scan_replace`, `execute_dft_plan`), so the chains are inserted there.
+Coverage needs automatic test pattern generation (ATPG), which neither does.
+The open tool for it is [Fault](https://github.com/AUCOHL/Fault), and its
+latest release (0.9.4) has two problems, found on ISCAS-89 s27, a 3-flop
+benchmark circuit:
+
+- **Its built-in pattern generator crashes** (segfault). The Nix package
+  does not even build as released, because Fault's own test of that path
+  fails.
+- **Its coverage figure is too low.** For ATPG, scan turns every flip-flop
+  into an extra input and output, and Fault names those outputs with escaped
+  Verilog identifiers (`\_20_.d`) that its own fault simulation never
+  observes. Every fault it reported undetected on s27 (86.7% coverage) sits
+  on a flip-flop's input.
+
+**The workaround:** Fault is used only to prepare the netlist (`fault cut`,
+then `nl2bench`), and the patterns and the coverage come from
+[Quaigh](https://github.com/coloquinte/quaigh), the open-source ATPG Fault can
+call. Quaigh proves its result with a SAT solver: on the same s27 it detects
+34 of 34 faults (100%). Fault's simulation and its bundled ATPGs (Atalanta,
+PODEM; licensed for non-commercial use only) are not used. Tried on the core's
+pre-scan netlist the flow took 2 minutes for 98.8% of 41,192 faults; that is a
+check that it scales, not a result. Run #2's number will come from the
+netlist with the chains in it. Details in
+[docs/design-notes.md](docs/design-notes.md).
+
 ## Results
 
 Conditions travel with every number: an out-of-context Fmax models no clock
@@ -593,6 +623,10 @@ Stated plainly, because they are real:
   fetch-address path. 3,091 max-slew violations remain (timing is signed off
   with them included). One copy, not TMR; the register file is flip-flops;
   power is a vectorless estimate.
+- **Scan coverage is stuck-at only, from an open ATPG.** Quaigh's
+  collapsed fault count under full scan, not a commercial tool's figure; no
+  transition faults, and Fault's own coverage is not used (see "Scan test
+  coverage").
 - **TMR guards the core, not the memory.** The RAM, the I/O and the voter
   itself are single; protecting memory (ECC) is out of scope. Register-file
   faults in unused registers stay latent until rewritten (see Fault
