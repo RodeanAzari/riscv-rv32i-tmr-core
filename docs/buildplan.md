@@ -340,7 +340,7 @@ A phase is done when **every** box is checked. No partial credit.
 - [ ] End-to-end on hardware: C program loads weights via DMA, launches GEMM, reads results
 - [ ] Full regression and the hardware GEMM test pass with `clk_array` at a different frequency from the core (e.g. 80 MHz vs. 100 MHz)
 - [ ] Benchmarked against software matmul on the same core, several matrix sizes
-- [ ] Measured PE utilization reported
+- [x] Measured PE utilization reported: measurements.md "Accelerator PE utilization", `docs/reports/pe_utilization.txt` (`scripts/pe_utilization.py`): board jobs 26.2% at 16×16×16, model up to 85.7% at 256×64×16; the whole call 0.4-0.6% (the DMA)
 - [ ] Scan chain insertion; chain count, coverage, area overhead reported (§6.5)
 - [ ] **LibreLane run #2** on the full SoC (§6.4)
 - [ ] Written comparison of run #1 vs. run #2 — how area, congestion, and timing changed
