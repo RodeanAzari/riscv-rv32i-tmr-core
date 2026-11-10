@@ -104,7 +104,7 @@ Only the facts that are not obvious from reading it:
   in-RTL properties check. Mismatch is sampled just before each edge: the pc
   vote can correct a flip at the next edge, leaving no mismatch to see after
   it. The register file is cleared per trial (it has no reset).
-- **DMA register slave choices not in DMA-Engine's spec:** a write without all four strobes changes nothing and answers SLVERR (rule 1, 32-bit only; the core cannot see SLVERR, so drivers must use `sw`); unmapped offsets read 0, answer OKAY (as the model). RING_BASE_HI, RING_SIZE, TAIL, IRQ_MASK store all 32 bits because the model reads them back. In a write's commit cycle an engine set beats a W1C clear, and CTRL.RESET beats every engine report. **DMA-Engine's package sits outside `rtl/`**: every source list (both Makefiles, `synth_ooc.tcl`, `impl_arty.tcl`, `gui_view.tcl`, `make asic`'s `RTL`) prepends `sw/dma-engine/rtl/dmaeng_pkg.sv`; its unused constants are waived for that file only (`tb/lint/waivers.vlt`, also passed to the cocotb build). **`make asic` with it is untested** (LibreLane's own Verilator lint may object); check before run #2.
+- **DMA register slave choices not in DMA-Engine's spec:** a write without all four strobes changes nothing and answers SLVERR (rule 1, 32-bit only; the core cannot see SLVERR, so drivers must use `sw`); unmapped offsets read 0, answer OKAY (as the model). RING_BASE_HI, RING_SIZE, TAIL, IRQ_MASK store all 32 bits because the model reads them back. In a write's commit cycle an engine set beats a W1C clear, and CTRL.RESET beats every engine report. **DMA-Engine's package sits outside `rtl/`**: every source list (both Makefiles, `synth_ooc.tcl`, `impl_arty.tcl`, `gui_view.tcl`, `make asic`'s `RTL`) prepends `sw/dma-engine/rtl/dmaeng_pkg.sv`; its unused constants are waived for that file only (`tb/lint/waivers.vlt`, also passed to the cocotb build). `make asic` with it: checked 2026-11-09, run #1's config through `Yosys.Synthesis` on the current RTL (scratch design dir) elaborates and synthesizes: 6,656 cells, 84,925 µm² against run #1's 6,685 / 85,052 (the core's changes since).
 - **M unit (`riscv_muldiv`):** the core sees a handshake, not a latency: `valid_i` (an M instruction in EX, operands valid; sampled only when idle, operands captured then, so forwarding may move on), `done_o` held with the result until `ack_i` (the instruction leaves EX; a MEM_WAIT hold can delay it). No kill input: a branch resolves in EX and squashes only younger instructions, so nothing in EX is ever squashed (recheck when integrating). Signed divide by zero is the only corner case needing logic (quotient stays all ones); INT_MIN / −1 falls out of restoring division on magnitudes. **Formal runs at XLEN = 8 with bitwuzla**: yices stalled for minutes on the first multiply result; the arithmetic properties sit under `MULDIV_ARITH`, not `FORMAL`, so the core's proofs never see a 32-bit `/`. The latency and handshake properties are under plain `FORMAL` and run in every cocotb build. Product sum leaves the unit unregistered (6.5 ns register to register, measured).
 - **DMA engine limits, by design, documented in `test_dmaeng.py`:** a bus error part-way through a copy leaves the destination partly written (the model writes all or nothing); an overlapping copy is a memmove only within one 64-byte chunk. Out-of-range addresses (HI words, past 2^32) are caught before any bus access, so they match the model exactly. During a CTRL.RESET drain STATUS.BUSY already reads 0. `DATA_W` is a parameter, but only 32 elaborates (`$error` otherwise). Descriptor word offsets are typed in `dmaeng_desc.sv` (the package lacks them; the header has them and the test builds descriptors from the header): worth asking DMA-Engine's generator for `DESC_OFF_*` in the package.
 - **MEM_WAIT (2026-11-04):** `hold` is a whole-core clock enable: every pipeline register, the pc, halt flags, RVFI shadows and the properties' "previous cycle" flops keep their value, and stores, loads, register writes and retirements are gated, so a held cycle is an edge that never happened (forwarding, flushes and traps need no change). Fetch presents `pc` while held. Contract: a load's data is on `dmem_rdata_i` in the cycle ready is high again; a BRAM wired straight to the port meets it only if ready never drops with a BRAM load in MEM, so the bridge lowers ready only for its own access. Verified: `riscv_core_wait` / `riscv_core_tmr_wait` (cocotb, 30% random holds): random programs and rv32ui 40/40 against the model, plus `test_hold_commits_nothing` (49 holds of 12 cycles, nothing commits or moves); `test_ready_ignored_without_mem_wait` on the plain builds. 8 planted hold bugs: 7 caught, 1 equivalent (halted_q setting during a hold is invisible: pc is held, and a redirect beats freeze). **TMR + MEM_WAIT misses 100 MHz OOC by 46 ps** on the voter's mismatch compare (copy → compare → `mismatch_q`, the TMR critical path since Phase E, 22-23 levels), not on the hold; its baseline in the same run had +0.049 ns. Board number when the SoC builds with it. Formal with MEM_WAIT = 1 not yet run.
@@ -284,7 +284,24 @@ history, [formal-properties.md](formal-properties.md) and
   a core that can wait. Costs: formal, UVM and TMR rerun with stalls; the
   freeze's fanout measured against the TMR board's +0.095 ns.
 - **The ASIC flow is LibreLane, not OpenLane** (the successor to OpenLane 2).
-  Open: whether LibreLane has built-in scan insertion (§6.5); check in Phase H.
+  **Scan insertion (§6.5), checked 2026-11-09: LibreLane 3.0.16 has no
+  DFT step**, but the OpenROAD it ships (2026-02-17) has the `dft` module:
+  `set_dft_config` (chain length/count, clock mixing, port name patterns),
+  `scan_replace`, `report_dft_plan`, `execute_dft_plan`. The PDK has scan
+  flops (`sky130_fd_sc_hd__sdfxtp`). So scan is a custom step (an OpenROAD
+  script substituted into the Classic flow after synthesis), not a config
+  switch. **Coverage needs ATPG**, which neither tool does; an open ATPG
+  (e.g. Fault) or a stated proxy (scan-reachable flop fraction) is a
+  decision for run #2.
+  **Run #2 memories (to decide):** the SoC has 80 KiB of RAM (32 KiB main,
+  3 × 16 KiB accelerator buffers), far beyond flip-flops. The PDK has
+  OpenRAM macros `sky130_sram_1kbyte_1rw1r_32x256_8` and
+  `sky130_sram_2kbyte_1rw1r_32x512_8`; 1rw + 1r fits every `ram_dp` use
+  (core: fetch read + data rw; accelerator bank: engine read + bus rw).
+  As built: main RAM 16 × 2 KiB, A and W 4 banks × 4 KiB = 8 × 2 KiB each,
+  C 16 banks × 1 KiB = 16 × 1 KiB: 48 macros. The alternative is smaller
+  memories for the ASIC build only (parameters), which changes what run #2
+  measures.
 - **Array clock domain (Phase H box 2; decided 2026-11-07; slice 1 built).**
   **Only `systolic_array` moves to `clk_array`**; the sequencer, buffers and
   registers stay on the core clock. Why: P5 overclocks `clk_array` to provoke

@@ -227,8 +227,8 @@ Small addition during Phase H — budget 2–3 days.
 
 **Achievable with free tools:**
 - Scan chain insertion via Yosys/LibreLane — convert flops to scan flops, stitch chains.
-  **Unverified:** whether LibreLane has a built-in scan-insertion step. Check before
-  budgeting Phase H around it.
+  **Checked 2026-11-09:** LibreLane 3.0.16 has no scan step; its OpenROAD has
+  `scan_replace` / `execute_dft_plan`, so it is a custom flow step (design-notes.md).
 - Scan shift verification in simulation
 - Report chain count, chain length, test coverage, area and timing overhead vs. non-scan
 
