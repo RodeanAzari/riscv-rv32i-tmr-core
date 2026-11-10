@@ -294,6 +294,21 @@ history, [formal-properties.md](formal-properties.md) and
   (e.g. Fault) or a stated proxy (scan-reachable flop fraction) is a
   decision for run #2. **Decided with the user 2026-11-09: an open ATPG
   (Fault or similar) for a real coverage number.**
+  **Fault, tried 2026-11-09** (AUCOHL/Fault 0.9.4, May 2025, the latest;
+  `fault synth/cut/atpg/chain/tap/asm`, Icarus + Yosys inside): its Nix
+  flake does not build as released: its own test `test_flat[s27-PRNG-osu035]`
+  fails. Built with the check skipped, for diagnosis:
+  `nix build --impure --expr '(builtins.getFlake "github:AUCOHL/Fault/0.9.4").packages.x86_64-linux.default.overrideAttrs (_: { doCheck = false; doInstallCheck = false; })'`
+  and rerun by hand: **the built-in PRNG generator segfaults** (`fault atpg`
+  without `-g`, exit 139) on ISCAS-89 s27, 3 flops. **The Quaigh backend
+  works** (`-g Quaigh -b <nl2bench .bench>`): s27 cut, ATPG, 5 compacted
+  vectors, 86.7% reported. Quaigh is open source, unlike the bundled
+  Atalanta/PODEM (proprietary, non-commercial), so it is the one to use;
+  the PRNG path never. Before quoting a coverage number: find why a
+  full-scan s27 is not ~100% (Fault's fault list may count the bypassed
+  clock/reset and tie pins), and try it on a sky130 netlist of the core
+  (cell models, `--sclConfig` for sky130's flop names, run time at ~7k
+  cells before the SoC's size).
   **Run #2 memories (to decide):** the SoC has 80 KiB of RAM (32 KiB main,
   3 × 16 KiB accelerator buffers), far beyond flip-flops. The PDK has
   OpenRAM macros `sky130_sram_1kbyte_1rw1r_32x256_8` and
