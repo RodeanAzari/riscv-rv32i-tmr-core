@@ -657,12 +657,38 @@ floorplan:
 # Runs inside LibreLane's nix-shell (a clone at LIBRELANE_DIR, tag 3.0.16);
 # the run lands in syn/build/asic/runs/asic/.
 LIBRELANE_DIR ?= $(HOME)/librelane
+# SCAN=1 adds scan chains (syn/asic_scan.yaml, steps in
+# syn/librelane_plugin_scan), then traces them and shifts every chain at
+# gate level on the routed netlist (scripts/scan_chains.py,
+# scan_shift_tb.py); reports *_scan.
+SCAN ?= 0
+ASIC_TAG  := asic$(if $(filter 1,$(SCAN)),_scan,)
+ASIC_CFGS := $(abspath syn/asic_config.yaml) $(if $(filter 1,$(SCAN)),$(abspath syn/asic_scan.yaml),)
+ASIC_RUN  := syn/build/asic/runs/$(ASIC_TAG)
+CELL_V     = $(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/verilog
 
 asic:
-	nix-shell $(LIBRELANE_DIR)/shell.nix --run "librelane --run-tag asic --overwrite \
+	PYTHONPATH=$(abspath syn) nix-shell $(LIBRELANE_DIR)/shell.nix --run "librelane --run-tag $(ASIC_TAG) --overwrite \
 		--design-dir $(abspath syn/build/asic) \
-		-c VERILOG_FILES='$(abspath $(RTL))' $(abspath syn/asic_config.yaml)"
-	python3 scripts/asic_summary.py syn/build/asic/runs/asic docs/reports
+		-c VERILOG_FILES='$(abspath $(RTL))' $(ASIC_CFGS)"
+ifeq ($(SCAN),1)
+	@mkdir -p $(ASIC_RUN)/scan_check
+	python3 scripts/asic_summary.py $(ASIC_RUN) $(ASIC_RUN)/scan_check
+	cp $(ASIC_RUN)/scan_check/summary_asic.txt docs/reports/summary_asic_scan.txt
+	python3 scripts/scan_chains.py $(ASIC_RUN)/final/nl/riscv_core.nl.v --json $(ASIC_RUN)/scan_check/chains.json \
+		> $(ASIC_RUN)/scan_check/chains.txt || { cat $(ASIC_RUN)/scan_check/chains.txt; exit 1; }
+	python3 scripts/scan_shift_tb.py $(ASIC_RUN)/scan_check/chains.json riscv_core clk_i > $(ASIC_RUN)/scan_check/shift_tb.v
+	iverilog -g2012 -DFUNCTIONAL -DUNIT_DELAY=#1 -o $(ASIC_RUN)/scan_check/shift.vvp $(ASIC_RUN)/scan_check/shift_tb.v \
+		$(ASIC_RUN)/final/nl/riscv_core.nl.v $(CELL_V)/primitives.v $(CELL_V)/sky130_fd_sc_hd.v
+	vvp -n $(ASIC_RUN)/scan_check/shift.vvp | grep -a "^scan-shift" > $(ASIC_RUN)/scan_check/shift.txt
+	{ echo "# Scan chains in the routed netlist (make asic SCAN=1), traced by scripts/scan_chains.py,"; \
+	  echo "# shifted at gate level by scripts/scan_shift_tb.py (Icarus, sky130_fd_sc_hd models)"; echo; \
+	  cat $(ASIC_RUN)/scan_check/chains.txt; echo; cat $(ASIC_RUN)/scan_check/shift.txt; } > docs/reports/scan_chains_asic.txt
+	@cat docs/reports/scan_chains_asic.txt
+	@grep -q " ok, " $(ASIC_RUN)/scan_check/shift.txt
+else
+	python3 scripts/asic_summary.py $(ASIC_RUN) docs/reports
+endif
 
 
 # --- housekeeping ----------------------------------------------------------

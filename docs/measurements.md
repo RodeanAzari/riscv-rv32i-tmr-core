@@ -419,6 +419,8 @@ Append-only.
 | 2026-10-18 | #1, 35 ns, PnR at tt + max_ss + min_ff | 35 ns | 227,997 | 123,291 (58.2%) | 13,180 (1,496) | −0.973 ns | +9.199 ns | 27.8 / 38.8 MHz | 47.0 MHz | 4.59 mW | clean / clean | 2778 |
 | 2026-10-18 | #1, 25 ns, clock delay cells excluded, GRT_ADJUSTMENT 0.26 | 25 ns | 227,997 | 119,277 (56.3%) | 13,853 (1,496) | −4.498 ns | +3.339 ns | 33.9 / 46.2 MHz | 59.1 MHz | 6.44 mW | clean / clean | 3091 |
 | 2026-10-18 | **#1, 35 ns, clock delay cells excluded (committed reports, closes)** | 35 ns | 227,997 | 119,277 (56.3%) | 13,853 (1,496) | **+3.502 ns** | +13.339 ns | 31.7 / 46.2 MHz | 50.6 MHz | 4.60 mW | clean / clean | 3091 |
+| 2026-11-10 | #1's config on the current RTL (Phase H core: `M_EXT`, `MEM_WAIT` off), no scan; baseline for scan (`summary_asic_core_noscan.txt`) | 35 ns | 227,667 | 119,019 (56.2%) | 13,838 (1,496) | +2.807 ns | +12.283 ns | 31.1 / 44.0 MHz | 49.5 MHz | 4.49 mW | clean / clean | 2991 |
+| 2026-11-10 | **same, with scan chains** (`make asic SCAN=1`, 8 chains × 187; `summary_asic_scan.txt`) | 35 ns | 227,667 | 131,724 (62.2%) | 14,397 (1,496) | +3.613 ns | +13.408 ns | 31.9 / 46.3 MHz | 52.6 MHz | 7.38 mW* | clean / clean | 3707 |
 
 **Run #1 closes at 35 ns** with the clock delay cells excluded: 0 setup
 and 0 hold violations at all 9 signoff corners, worst setup slack +3.502 ns
@@ -460,6 +462,34 @@ uncertainty). Closing 25 ns at ss needs an RTL change on the fetch-address
 path. The first try of this run failed global routing on one met2 edge of
 145k (GRT-0116); `GRT_ADJUSTMENT` 0.26, as OpenROAD suggested, fixed it
 with DRC still clean.
+
+**Scan chain insertion (§6.5), on the core (2026-11-10).** LibreLane has
+no DFT step; `syn/librelane_plugin_scan` adds two OpenROAD steps to the
+classic flow (`syn/asic_scan.yaml`, `make asic SCAN=1`): `scan_replace`
+after the floorplan (every `dfxtp` to `sdfxtp`; the step fails if one is
+left) and `execute_dft_plan` after the pin-less global placement (chains in
+placement order, ports placed by the IO step). **8 chains of 187 flops, all
+1,496 on a chain, one scan enable**; two chains end on a functional output
+(`id_ex_rs1_addr_o[1]`, `ex_mem_pc_o[24]`) that OpenROAD reused as scan
+out. Checked on the routed netlist ([scan_chains_asic.txt](reports/scan_chains_asic.txt)):
+`scripts/scan_chains.py` traces each chain through the resizer's buffers
+and each flop's scan enable back to the one port; `scripts/scan_shift_tb.py`
+shifts random bits through all eight at gate level (Icarus, the PDK's cell
+models), 3,024 scan-out bits correct over 565 cycles. Planted faults caught
+(on the stitched netlist): a flop skipped in a chain, scan enable held low,
+a chain length off by one. **Overhead against the same RTL without scan:
+standard-cell area +10.7%** (+12,705 µm², the flops +29.4%: `sdfxtp_1`
+is a mux in front of the flop), cells +559, routed wirelength +17.6%, hold
+buffers +158; **no setup cost** (+3.613 ns against +2.807 ns, placement
+noise; the scan mux is on each flop's D input, which had slack). *Power
++64% is the vectorless estimate's default activity on the scan ports and
+the scan-enable tree (in mission mode scan enable is constant); not a
+measured mission-mode number. First run of the step: the new ports had no
+signal type and the flow's own LEF reader rejected the block LEF
+(`USE ;`, LEFPARS-1); the step now types them. The baseline row reran
+#1's config by hand on today's RTL (2,991 slew violations, −0.7 ns setup
+against the committed #1: RTL drift since Phase E). Coverage (Quaigh) and
+the SoC's chains come with run #2.
 
 Layout screenshots from KLayout (met4/met5 power grid hidden), in
 `docs/img/asic/run1/`: `layout.png`, the whole block, and `layout-zoom.png`,

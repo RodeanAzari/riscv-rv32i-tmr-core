@@ -1,0 +1,15 @@
+# Scan chain insertion (buildplan §6.5), an overlay on an ASIC config:
+# `make asic SCAN=1` passes it after the design's config. The two steps
+# come from syn/librelane_plugin_scan (which `make asic` puts on
+# PYTHONPATH): Scan.Replace after the floorplan, Scan.Stitch after the
+# IO-less global placement, before the pins are placed.
+meta:
+  version: 3
+  flow: Classic
+  substituting_steps:
+    "+OpenROAD.Floorplan": Scan.Replace
+    "-OpenROAD.IOPlacement": Scan.Stitch
+
+# Eight chains: eight scan-in and up to eight scan-out pins (OpenROAD reuses
+# a functional output as a chain's scan out when the last flop drives one).
+SCAN_MAX_CHAINS: 8
