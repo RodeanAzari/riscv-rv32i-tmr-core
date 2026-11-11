@@ -23,12 +23,14 @@ from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge
 
 from test_demo import CLK_PERIOD_NS, CLKS_PER_BIT, uart_out
+from mmcm_bfm import start_array_clock
 
 
 @cocotb.test()
 async def test_dmatest(dut):
     out = []
     cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start())
+    start_array_clock(dut)
     dut.uart_rx_i.value = 1
     dut.rst_i.value = 1
     await ClockCycles(dut.clk_i, 5)

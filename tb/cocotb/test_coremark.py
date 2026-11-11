@@ -30,6 +30,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge
 
 from test_soc import CLK_PERIOD_NS, assert_no_tmr_mismatch, uart_rx
+from mmcm_bfm import start_array_clock
 
 DONE = re.compile(r"CoreMark/MHz: \d+\.\d{3}\r\n")
 TOO_SHORT = "ERROR! Must execute for at least 10 secs for a valid result!"
@@ -61,6 +62,7 @@ async def count_retirements(dut, marks):
 @cocotb.test()
 async def test_coremark(dut):
     cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start())
+    start_array_clock(dut)
     dut.uart_rx_i.value = 1          # idle line
     dut.rst_i.value = 1
     await ClockCycles(dut.clk_i, 5)

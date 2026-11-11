@@ -109,7 +109,13 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          soc:test_demo \
          soc:test_dma \
          soc:test_gemm \
+         soc_cdc:test_soc \
+         soc_cdc:test_coremark \
+         soc_cdc:test_boot \
+         soc_cdc:test_demo \
+         soc_cdc:test_dma \
          soc_cdc:test_gemm \
+         soc_tmr_cdc:test_gemm \
          soc_tmr:test_soc \
          soc_tmr:test_coremark \
          soc_tmr:test_boot \
@@ -136,6 +142,19 @@ ifdef TEST_ONE
   # soc_m / soc_tmr_m: the SoC with RV32IM core(s) (M_EXT, Phase H); CoreMark
   # then runs its -march=rv32im image. Stripped first, so the rest is soc's.
   M_SUFFIX              :=
+  # soc_cdc / soc_tmr_cdc: the SoC with the array on its own clock
+  # (ARRAY_CDC, Phase H). test_gemm drives clk_array_i through the ACLK
+  # register and takes CYCLES from accel_cdc_model; every other SoC test
+  # starts the array MMCM stand-in at /10 (25 ns against the core's 20; 80
+  # MHz against 100 on the board), so the whole SoC regression also runs
+  # with clk_array != the core clock (buildplan Phase H, slice 5).
+  # Stripped first, so the rest is soc's or soc_tmr's.
+  CDC_SUFFIX            :=
+  ifneq ($(filter soc_cdc soc_tmr_cdc,$(TOPLEVEL)),)
+    TOPLEVEL            := $(patsubst %_cdc,%,$(TOPLEVEL))
+    CDC_SUFFIX          := _cdc
+    COMPILE_ARGS        += -GARRAY_CDC=1
+  endif
   ifneq ($(filter soc_m soc_tmr_m,$(TOPLEVEL)),)
     TOPLEVEL            := $(patsubst %_m,%,$(TOPLEVEL))
     M_SUFFIX            := _m
@@ -146,14 +165,6 @@ ifdef TEST_ONE
     TOPLEVEL            := soc
     TMR_SUFFIX          := _tmr
     COMPILE_ARGS        += -GTMR=1
-  endif
-  # soc_cdc: the SoC with the array on its own clock (ARRAY_CDC, Phase H);
-  # test_gemm drives clk_array_i and takes CYCLES from accel_cdc_model.
-  CDC_SUFFIX            :=
-  ifeq ($(TOPLEVEL),soc_cdc)
-    TOPLEVEL            := soc
-    CDC_SUFFIX          := _cdc
-    COMPILE_ARGS        += -GARRAY_CDC=1
   endif
   ifeq ($(TOPLEVEL),soc)
     SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark$(M_SUFFIX)_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,$(if $(filter test_dma,$(MODULE)),boot_dma_sim,$(if $(filter test_gemm,$(MODULE)),boot_gemm_sim,hello_sim)))))

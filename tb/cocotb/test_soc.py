@@ -11,6 +11,7 @@ level pieces (clocking, reset, pins), not the SoC.
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge
+from mmcm_bfm import start_array_clock
 
 CLK_PERIOD_NS = 20          # 50 MHz, soc.sv's default CLK_HZ (the board runs 100)
 CLKS_PER_BIT = 434          # 115200 baud
@@ -53,6 +54,7 @@ async def uart_rx(dut, out):
 @cocotb.test()
 async def test_firstlight(dut):
     cocotb.start_soon(Clock(dut.clk_i, CLK_PERIOD_NS, unit="ns").start())
+    start_array_clock(dut)
     dut.uart_rx_i.value = 1          # idle line
     dut.rst_i.value = 1
     await ClockCycles(dut.clk_i, 5)

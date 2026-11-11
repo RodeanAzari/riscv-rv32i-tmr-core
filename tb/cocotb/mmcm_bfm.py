@@ -35,13 +35,14 @@ import mmcm_drp as md  # noqa: E402
 
 
 class MmcmBfm:
-    def __init__(self, dut, scale=2, lock_ps=4_000_000, offsets=(7_000,), seed=5):
+    def __init__(self, dut, scale=2, lock_ps=4_000_000, offsets=(7_000,), seed=5,
+                 out0=md.OUT0_DIV):
         self.dut = dut
         self.scale = scale
         self.lock_ps = lock_ps
         self.offsets = list(offsets)
         self.rng = random.Random(seed)
-        self.model = md.Mmcm()
+        self.model = md.Mmcm(out0=out0)   # CLKOUT0's divide at power-up
         self.model.rst = False
         self.segments: list[tuple[int, int]] = []
         self.clock = None
@@ -121,3 +122,36 @@ class MmcmBfm:
             await RisingEdge(d.clk_i)
             d.drp_drdy_i.value = 0
             d.drp_do_i.value = 0
+
+
+ARRAY_DIV = 10      # /10: 25 ns here against the core's 20, 80 MHz on the board
+
+
+def start_array_clock(dut):
+    """For the SoC tests that leave the ACLK register alone: with ARRAY_CDC,
+    the array MMCM comes up at /ARRAY_DIV instead of the board's /8, so the
+    test runs with clk_array at another frequency than the core (buildplan
+    Phase H, slice 5), at a phase that drifts against the core's edges. A
+    watcher fails the test unless the array side then leaves reset and its
+    clock runs at that period. Without ARRAY_CDC, nothing."""
+    if not int(dut.ARRAY_CDC.value):
+        return None
+    bfm = MmcmBfm(dut, out0=ARRAY_DIV, offsets=(7_000,))
+    bfm.start()
+    cocotb.start_soon(_array_runs(dut, bfm))
+    return bfm
+
+
+async def _array_runs(dut, bfm):
+    want = md.Mmcm(out0=ARRAY_DIV).out_period_ps() * bfm.scale
+    while not bfm.segments:
+        await RisingEdge(dut.clk_array_i)
+    for _ in range(20):                      # the reset synchronizer's edges
+        await RisingEdge(dut.clk_array_i)
+    assert not int(dut.u_accel.rst_a.value), "array side still in reset after LOCKED"
+    t0 = get_sim_time("ps")
+    for _ in range(10):
+        await RisingEdge(dut.clk_array_i)
+    period = (get_sim_time("ps") - t0) / 10
+    assert period == want, f"clk_array at {period} ps, want {want}"
+    dut._log.info(f"clk_array_i at {period:.0f} ps, the array side out of reset")
