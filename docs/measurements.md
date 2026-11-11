@@ -281,8 +281,27 @@ multiply (faster than libgcc's general one).
 
 The call is what software sees. Off the 16 grid (56, 20×50×30) the DMA moves a
 row per descriptor, so 56³ costs 2.4× 48³'s call for 1.6× its MACs. 8×8×8's
-call is slower than 16×16×16's: the same per-row DMA. An RV32IM baseline
-(`matbench_m`, mul in hardware) follows on an `M=1` board build.
+call is slower than 16×16×16's: the same per-row DMA.
+
+**RV32IM** software (`matbench_m`, the same source built `-march=rv32im`, so
+the software matmul uses `mul`): same file, second section; Arty A7, 100 MHz,
+`make impl M=1` at `d2f363b` (`summary_board_m.txt`), `ARRAY_CDC` = 0,
+three runs identical, 7/7 equal. A different board build from the RV32I table:
+the job cycles match it exactly, the call differs by a few cycles (code layout).
+
+| Shape | Software | Call | Job | Speedup (call) | Speedup (job) |
+|---|---|---|---|---|---|
+| 8×8×8 | 6,243 | 3,490 | 53 | 1.8× | 118× |
+| 16×16×16 | 47,291 | 2,483 | 61 | 19.0× | 775× |
+| 32×32×32 | 369,003 | 7,931 | 299 | 46.5× | 1,234× |
+| 48×48×48 | 1,235,483 | 17,121 | 813 | 72.2× | 1,520× |
+| 56×56×56 | 1,957,491 | 40,982 | 1,571 | 47.8× | 1,246× |
+| 128×16×16 | 378,251 | 12,757 | 173 | 29.7× | 2,186× |
+| 20×50×30 | 335,031 | 16,160 | 499 | 20.7× | 671× |
+
+Against an honest software baseline the accelerator, as software calls it,
+wins 1.8× to 72×; `mul` makes the software matmul 5.8-6.3× faster than
+shift-add. At 8×8×8 the DMA setup nearly cancels the array.
 
 ## Accelerator PE utilization (Phase H)
 

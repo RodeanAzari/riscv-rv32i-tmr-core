@@ -573,7 +573,7 @@ rows. The per-slice trends (what each feature cost in LUTs and MHz) are in
 |---|---|
 | GOPS (INT8) at achieved Fmax | — (Phase H, measured on the board) |
 | **Measured** PE utilization | — (Phase H) |
-| Speedup vs. software matmul | — (Phase H) |
+| Speedup vs. software matmul, on the board, 100 MHz, INT8, 8×8×8 to 56×56×56, as software calls it (DMA in, job, DMA out) | 1.8× to **72×** against RV32IM software (`mul`); 10× to 447× against RV32I software (shift-add); 7/7 shapes bit-equal, three runs identical ([matbench_board.txt](docs/reports/matbench_board.txt), [measurements.md](docs/measurements.md)) |
 | DSP slices used vs. LUT-fabric MACs, 16×16 array alone, out of context | 128 DSP + 7,681 LUT (two MACs per DSP) vs. 0 DSP + 28,545 LUT (all in fabric); 104.5 / 104.6 MHz ([summary_ooc_array16x16.txt](docs/reports/summary_ooc_array16x16.txt)) |
 | AXI outstanding depth / measured throughput | — |
 | SVA properties proven on AXI interfaces | — |

@@ -12,3 +12,18 @@ matbench: 20x50x30 ok, sw 2092329, call 16158, job 499, speedup 129.5 / 4193.0
 matbench: 7/7 ok
 
 # runs 2 and 3: identical to run 1, line for line
+
+# ---------------------------------------------------------------------------
+# matbench_m (the same sw/apps/matbench.c built -march=rv32im: the software matmul uses mul), RV32IM, single core, 100 MHz, ARRAY_CDC = 0, WX_EXT = 0, bitstream from make impl M=1 at d2f363b (summary_board_m.txt), loaded with the bootloader after a DTR reset, 2026-11-10. Three runs, identical; run 1 below.
+
+matbench: 16x16 array, software rv32im mul
+matbench: 8x8x8 ok, sw 6243, call 3490, job 53, speedup 1.8 / 117.8
+matbench: 16x16x16 ok, sw 47291, call 2483, job 61, speedup 19.0 / 775.3
+matbench: 32x32x32 ok, sw 369003, call 7931, job 299, speedup 46.5 / 1234.1
+matbench: 48x48x48 ok, sw 1235483, call 17121, job 813, speedup 72.2 / 1519.7
+matbench: 56x56x56 ok, sw 1957491, call 40982, job 1571, speedup 47.8 / 1246.0
+matbench: 128x16x16 ok, sw 378251, call 12757, job 173, speedup 29.7 / 2186.4
+matbench: 20x50x30 ok, sw 335031, call 16160, job 499, speedup 20.7 / 671.4
+matbench: 7/7 ok
+
+# runs 2 and 3: identical to run 1, line for line
