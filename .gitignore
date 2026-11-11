@@ -25,6 +25,7 @@ xsim.dir/
 results.xml
 results_*.xml
 tb/aclk/build/
+tb/asic/build/
 
 # Formal
 syn/*_formal/

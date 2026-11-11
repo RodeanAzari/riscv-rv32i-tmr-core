@@ -502,6 +502,27 @@ aclk-check:
 	@echo "aclk-check: model's DRP words = AMD's, divides 1-$$(wc -l < $(ACLK_BUILD)/model.txt)"
 	$(MAKE) -C tb/cocotb TEST_ONE=aclk_tb:test_aclk UNISIM=$(VIVADO_DATA)/verilog/src
 
+# ram_dp built with SKY130_SRAM (the ASIC flow's memories, OpenRAM macros)
+# against a reference memory, random traffic on both ports, at one 1 KiB
+# macro, two and sixteen 2 KiB macros (tb/asic/ram_dp_sram_tb.v). Local:
+# reads the PDK's behavioural models (PDK_ROOT, as LibreLane resolves it).
+PDK_ROOT   ?= $(HOME)/.ciel/ciel/sky130/versions/8afc8346a57fe1ab7934ba5a6056ea8b43078e71
+SRAM_V     := $(PDK_ROOT)/sky130A/libs.ref/sky130_sram_macros/verilog
+SRAM_BUILD := tb/asic/build
+
+.PHONY: sram-check
+sram-check:
+	@test -d $(SRAM_V) || { echo "sram-check: no OpenRAM models at $(SRAM_V)"; exit 1; }
+	@mkdir -p $(SRAM_BUILD)
+	@for w in 256 1024 8192; do \
+	  verilator --binary --timing -Wno-fatal -Wno-lint -Wno-style -DSKY130_SRAM -GWORDS=$$w \
+	    --top-module ram_dp_sram_tb -Mdir $(SRAM_BUILD)/w$$w -o sim tb/asic/ram_dp_sram_tb.v rtl/top/ram_dp.sv \
+	    $(SRAM_V)/sky130_sram_2kbyte_1rw1r_32x512_8.v $(SRAM_V)/sky130_sram_1kbyte_1rw1r_32x256_8.v \
+	    > $(SRAM_BUILD)/w$$w.log 2>&1 || { echo "sram-check: build failed, $(SRAM_BUILD)/w$$w.log"; exit 1; }; \
+	  $(SRAM_BUILD)/w$$w/sim | grep -a "^sram-check" | tee $(SRAM_BUILD)/w$$w.txt; \
+	  grep -q " ok, " $(SRAM_BUILD)/w$$w.txt || exit 1; \
+	done
+
 # --- TMR fault injection ---------------------------------------------------
 # The documented campaign (CLAUDE.md 5.7): FAULTS random single-bit flips into
 # the TMR core, each in a fresh random program, judged against the golden
