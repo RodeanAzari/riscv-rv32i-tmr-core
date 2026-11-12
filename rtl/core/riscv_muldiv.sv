@@ -43,6 +43,11 @@ module riscv_muldiv #(
 ) (
     input  logic            clk_i,
     input  logic            rst_i,
+`ifdef FORMAL
+    // X in what the unit will read, for the X-propagation proof (xprop.sby
+    // prove_m): see the end of this file.
+    output logic            f_live_o,
+`endif
     input  logic            valid_i,
     input  logic            ack_i,
     input  logic [XLEN-1:0] a_i,
@@ -361,6 +366,35 @@ module riscv_muldiv #(
     cover (f_acked_q && state_q == IDLE && valid_i);
   end
 `endif
+`endif
+
+`ifdef FORMAL
+  // f_live_o: the XOR of every register the unit will read from its current
+  // state on -- the state, the op once captured, and the datapath registers
+  // the state goes on to use (each field ANDed with "this state reads it").
+  // Only tb/formal/xprop.sby looks at it: after Yosys's xprop pass it is X
+  // exactly when one of those bits is X, and prove_m asserts it never is.
+  // That is the invariant XP's induction needs with M: an unreachable start
+  // with, say, DIV's counter defined but its remainder X stalls longer than
+  // any window and then commits X; from reset each is written before read.
+  //
+  // What DONE reads is keyed on the op, not on the state that leads there:
+  // a divide op needs its quotient and remainder in any busy state, a
+  // multiply op its products from DIV on. In a reachable state the op and the
+  // state agree (MUL with a multiply, DIV with a divide), so the extra cases
+  // claim nothing, but an induction start where they disagree -- DIV with a
+  // multiply op, reaching DONE with products never written -- is ruled out.
+  logic busy, in_mul, in_div, div_op;
+  assign busy     = (state_q != IDLE);
+  assign in_mul   = (state_q == MUL);
+  assign in_div   = (state_q == DIV);
+  assign div_op   = f3_q[2];
+  assign f_live_o = (^state_q)
+      ^ (^(f3_q & {3{busy}}))
+      ^ (^({a_lo_q, b_lo_q, a_hi_q, b_hi_q} & {(4*HALF+2){in_mul}}))
+      ^ (^({dvsr_q, cnt_q} & {(XLEN+CNT_W){in_div}}))
+      ^ (^({rem_q, quo_q, neg_quo_q, neg_rem_q} & {(2*XLEN+2){busy && div_op}}))
+      ^ (^({p_ll_q, p_lh_q, p_hl_q, p_hh_q} & {(4*PP_W){busy && !in_mul && !div_op}}));
 `endif
 
 endmodule

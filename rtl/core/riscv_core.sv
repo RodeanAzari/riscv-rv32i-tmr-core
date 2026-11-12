@@ -62,6 +62,17 @@ module riscv_core #(
     // X-propagation proof (tb/formal/xprop_formal.sv), which sees the core
     // only through its ports.
     output logic [(2**ADDR_W)*XLEN-1:0] f_regs_o,
+    // With M_EXT: X in the M instruction flag in EX, in what the M unit will
+    // read (riscv_muldiv's f_live_o), or, while an M instruction is in EX, in
+    // the state its stall freezes (g_muldiv). Formal-only, for the same proof:
+    // XP's invariant with M (tb/formal/xprop.sby, prove_m). 0 without M.
+    output logic                        f_mlive_o,
+    // With M_EXT: an M instruction in EX carries no load, store, branch,
+    // jump or halt flag -- the decoder never sets them together and a bubble
+    // clears them together. Formal-only, the same proof's second invariant
+    // (as a value: with those flags, X in EX's operands would reach the trap
+    // and redirect logic while the unit's result is still pending).
+    output logic                        f_mok_o,
 `endif
 
     // Instruction memory port (synchronous read, 1-cycle latency). The address
@@ -571,12 +582,19 @@ module riscv_core #(
   logic            md_done;
   logic [XLEN-1:0] md_result, md_value;
 
+`ifdef FORMAL
+  logic            f_md_live;     // riscv_muldiv's f_live_o (f_mlive_o, below)
+`endif
+
   if (M_EXT) begin : g_muldiv
     riscv_muldiv #(
         .XLEN (XLEN)
     ) u_muldiv (
         .clk_i    (clk_i),
         .rst_i    (rst_i),
+`ifdef FORMAL
+        .f_live_o (f_md_live),
+`endif
         .valid_i  (id_ex_muldiv),
         .ack_i    (md_done && !hold),
         .a_i      (ex_rs1),
@@ -588,6 +606,9 @@ module riscv_core #(
   end else begin : g_no_muldiv
     assign md_done   = 1'b0;
     assign md_result = '0;
+`ifdef FORMAL
+    assign f_md_live = 1'b0;
+`endif
   end
 
   // M_EXT in the term: without M, nothing stalls whatever id_ex_muldiv holds
@@ -936,6 +957,32 @@ module riscv_core #(
   assign rvfi_mem_wmask_o = mem_wb_mem_wmask;
   assign rvfi_mem_rdata_o = mem_wb_mem_rdata;
   assign rvfi_mem_wdata_o = mem_wb_mem_wdata;
+`endif
+
+`ifdef FORMAL
+  // ------------------------------------------------- xprop invariant -----
+  // f_mlive_o (see the port). While an M instruction is in EX, the state its
+  // stall freezes -- pc, IF/ID, every ID/EX field but the operands (the unit
+  // captured those on the first cycle), and RVFI's valid bits -- holds no X:
+  // a divide holds it longer than the proof's window, so the window alone
+  // cannot rule out an X there from the start. A reduction XOR is X if any
+  // bit is.
+  logic f_frozen;
+  assign f_frozen = ^{pc, if_id_pc_o, if_id_instr_o, id_ex_pc_o, id_ex_instr_o,
+                      id_ex_rs1_addr_o, id_ex_rs2_addr_o, id_ex_rd_addr_o, id_ex_imm_o,
+                      id_ex_funct3, id_ex_alu_alt, id_ex_a_sel_pc, id_ex_a_sel_zero,
+                      id_ex_b_sel_imm, id_ex_jalr, id_ex_mem_funct3,
+                      id_ex_fwd_rs1_ex_mem, id_ex_fwd_rs1_mem_wb,
+                      id_ex_fwd_rs2_ex_mem, id_ex_fwd_rs2_mem_wb,
+                      id_ex_rd_we, id_ex_mem_read, id_ex_mem_write, id_ex_branch,
+                      id_ex_jump, id_ex_halt
+`ifdef RISCV_FORMAL
+                      , if_id_valid, id_ex_valid
+`endif
+                      };
+  assign f_mlive_o = M_EXT ? (id_ex_muldiv ^ f_md_live ^ (id_ex_muldiv & f_frozen)) : 1'b0;
+  assign f_mok_o   = !(id_ex_muldiv && (id_ex_mem_read || id_ex_mem_write || id_ex_branch
+                                        || id_ex_jump || id_ex_jalr || id_ex_halt));
 `endif
 
 `ifdef FORMAL

@@ -27,6 +27,7 @@ module muldiv_formal #(
   riscv_muldiv #(.XLEN(XLEN)) u_dut (
       .clk_i    (clk_i),
       .rst_i    (rst_i),
+      .f_live_o (),
       .valid_i  (valid_i),
       .ack_i    (ack_i),
       .a_i      (a_i),

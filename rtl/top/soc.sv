@@ -220,6 +220,8 @@ module soc #(
         .rst_i               (rst_i),
   `ifdef FORMAL
         .f_regs_o            (),
+        .f_mlive_o           (),
+        .f_mok_o             (),
   `endif
         .imem_addr_o         (imem_addr),
         .imem_rdata_i        (imem_rdata),

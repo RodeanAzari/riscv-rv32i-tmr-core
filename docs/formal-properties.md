@@ -46,7 +46,7 @@ Tools: OSS CAD Suite **2026-10-07** — Yosys 0.69+208, SymbiYosys 0.69, Yices
 | 13 | TMR voter (§5.7): any two agreeing inputs produce that output (V1); mismatch is exactly "not all equal" (V2); with two agreeing, the disagree flags name exactly the odd one out (V3); every output bit comes from some input (V4) | `tmr_voter` (W = 32) | `tb/formal/tmr_voter.sby` | combinational, so k = 1 is complete: every input combination | **proven** | 5 / 5 (all agree; each of A, B, C outvoted; all differ). Planted bugs caught: a missing majority term (V1), mismatch comparing two inputs (V2), swapped flags (V3) |
 | 14 | M-extension unit (Phase H): the DONE result equals the ISA's for all 8 ops (spec in plain `*` `/` `%` with the manual's x / 0 and INT_MIN / −1 table, independent of the datapath); latency exactly 3 cycles in EX for MUL\*, XLEN + 2 for DIV\*; result held unchanged until `ack_i`, idle after it, never leaves idle without `valid_i`. Every input free every cycle (reset only forced in the first): the unit needs no input assumptions | `riscv_muldiv` (**XLEN = 8**: a 32-bit multiplier against `*` is beyond SAT; same parameterized RTL, 32-bit checked in simulation) | `tb/formal/muldiv.sby` (bitwuzla; `MULDIV_ARITH` keeps the arithmetic out of the core's proofs) | k-induction, depth 3, closes at k = 1 with datapath invariants (operand halves, partial products, restoring-division `rem + Q·D = A >> cnt`, `rem < D`); ~1 min | **proven** | 12 / 12 (each op done, x / 0 with a < 0, INT_MIN / −1, held result, back-to-back start). 8 planted bugs all rejected: 4 FAIL in the base case, 4 UNKNOWN (induction does not close; `sby` exits 4) |
 | 15 | M extension in the core (Phase H): M1 a waiting M instruction never meets a load-use stall, redirect or freeze; M2 each `mstall` cycle holds pc, IF/ID and ID/EX and bubbles EX/MEM; M3 only an M instruction stalls; M4 a result ready during a hold is still there after it (the unit is acked only as the instruction leaves EX); I1 an invalid IF/ID word is the NOP; B3 the whole pipeline is one pc chain; F1/F2 against the operands captured on the first EX cycle; every earlier core property with M in. riscv-formal on the M core: the 8 M instructions under `RISCV_FORMAL_ALTOPS` (stand-in values, real latency and stall) plus every RV32I check | `riscv_core` M_EXT = 1, the unit replaced by `tb/formal/muldiv_stub.sv` (real handshake, free result, done 3-5 cycles into EX; M2 extends it to any stall length); riscv-formal with the real unit | `tb/formal/core.sby` (`prove_m`, `cover_m`, `prove_m_wait`, `cover_m_wait`; bitwuzla), `tb/formal/rvfi/checks_m.cfg` | k-induction depth 10 (`prove_m`), 20 with MEM_WAIT (`prove_m_wait`); riscv-formal BMC: insn DIV/REM 45, MUL 20, causal 45, liveness 50, hang 45, **reg 25** (sees MUL retire, not DIV: at 45 one solver call ran 8 h on boolector, 30 min on bitwuzla, unanswered) | **proven**; riscv-formal **54 / 54 pass** | `cover_m`, `cover_m_wait` all reached; riscv-formal 54 / 54 covers. 5 planted integration bugs (IF/ID not held, EX/MEM write not bubbled, ack on a held cycle, bubble keeps muldiv, decoder ignores funct7) all caught by `test_core_m` and by formal; the held-cycle ack only after M4 was added (with the stub's free result it was a longer stall, not a failure) |
-| 16 | No X into committed state with M (Phase H, §5.5): property 12's XT with the core built with M_EXT and the real unit (its datapath registers unreset by design); cover: an M instruction retires with all of it defined | `riscv_core` M_EXT = 1, X-encoded by Yosys `xprop` | `tb/formal/xprop.sby` (`bmc_m`, `cover_m`; bitwuzla) | BMC depth 10 from reset (~4 min). **XP (induction) with M open**: a start with X on a control flop (`id_ex_muldiv`, so `mstall` X) holds the pipeline for any window, so it needs the invariant "no reset flop is X", which the port-only harness cannot state; tried depth 10 and 24, real unit and stub (2026-11-07) | **XT pass (bounded); XP open** | cover_m all reached |
+| 16 | No X into committed state with M (Phase H, §5.5): property 12's XP and XT with the core built with M_EXT and the real unit (its datapath registers unreset by design); cover: an M instruction retires with all of it defined | `riscv_core` M_EXT = 1, X-encoded by Yosys `xprop` | `tb/formal/xprop.sby` (`prove_m`, `bmc_m`, `cover_m`; bitwuzla) | XP: k-induction at 10 (~4 min alone, ~6 in `make formal FORMAL_JOBS=4`), needs invariants XR, XM and XO (below). XT: BMC depth 10 from reset (~4 min) | **XP proven (2026-11-11); XT pass (bounded)** | cover_m all reached |
 
 ### 1. x0 invariance (register file)
 
@@ -423,6 +423,54 @@ in MEM itself read an undefined register. With the old MEM-stage version
 of that check, XT failed at step 3 on a correct core: a false failure, as
 the harness promises, never a false pass. BMC to depth 10 now takes about 5
 minutes.
+
+### 16. No X into committed state with M (core with M_EXT, X-encoded)
+
+Property 12 with the M unit in the core. Its datapath registers (operands,
+partial products, remainder, quotient, counter) have no reset by design, so
+XT runs from reset (`bmc_m`) and XP (`prove_m`) needs more than XR: a divide
+stalls IF, ID and EX for XLEN + 2 = 34 cycles, longer than the window, so
+the window alone cannot rule out a start where something a stall freezes is
+already X and commits after the stall. Proven 2026-11-11 by k-induction at
+k = 10 with two more invariants, both asserted only while the core is not
+halted (`halt_next_o[0]`, the next value of the sticky halted flop):
+
+| | Invariant |
+|---|---|
+| XM | nothing an M instruction will read is X (`f_mlive_o`): the M flag in EX; the unit's state and, while busy, its op; MUL's operand halves in MUL; the divisor and counter in DIV; for a divide op the remainder, quotient and signs in any busy state; for a multiply op the partial products from DIV on; and, while an M instruction is in EX, everything its stall freezes (pc, IF/ID, every ID/EX field but the operands, RVFI's valid bits) |
+| XO | an M instruction in EX carries no load, store, branch, jump or halt flag (`f_mok_o`, a value, not an X mask) |
+
+Each is a formal-only output of the core (`riscv_muldiv`'s `f_live_o` feeds
+XM), compiled only under `FORMAL`: an XOR reduction of the fields, each ANDed
+with "this state reads it", which after `xprop` is X exactly when a live bit
+is. Five induction counterexamples, each an unreachable start, shaped it:
+
+1. a divide in DIV with its remainder X, stalling past the window (the
+   unit's live registers);
+2. IF/ID holding a store with X immediate bits behind a long divide (the
+   frozen stages);
+3. a halted core with an M instruction in EX, X wandering with no commit to
+   stop it (the halt gate);
+4. the unit in DIV with a multiply op, reaching DONE with products never
+   written (the live set keyed on the op, not the state); then `halt_o` set
+   while the flop that actually freezes the pipeline was not (the gate moved
+   to `halt_next_o[0]`);
+5. an M instruction in EX flagged as a load or branch, so X in its operands
+   (legitimate while the unit works: the forwarding paths have moved on)
+   reached the trap and redirect logic (XO).
+
+The base case passed from reset every time: no design bug, only missing
+invariants.
+
+Shown to fail (2026-11-11), `prove_m`, each in the base case:
+
+| Planted fault | Result |
+|---|---|
+| DIV's capture leaves `rem_q` unwritten (power-up X) | step 4, XM |
+| the unit's `state_q` loses its reset | step 1, XM |
+| `id_ex_muldiv` loses its reset (and its bubble clear) | step 1, XM |
+| MUL's `p_hh_q` write never enabled (`if (cnt_q == 0)`) | step 5, XM |
+| `p_hh_q` never assigned at all | **passes**: no flop is left, only an undriven wire, which Yosys models as a free value, not X. `make lint` (Verilator `-Wall`, UNDRIVEN) is what catches that class |
 | 17 | CDC primitives (Phase H, array clock domain). **FIFO**: F1 full never optimistic, F2 empty never optimistic, F3 gray = bin2gray(binary), pointer windows (every synchronized copy lags the live pointer, by at most DEPTH); end to end from the harness's own counts, F4 pointers count exactly and F5 the k-th pop returns the k-th accepted write (tracked write the solver's choice: no loss, duplication or reordering). **Pulse**: P1 delivered = accepted or one behind (never lost, duplicated or stretched), P2 !busy only once delivered, P3 one toggle in flight around the loop. **Reset sync**: R1 asserts on the step arst does, R2 releases only on a clock edge, R3 only after STAGES edges | `cdc_async_fifo` (WIDTH 4; DEPTH 4/SYNC 2 and DEPTH 2/SYNC 3), `cdc_pulse` (SYNC 2, 3), `cdc_reset_sync` (STAGES 2, 3) | `tb/formal/cdc_async_fifo.sby`, `cdc_pulse.sby`, `cdc_reset_sync.sby`; `multiclock on`, both clocks free (any ratio and phase, edges together or apart); synchronizers replaced by `tb/formal/cdc_sync_meta.sv`: each changed bit may arrive old until a capture has seen it new (metastability, and skew up to one source period); reset held until each side has had SYNC_STAGES + 1 edges in it | **PDR (abc pdr): unbounded**, no k; FIFO ~1 min, the rest seconds | **proven** | FIFO 4 / 4 (full, tracked entry out, filled then drained, second-lap wrap), pulse 3 rounds + pulse while busy, reset release and assert between edges; the stand-in's stale-bit capture reached. Planted bugs, judged with the RTL's own invariants removed: binary pointers across (F2), write while full (caught), wrong gray code (caught), empty from the wrong pointer (caught), full with slack (caught); pulse accepted while busy (P1, P2), level instead of pulse (P1); release unsynchronised (R2, R3), one stage (R3). A one-flop synchronizer is caught by simulation (latency), not here: the stand-in replaces it |
 
 ## Bugs formal found that simulation missed

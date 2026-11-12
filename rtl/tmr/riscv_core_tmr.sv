@@ -177,6 +177,8 @@ module riscv_core_tmr #(
       .clk_i (clk_i), .rst_i (rst_i),
 `ifdef FORMAL
       .f_regs_o (),
+      .f_mlive_o (),
+      .f_mok_o   (),
 `endif
       .imem_addr_o (imem_addr[0]), .imem_rdata_i (imem_rdata_i),
       .dmem_addr_o (dmem_addr[0]), .dmem_wdata_o (dmem_wdata[0]),
@@ -216,6 +218,8 @@ module riscv_core_tmr #(
         .clk_i (clk_i), .rst_i (rst_i),
 `ifdef FORMAL
         .f_regs_o (),
+        .f_mlive_o (),
+        .f_mok_o   (),
 `endif
         .imem_addr_o (imem_addr[i]), .imem_rdata_i (imem_rdata_i),
         .dmem_addr_o (dmem_addr[i]), .dmem_wdata_o (dmem_wdata[i]),

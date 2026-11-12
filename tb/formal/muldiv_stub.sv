@@ -21,6 +21,9 @@ module riscv_muldiv #(
 ) (
     input  logic            clk_i,
     input  logic            rst_i,
+`ifdef FORMAL
+    output logic            f_live_o,   // the real unit's xprop hook; unused here
+`endif
     input  logic            valid_i,
     input  logic            ack_i,
     input  logic [XLEN-1:0] a_i,
@@ -60,5 +63,8 @@ module riscv_muldiv #(
 
   assign done_o   = (state_q == DONE);
   assign result_o = result_q;
+`ifdef FORMAL
+  assign f_live_o = 1'b0;
+`endif
 
 endmodule

@@ -69,6 +69,8 @@ module xprop_formal #(
   logic [31:0]   id_ex_instr_d, ex_mem_instr_d;
   logic [31:0]   id_ex_rs1_rdata_x;
   logic [1023:0] regs_x;
+  logic          mlive_x, mok_d, mok_x;
+  logic [1:0]    halt_next_d;
 
   riscv_core u_core (
       .clk_i_d               (clk_i),          .clk_i_x               (1'b0),
@@ -77,6 +79,8 @@ module xprop_formal #(
       .dmem_rdata_i_d        (dmem_rdata_i),   .dmem_rdata_i_x        (32'b0),
       .dmem_ready_i_d        (1'b1),           .dmem_ready_i_x        (1'b0),
       .f_regs_o_d            (),               .f_regs_o_x            (regs_x),
+      .f_mlive_o_d           (),               .f_mlive_o_x           (mlive_x),
+      .f_mok_o_d             (mok_d),          .f_mok_o_x             (mok_x),
       .dmem_addr_o_d         (dmem_addr_d),    .dmem_addr_o_x         (dmem_addr_x),
       .dmem_wdata_o_d        (dmem_wdata_d),   .dmem_wdata_o_x        (dmem_wdata_x),
       .dmem_wstrb_o_d        (dmem_wstrb_d),   .dmem_wstrb_o_x        (dmem_wstrb_x),
@@ -86,7 +90,7 @@ module xprop_formal #(
       .wb_rd_addr_o_d        (wb_addr_d),      .wb_rd_addr_o_x        (wb_addr_x),
       .wb_rd_wdata_o_d       (wb_wdata_d),     .wb_rd_wdata_o_x       (wb_wdata_x),
       .halt_o_d              (halt_d),         .halt_o_x              (halt_x),
-      .halt_next_o_d         (),               .halt_next_o_x         (),
+      .halt_next_o_d         (halt_next_d),    .halt_next_o_x         (),
       .vote_pc_i_d           ('0),             .vote_pc_i_x           ('0),
       .vote_halt_i_d         ('0),             .vote_halt_i_x         ('0),
       .vote_rd_we_i_d        (1'b0),           .vote_rd_we_i_x        (1'b0),
@@ -207,6 +211,35 @@ module xprop_formal #(
 `endif
     end
   end
+
+  // XM, XP's second invariant, with M (prove_m): nothing the M unit will
+  // read is X -- the M flag in EX, the unit's state and op, and the datapath
+  // registers its state goes on to use (riscv_muldiv's f_live_o). Induction
+  // needs it because a divide stalls the pipeline for XLEN + 2 cycles, longer
+  // than the window: a start in DIV with its remainder X would commit X after
+  // a stall no window covers. From reset each is written before it is read.
+  // XP only: under XT an M instruction can capture an operand read from an
+  // unwritten register, and XT stops the check only when it retires. Not
+  // once the core halts (halt_next_o[0], the next value of the core's sticky
+  // halted flop, which is 1 whenever that flop is): from then on every cycle
+  // bubbles ID/EX, so an M instruction in EX is squashed and none issues
+  // again until reset -- what the unit holds can never commit. Without the
+  // gate, an induction start that is halted with an M instruction in EX
+  // (unreachable: a halt bubbles everything behind it) lets X wander with no
+  // commit to stop it. Not halt_o: a start may have it disagree with the
+  // flop that actually freezes the pipeline (both found by the induction,
+  // 2026-11-11).
+`ifdef XPROP_REGFILE_DEFINED
+  // XO, its companion: an M instruction in EX carries no load, store,
+  // branch, jump or halt flag (f_mok_o). A value, not an X mask: a start
+  // where one is set lets X in EX's operands -- legitimate while the unit
+  // works, since the forwarding paths have moved on -- reach the trap and
+  // redirect logic (found by the induction, 2026-11-11).
+  always_comb if (M && !rst_i && !halt_next_d[0]) begin
+    assert (!mlive_x);
+    assert (!mok_x && mok_d);
+  end
+`endif
 
   // Reachability. Each is outside reset and before any taint, so XP is live
   // when it happens.
