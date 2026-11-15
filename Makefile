@@ -653,43 +653,50 @@ floorplan:
 .PHONY: asic
 
 # LibreLane RTL-to-GDSII on Sky130 (CLAUDE.md §6.4): run #1 is the bare
-# non-TMR core (syn/asic_config.yaml), run #2 the full SoC in Phase H.
+# non-TMR core (syn/asic_config.yaml), run #2 the full SoC in Phase H
+# (SOC=1: syn/asic_soc.yaml, asic_top with 48 SRAM macros).
 # Runs inside LibreLane's nix-shell (a clone at LIBRELANE_DIR, tag 3.0.16);
-# the run lands in syn/build/asic/runs/asic/.
+# the run lands in syn/build/asic/runs/asic<suffix>/.
 LIBRELANE_DIR ?= $(HOME)/librelane
 # SCAN=1 adds scan chains (syn/asic_scan.yaml, steps in
 # syn/librelane_plugin_scan), then traces them and shifts every chain at
 # gate level on the routed netlist (scripts/scan_chains.py,
-# scan_shift_tb.py); reports *_scan.
+# scan_shift_tb.py). Reports carry the suffix: _soc, _scan, _soc_scan.
+SOC  ?= 0
 SCAN ?= 0
-ASIC_TAG  := asic$(if $(filter 1,$(SCAN)),_scan,)
-ASIC_CFGS := $(abspath syn/asic_config.yaml) $(if $(filter 1,$(SCAN)),$(abspath syn/asic_scan.yaml),)
+ASIC_SFX  := $(if $(filter 1,$(SOC)),_soc,)$(if $(filter 1,$(SCAN)),_scan,)
+ASIC_TOP  := $(if $(filter 1,$(SOC)),asic_top,riscv_core)
+ASIC_TAG  := asic$(ASIC_SFX)
+ASIC_CFGS := $(abspath syn/asic_$(if $(filter 1,$(SOC)),soc,config).yaml) $(if $(filter 1,$(SCAN)),$(abspath syn/asic_scan.yaml),)
 ASIC_RUN  := syn/build/asic/runs/$(ASIC_TAG)
+# SoC: no LEF view of asic_top (only for reuse as a macro; out of memory). syn/asic_soc.yaml
+ASIC_SKIP := $(if $(filter 1,$(SOC)),--skip Magic.WriteLEF --skip Odb.CheckDesignAntennaProperties,)
+ASIC_CHK  := $(ASIC_RUN)/check
 CELL_V     = $(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/verilog
 
 asic:
-	PYTHONPATH=$(abspath syn) nix-shell $(LIBRELANE_DIR)/shell.nix --run "librelane --run-tag $(ASIC_TAG) --overwrite \
+	PYTHONPATH=$(abspath syn) nix-shell $(LIBRELANE_DIR)/shell.nix --run "librelane --run-tag $(ASIC_TAG) --overwrite $(ASIC_SKIP) \
 		--design-dir $(abspath syn/build/asic) \
 		-c VERILOG_FILES='$(abspath $(RTL))' $(ASIC_CFGS)"
-ifeq ($(SCAN),1)
-	@mkdir -p $(ASIC_RUN)/scan_check
-	python3 scripts/asic_summary.py $(ASIC_RUN) $(ASIC_RUN)/scan_check
-	cp $(ASIC_RUN)/scan_check/summary_asic.txt docs/reports/summary_asic_scan.txt
-	python3 scripts/scan_chains.py $(ASIC_RUN)/final/nl/riscv_core.nl.v --json $(ASIC_RUN)/scan_check/chains.json \
-		> $(ASIC_RUN)/scan_check/chains.txt || { cat $(ASIC_RUN)/scan_check/chains.txt; exit 1; }
-	python3 scripts/scan_shift_tb.py $(ASIC_RUN)/scan_check/chains.json riscv_core clk_i > $(ASIC_RUN)/scan_check/shift_tb.v
-	iverilog -g2012 -DFUNCTIONAL -DUNIT_DELAY=#1 -o $(ASIC_RUN)/scan_check/shift.vvp $(ASIC_RUN)/scan_check/shift_tb.v \
-		$(ASIC_RUN)/final/nl/riscv_core.nl.v $(CELL_V)/primitives.v $(CELL_V)/sky130_fd_sc_hd.v
-	vvp -n $(ASIC_RUN)/scan_check/shift.vvp | grep -a "^scan-shift" > $(ASIC_RUN)/scan_check/shift.txt
+	@mkdir -p $(ASIC_CHK)
+	python3 scripts/asic_summary.py $(ASIC_RUN) $(ASIC_CHK)
+	cp $(ASIC_CHK)/summary_asic.txt docs/reports/summary_asic$(ASIC_SFX).txt
+ifneq ($(SCAN),1)
+	cp $(ASIC_CHK)/sta_asic.rpt docs/reports/sta_asic$(ASIC_SFX).rpt
+	cp $(ASIC_CHK)/manufacturability_asic.rpt docs/reports/manufacturability_asic$(ASIC_SFX).rpt
+else
+	python3 scripts/scan_chains.py $(ASIC_RUN)/final/nl/$(ASIC_TOP).nl.v --json $(ASIC_CHK)/chains.json \
+		> $(ASIC_CHK)/chains.txt || { cat $(ASIC_CHK)/chains.txt; exit 1; }
+	python3 scripts/scan_shift_tb.py $(ASIC_CHK)/chains.json $(ASIC_TOP) clk_i > $(ASIC_CHK)/shift_tb.v
+	iverilog -g2012 -DFUNCTIONAL -DUNIT_DELAY=#1 -o $(ASIC_CHK)/shift.vvp $(ASIC_CHK)/shift_tb.v \
+		$(ASIC_RUN)/final/nl/$(ASIC_TOP).nl.v $(CELL_V)/primitives.v $(CELL_V)/sky130_fd_sc_hd.v
+	vvp -n $(ASIC_CHK)/shift.vvp | grep -a "^scan-shift" > $(ASIC_CHK)/shift.txt
 	{ echo "# Scan chains in the routed netlist (make asic SCAN=1), traced by scripts/scan_chains.py,"; \
 	  echo "# shifted at gate level by scripts/scan_shift_tb.py (Icarus, sky130_fd_sc_hd models)"; echo; \
-	  cat $(ASIC_RUN)/scan_check/chains.txt; echo; cat $(ASIC_RUN)/scan_check/shift.txt; } > docs/reports/scan_chains_asic.txt
-	@cat docs/reports/scan_chains_asic.txt
-	@grep -q " ok, " $(ASIC_RUN)/scan_check/shift.txt
-else
-	python3 scripts/asic_summary.py $(ASIC_RUN) docs/reports
+	  cat $(ASIC_CHK)/chains.txt; echo; cat $(ASIC_CHK)/shift.txt; } > docs/reports/scan_chains_asic$(subst _scan,,$(ASIC_SFX)).txt
+	@cat docs/reports/scan_chains_asic$(subst _scan,,$(ASIC_SFX)).txt
+	@grep -q " ok, " $(ASIC_CHK)/shift.txt
 endif
-
 
 # --- housekeeping ----------------------------------------------------------
 .PHONY: clean

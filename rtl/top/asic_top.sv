@@ -16,7 +16,7 @@
 // which measures the physical design, not a chip that boots). The scan
 // chains' ports are added by the flow (syn/librelane_plugin_scan).
 module asic_top #(
-    parameter int unsigned CLK_HZ = 25_000_000
+    parameter int unsigned CLK_HZ = 20_000_000
 ) (
     input  logic       clk_i,
     input  logic       rst_i,
