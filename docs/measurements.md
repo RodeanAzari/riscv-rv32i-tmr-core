@@ -510,6 +510,54 @@ signal type and the flow's own LEF reader rejected the block LEF
 against the committed #1: RTL drift since Phase E). Coverage (Quaigh) and
 the SoC's chains come with run #2.
 
+### Run #2: the SoC (Phase H)
+
+`make asic SOC=1`: `asic_top` (TMR core with M, AXI crossbar, DMA, 16×16
+GEMM accelerator, UART; `syn/asic_soc.yaml`, `syn/asic_soc.sdc`), every RAM
+as one of **48 OpenRAM macros** placed by hand, die 6000 × 5200 µm, 50 ns
+(20 MHz), I/O delay 20% of the period, `rst_i` and `uart_rx_i` false paths,
+PnR at nom_tt + max_ss + min_ff, signoff at 9 corners. The macros ship one
+liberty (typical, 1.8 V, 25 °C), so **SRAM timing at the ss and ff corners
+is the typical model**; the project copies raise addr/wmask's 40 ps
+max_transition to 0.5 ns (yaml comment). Numbers from
+[summary_asic_soc.txt](reports/summary_asic_soc.txt). Append-only.
+
+| Date | Run | Clock | Die µm² | Std-cell µm² (util) | Cells (seq) | Setup WS worst | Hold WS worst | Fmax worst / typical | Power (tt) | DRC / LVS / antenna | Max slew / cap / fanout viol. (all corners) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-11-23 | **#2, the SoC (committed reports, timing closes)** | 50 ns | 31,200,000 | 3,704,850 (51.2%) | 710,656 incl. 256,840 taps (19,557) | **+0.695 ns** (max_ss) | +0.075 ns (max_ff) | 20.3 / 26.6 MHz | 87.7 mW | clean / clean / 1 net | 83,303 / 2,274 / 8,081 |
+
+**Timing closes, the electrical rules do not.** 0 setup and 0 hold
+violations at all 9 corners; Magic DRC 0 (KLayout DRC is off for the SoC,
+yaml), LVS 0, GDS XOR 0. One antenna net is left (ratio 1.45, a hold
+buffer's input on met1). Max slew is counted against LibreLane's 0.75 ns
+limit: at max_ss 83,303 pins, 37,597 of them antenna-diode pins and 45,706
+signal pins; **4,024 pins exceed the cell library's own 1.5 ns** (worst
+3.44 ns), where STA extrapolates past the characterized tables, so ss timing
+through them is less certain than the slack says. At nom_tt: 15,911 (8,065
+signal), 30 above 1.5 ns. Pre-layout estimate (synthesised netlist, before
+any buffering): −1,652 ns, not usable.
+
+**Why the slew is left.** LibreLane repairs slew and cap once after global
+routing, on estimated parasitics, and inserts every antenna diode after
+that step; nothing repairs after detailed routing. The steps taken
+(2026-11-15 to 23), with signoff counts at max_ss (all pins / signal pins):
+
+| Change | Max slew, max_ss | Max slew, nom_tt | Note |
+|---|---|---|---|
+| 11-15 run (post-GRT repair off: the SRAM .lib's 40 ps limit stopped it, RSZ-0090) | 95,382 | 12,968 | setup +0.54, hold −0.92 on `uart_rx_i` |
+| + SRAM .lib copies, post-GRT repair on at 10% margin (routed trial, not signoff) | 87,894 / 81,232 | 9,772 / 6,951 | repair saw 6,755 violations at GRT |
+| + repair margin 30%, heuristic diodes (this run) | 83,303 / 45,706 | 15,911 / 8,065 | 148,953 diodes in all, nearly every one heuristic (nets over 90 µm) |
+
+**Detailed routing failed twice on DRT-1231** (OpenROAD issue #12200, open):
+after its antenna repair (11,605 diodes) the incremental reroute lost every
+access point of an SRAM pin (g_c[15] `dout0[24]`; on the scan run
+`dout0[18]`, then g_c[7] after a move). Fix: g_c[15] 0.46 µm left (half a
+met4 pitch; its pins were off the tracks the other 15 sit on) and
+`RUN_HEURISTIC_DIODE_INSERTION`, which fixes antennas before routing (6,486
+violating nets → 0) so routing inserts almost none. About 13.5 h on the
+desktop (Ryzen 5 5600): 2.5 h to post-GRT repair, then 11.0 h resumed from
+that step (`ASIC_FROM`) with the 30% margin; peak memory 27.1 GB.
+
 Layout screenshots from KLayout (met4/met5 power grid hidden), in
 `docs/img/asic/run1/`: `layout.png`, the whole block, and `layout-zoom.png`,
 single standard cells with li1/met1 wiring and their names. LibreLane's own

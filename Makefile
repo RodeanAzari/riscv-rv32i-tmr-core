@@ -673,9 +673,25 @@ ASIC_RUN  := syn/build/asic/runs/$(ASIC_TAG)
 ASIC_SKIP := $(if $(filter 1,$(SOC)),--skip Magic.WriteLEF --skip Odb.CheckDesignAntennaProperties,)
 ASIC_CHK  := $(ASIC_RUN)/check
 CELL_V     = $(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/verilog
+# SoC: the SRAM liberties with addr0/addr1/wmask0's 40 ps max_transition
+# raised to the 0.5 ns the same file gives every other input (syn/asic_soc.yaml).
+SRAM_LIB_SRC := $(PDK_ROOT)/sky130A/libs.ref/sky130_sram_macros/lib
+SRAM_LIB_DIR := syn/build/asic/sram_lib
+SRAM_LIBS    := $(addprefix $(SRAM_LIB_DIR)/,sky130_sram_2kbyte_1rw1r_32x512_8_TT_1p8V_25C.lib sky130_sram_1kbyte_1rw1r_32x256_8_TT_1p8V_25C.lib)
 
-asic:
-	PYTHONPATH=$(abspath syn) nix-shell $(LIBRELANE_DIR)/shell.nix --run "librelane --run-tag $(ASIC_TAG) --overwrite $(ASIC_SKIP) \
+$(SRAM_LIB_DIR)/%.lib: $(SRAM_LIB_SRC)/%.lib
+	@mkdir -p $(@D)
+	sed 's/^\( *max_transition *: *\)0\.04;/\10.5;/' $< > $@
+	@test "$$(grep -c 'max_transition *: *0\.5;' $@)" = 3 || { echo "$@: expected 3 raised max_transition lines"; rm -f $@; exit 1; }
+	@! grep -q 'max_transition *: *0\.04' $@
+
+# ASIC_FROM=<step id> resumes the existing run from that step (e.g.
+# OpenROAD.DetailedRouting) on the run's saved state, instead of starting over.
+ASIC_FROM ?=
+
+asic: $(if $(filter 1,$(SOC)),$(SRAM_LIBS),)
+	@mkdir -p syn/build/asic
+	PYTHONPATH=$(abspath syn) nix-shell $(LIBRELANE_DIR)/shell.nix --run "librelane --run-tag $(ASIC_TAG) $(if $(ASIC_FROM),--from $(ASIC_FROM),--overwrite) $(ASIC_SKIP) \
 		--design-dir $(abspath syn/build/asic) \
 		-c VERILOG_FILES='$(abspath $(RTL))' $(ASIC_CFGS)"
 	@mkdir -p $(ASIC_CHK)

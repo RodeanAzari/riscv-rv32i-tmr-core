@@ -29,6 +29,15 @@ EXTRA_EXCLUDED_CELLS:
 # The macros come with one liberty, typical (TT 1.8 V 25 C): it times every
 # corner, so ss and ff numbers for paths through a macro are typical inside
 # the macro. A limitation of the PDK's OpenRAM views.
+# The liberties are the PDK's with one change, made by `make asic SOC=1` into
+# syn/build/asic/sram_lib/: addr0, addr1 and wmask0's max_transition goes from
+# 0.04 to 0.5 ns. 40 ps is only the last index of OpenRAM's characterization
+# table (0.00125, 0.005, 0.04 ns) and their setup and hold values are flat
+# across it; din0, csb0, web0 and clk on the same macro have no pin limit and
+# take the file's default_max_transition, 0.5 ns. No sky130 driver reaches
+# 40 ps (best 68 ps), and the limit stopped post-GRT design repair (RSZ-0090,
+# 2026-11-13), which left 95k max-slew violations at max_ss on standard-cell
+# nets (50 ns run, 2026-11-15).
 MACROS:
   sky130_sram_2kbyte_1rw1r_32x512_8:
     gds:
@@ -39,7 +48,7 @@ MACROS:
       - pdk_dir::libs.ref/sky130_sram_macros/verilog/sky130_sram_2kbyte_1rw1r_32x512_8.v
     lib:
       "*":
-        - pdk_dir::libs.ref/sky130_sram_macros/lib/sky130_sram_2kbyte_1rw1r_32x512_8_TT_1p8V_25C.lib
+        - dir::sram_lib/sky130_sram_2kbyte_1rw1r_32x512_8_TT_1p8V_25C.lib
     spice:
       - pdk_dir::libs.ref/sky130_sram_macros/spice/sky130_sram_2kbyte_1rw1r_32x512_8.spice
     instances:
@@ -148,7 +157,7 @@ MACROS:
       - pdk_dir::libs.ref/sky130_sram_macros/verilog/sky130_sram_1kbyte_1rw1r_32x256_8.v
     lib:
       "*":
-        - pdk_dir::libs.ref/sky130_sram_macros/lib/sky130_sram_1kbyte_1rw1r_32x256_8_TT_1p8V_25C.lib
+        - dir::sram_lib/sky130_sram_1kbyte_1rw1r_32x256_8_TT_1p8V_25C.lib
     spice:
       - pdk_dir::libs.ref/sky130_sram_macros/spice/sky130_sram_1kbyte_1rw1r_32x256_8.spice
     instances:
@@ -197,8 +206,11 @@ MACROS:
       u_soc.u_accel.g_c[14].u_bank.g_m[0].g_1k.u_sram:
         location: [5370.04, 3436.20]
         orientation: N
+      # 0.46 um (half a met4 pitch) left of where the column pitch put it, so
+      # its pins sit on the tracks like the other 15 (DRT-1231 on its pins
+      # in both 2026-11-22 runs; see DRT_ANTENNA_REPAIR_ITERS below).
       u_soc.u_accel.g_c[15].u_bank.g_m[0].g_1k.u_sram:
-        location: [4770.66, 2401.20]
+        location: [4770.20, 2401.20]
         orientation: N
 
 # Floorplan, by hand (the Classic flow has no macro placer): a 6000 x 5200
@@ -250,16 +262,31 @@ GRT_RESIZER_HOLD_SLACK_MARGIN: 0.5
 #   local overflow, and the routing DRC checker fails the run if it cannot.
 GRT_ALLOW_CONGESTION: true
 
-# rst_i is asynchronous (false path); the rest is LibreLane's base.sdc.
+# rst_i and uart_rx_i are asynchronous (false paths); the rest is LibreLane's base.sdc.
 # (dir:: is the design dir, syn/build/asic, not this file's folder.)
 PNR_SDC_FILE: dir::../../asic_soc.sdc
 SIGNOFF_SDC_FILE: dir::../../asic_soc.sdc
-# Post-GRT design repair (slew/cap) stays off: OpenRAM's .lib gives addr0,
-# addr1 and wmask0 a 40 ps max transition, which is only the last index of
-# its characterization table (the setup values are flat across it). No sky130
-# driver reaches it (best 68 ps), and repair_design stops on RSZ-0090
-# (2026-11-13). The signoff slew checker still lists those SRAM pins.
-RUN_POST_GRT_DESIGN_REPAIR: false
+# Post-GRT design repair (slew/cap) on global-route parasitics: possible since
+# the SRAM liberties' 40 ps pin limit is raised (MACROS above).
+RUN_POST_GRT_DESIGN_REPAIR: true
+# With the default 10% margins it found 6,755 slew violations, but signoff still
+# had 9,772 at nom_tt and 87,894 at max_ss (2026-11-22 preview): routed
+# parasitics exceed the global-route estimate, and every diode (heuristic and
+# routing's antenna repair) goes in after this step, so its load is never repaired.
+GRT_DESIGN_REPAIR_MAX_SLEW_PCT: 30
+GRT_DESIGN_REPAIR_MAX_CAP_PCT: 30
+
+# Detailed routing's antenna repair: the default 3 iterations left 11 nets
+# (4390 -> 420 -> 45 -> 11 net violations, 50 ns run, 2026-11-15), still falling.
+DRT_ANTENNA_REPAIR_ITERS: 6
+# - Detailed routing's reroute after its diode insertion can lose every access
+#   point of an SRAM pin and stop on DRT-1231 (OpenROAD issue #12200, open):
+#   2026-11-22, run #2 on g_c[15]/dout0[24] after 11,605 diodes, the scan run on
+#   g_c[15]/dout0[18], then (g_c[15] moved) on g_c[7]/addr1[6]. The pre-route
+#   repair's global-route estimate leaves ~57 violations where routing finds
+#   ~4,500 nets, so diodes go in before routing too, on every net longer than
+#   HEURISTIC_ANTENNA_THRESHOLD (PDK default 90 um), leaving routing less to do.
+RUN_HEURISTIC_DIODE_INSERTION: true
 
 # Magic's stream-out leaves 24 OpenRAM subcells (bank, control_logic_*, ...) as
 # extra top cells beside asic_top (the PDK's macro GDS have one top each);

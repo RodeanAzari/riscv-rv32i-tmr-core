@@ -70,7 +70,7 @@ TMR core from Phase E [here](docs/img/vivado/phase-e/floorplan_board_core.svg).*
 | | E — TMR + fault injection, ASIC run #1 | **Done** |
 | **2 — SoC** | F — Systolic array | **Done** (on its own; joined to the core in H) |
 | | G — DMA + AXI interconnect | **Done**, released as `soc-v1.0`: the DMA engine replays DMA-Engine's golden trace and runs on the SoC under software, through an AXI4 crossbar whose §6.2 properties are proven; software on the core runs GEMM jobs on the accelerator (the DMA fills its buffers) |
-| | H — Integration + DFT, ASIC run #2 | **In progress**: the M extension is built, verified and measured on the board; the array clock domain, scan and ASIC run #2 remain |
+| | H — Integration + DFT, ASIC run #2 | **In progress**: the M extension, the array clock domain and ASIC run #2 (the SoC on Sky130, timing met at all 9 corners) are done; the SoC's scan coverage and the run #1/#2 comparison remain |
 
 Full scope and each phase's definition of done: [docs/buildplan.md](docs/buildplan.md).
 Trend tables and verification detail: [docs/measurements.md](docs/measurements.md); implementation notes and decisions: [docs/design-notes.md](docs/design-notes.md).
@@ -513,6 +513,44 @@ once 20% of the cycle is reserved for the memory outside the block. At 35 ns,
 with the delay cells excluded, timing is met at every corner. Each attempt is
 a row in the ASIC table in [docs/measurements.md](docs/measurements.md).
 
+### Run #2: the SoC
+
+Run #2 takes the whole SoC through the same flow (`make asic SOC=1`,
+[`syn/asic_soc.yaml`](syn/asic_soc.yaml)): the TMR core with M, the AXI
+crossbar, the DMA, the GEMM accelerator and the UART, with every memory as
+one of **48 OpenRAM SRAM macros** placed by hand, on a 6.0 × 5.2 mm die at
+50 ns. **Timing is met at all 9 corners**: worst setup slack +0.695 ns at the
+slow corner (20.3 MHz), worst hold +0.075 ns at the fast one, 26.6 MHz
+typical; DRC and LVS clean ([summary](docs/reports/summary_asic_soc.txt),
+[timing](docs/reports/sta_asic_soc.rpt)).
+
+**What is not clean.** One antenna violation (a single net, 1.45 times the
+allowed ratio) and many max-slew violations: 83,303 pins over LibreLane's
+0.75 ns limit at the slow corner, 4,024 of them over the cell library's own
+1.5 ns, where timing analysis extrapolates past the characterized tables.
+LibreLane repairs slew once, after global routing, on estimated wiring, and
+inserts every antenna diode after that; no step repairs after detailed
+routing. Raising that repair's margin from 10% to 30% cut the violations on
+signal pins from 81,232 (a routed trial) to 45,706; the other 37,597 are the
+diodes' own pins. Each step is a row in [docs/measurements.md](docs/measurements.md).
+
+**Two caveats on the SRAM timing.** The macros come
+with one timing model, typical (1.8 V, 25 °C), so at the slow and fast
+corners the SRAMs are timed with typical numbers; the standard cells around
+them are timed at the real corner. And the project uses a copy of that model
+(`make` writes it to `syn/build/asic/sram_lib/`) with the address and
+write-mask pins' 40 ps maximum input transition raised to 0.5 ns, the value
+the same file gives every other input. 40 ps is only the last point of
+OpenRAM's characterization table, and the setup and hold values are flat
+across it; no Sky130 cell drives a pin that fast (68 ps at best), and the
+40 ps limit stopped the slew repair altogether.
+
+**Routing hit an open OpenROAD bug** ([#12200](https://github.com/The-OpenROAD-Project/OpenROAD/issues/12200)):
+after detailed routing inserted its antenna diodes, the reroute lost every
+access point of an SRAM pin and stopped. One macro moved by 0.46 µm (half a
+routing-track pitch, so its pins sit on the tracks like the others') and
+diodes inserted before routing instead of during it got past it.
+
 ### Scan test coverage: a tool problem and the workaround
 
 Phase H adds scan chains to the chip (run #2) and reports their stuck-at test
@@ -583,16 +621,18 @@ SoC in Phase H. The delta between them is the result. Run 1: LibreLane 3.0.16,
 sky130A `sky130_fd_sc_hd`, 35 ns constraint, inputs and outputs given 20% of
 the period, worst of 9 signoff corners
 ([summary_asic.txt](docs/reports/summary_asic.txt),
-[sta_asic.rpt](docs/reports/sta_asic.rpt)).
+[sta_asic.rpt](docs/reports/sta_asic.rpt)). Run 2: the same flow and PDK,
+50 ns, 48 SRAM macros ([summary_asic_soc.txt](docs/reports/summary_asic_soc.txt),
+[sta_asic_soc.rpt](docs/reports/sta_asic_soc.rpt)).
 
 | Metric | Run 1 (bare core) | Run 2 (full SoC) |
 |---|---|---|
-| Die area, cell count, utilization | 227,997 µm² (472 × 483 µm); 13,853 cells, 1,496 of them flip-flops; 56.3% | — |
-| Post-layout Fmax, worst corner | **31.7 MHz** including the I/O budget (35 ns met, +3.502 ns); 46.2 MHz register to register | — |
-| Post-layout Fmax, typical corner | 50.6 MHz | — |
-| Pre-layout estimate, synthesised netlist | 35.1 MHz including I/O; 46.0 MHz register to register | — |
-| Power estimate (typical, 35 ns, vectorless) | 4.60 mW | — |
-| DRC / LVS clean | **Clean**: Magic and KLayout DRC 0, LVS 0, antenna 0 | — |
+| Die area, cell count, utilization | 227,997 µm² (472 × 483 µm); 13,853 cells, 1,496 of them flip-flops; 56.3% | 31.2 mm² (6000 × 5200 µm); 710,656 cells (256,840 of them tap cells), 19,557 flip-flops, 48 SRAM macros; 51.2% |
+| Post-layout Fmax, worst corner | **31.7 MHz** including the I/O budget (35 ns met, +3.502 ns); 46.2 MHz register to register | **20.3 MHz** (50 ns met, +0.695 ns); register to register also +0.695 ns |
+| Post-layout Fmax, typical corner | 50.6 MHz | 26.6 MHz |
+| Pre-layout estimate, synthesised netlist | 35.1 MHz including I/O; 46.0 MHz register to register | not usable (−1,652 ns before any buffering) |
+| Power estimate (typical, vectorless) | 4.60 mW at 35 ns | 87.7 mW at 50 ns |
+| DRC / LVS clean | **Clean**: Magic and KLayout DRC 0, LVS 0, antenna 0 | **Clean**: Magic DRC 0, LVS 0 (KLayout DRC off); antenna 1 net; max slew 83,303 pins at the slow corner (see Run #2) |
 | Scan chains: count, coverage, area overhead | — (Phase H) | — |
 
 ## Limitations
@@ -623,6 +663,11 @@ Stated plainly, because they are real:
   fetch-address path. 3,091 max-slew violations remain (timing is signed off
   with them included). One copy, not TMR; the register file is flip-flops;
   power is a vectorless estimate.
+- **Run #2 (the SoC) meets timing but not every electrical rule.** 20.3 MHz
+  worst case at 50 ns; one antenna net and 83,303 max-slew violations
+  remain at the slow corner (4,024 beyond the cell library's 1.5 ns), and
+  the SRAMs are timed with their typical model at every corner, the only
+  one the PDK ships.
 - **Scan coverage is stuck-at only, from an open ATPG.** Quaigh's
   collapsed fault count under full scan, not a commercial tool's figure; no
   transition faults, and Fault's own coverage is not used (see "Scan test

@@ -104,7 +104,7 @@ def main(run, out_dir):
         f" leakage {1e6 * m['power__leakage__total']:.3f} uW)",
         "",
         "Signoff",
-        f"  Magic DRC {m['magic__drc_error__count']}, KLayout DRC {m['klayout__drc_error__count']},"
+        f"  Magic DRC {m['magic__drc_error__count']}, KLayout DRC {m.get('klayout__drc_error__count', 'not run (RUN_KLAYOUT_DRC off)')},"
         f" LVS errors {m['design__lvs_error__count']}, antenna violations {m['route__antenna_violation__count']},"
         f" GDS XOR differences {m['design__xor_difference__count']}",
         f"  routed wirelength {m['route__wirelength']:.0f} um, IR drop worst {1000 * m['ir__drop__worst']:.2f} mV",
