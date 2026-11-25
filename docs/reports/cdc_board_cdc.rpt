@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
 ---------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
-| Date         : Mon Nov  9 19:29:13 2026
+| Date         : Wed Nov 25 00:54:51 2026
 | Host         : RodeanStation running 64-bit Ubuntu 26.04 LTS
 | Command      : report_cdc -details -file /home/rodea/riscv-rv32i-tmr-core/docs/reports/cdc_board_cdc.rpt
 | Design       : arty_a7_top
@@ -14,8 +14,7 @@ CDC Report
 
 ID     Severity  Count  Description
 -----  --------  -----  -------------------------------------------------------
-CDC-2  Warning       2  1-bit synchronized with missing ASYNC_REG property
-CDC-3  Info          2  1-bit synchronized with ASYNC_REG property
+CDC-3  Info          4  1-bit synchronized with ASYNC_REG property
 CDC-9  Info          2  Asynchronous reset synchronized with ASYNC_REG property
 
 ID      Waived Endpoints  
@@ -41,10 +40,10 @@ Source Clock: input port clock
 Destination Clock: clk_mmcm
 CDC Type: No Common Primary Clock
 
-Row  ID     Severity  Description                                         Depth  Exception   Source (From)  Destination (To)
----  -----  --------  --------------------------------------------------  -----  ----------  -------------  -------------------------------
-  1  CDC-2  Warning   1-bit synchronized with missing ASYNC_REG property      2  False Path  rst_ni         rst_req_q_reg[0]/D
-  2  CDC-2  Warning   1-bit synchronized with missing ASYNC_REG property      2  False Path  uart_rx_i      u_soc/u_uart_rx/sync_q_reg[0]/D
+Row  ID     Severity  Description                                 Depth  Exception   Source (From)  Destination (To)
+---  -----  --------  ------------------------------------------  -----  ----------  -------------  -------------------------------
+  1  CDC-3  Info      1-bit synchronized with ASYNC_REG property      2  False Path  rst_ni         rst_req_q_reg[0]/D
+  2  CDC-3  Info      1-bit synchronized with ASYNC_REG property      2  False Path  uart_rx_i      u_soc/u_uart_rx/sync_q_reg[0]/D
 
 Source Clock: clk_mmcm
 Destination Clock: g_array_clk.clk_mmcm_a

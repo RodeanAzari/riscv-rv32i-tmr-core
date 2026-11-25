@@ -123,7 +123,7 @@ module arty_a7_top #(
   end
 
   // ---- reset ----
-  logic [1:0]          rst_req_q;    // synchroniser
+  (* ASYNC_REG = "TRUE" *) logic [1:0] rst_req_q;    // synchroniser
   logic [RST_HOLD-1:0] rst_n_q;      // release delay; all zero = in reset
   logic                rst;
 

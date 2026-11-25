@@ -54,7 +54,9 @@ module uart_rx #(
   localparam logic [1:0] S_DATA  = 2'd2;
   localparam logic [1:0] S_STOP  = 2'd3;
 
-  logic [2:0]       sync_q;      // [1:0] synchroniser, [2] the previous sample
+  // ASYNC_REG on all three: [2] follows [1] in the same chain, so Vivado keeps
+  // the three together (a third stage for the edge detector, not a hazard).
+  (* ASYNC_REG = "TRUE" *) logic [2:0] sync_q;  // [1:0] synchroniser, [2] the previous sample
   logic [1:0]       state_q;
   logic [CNT_W-1:0] clk_cnt_q;   // clocks left to the next sample
   logic [2:0]       bit_q;       // data bit being received
