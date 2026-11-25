@@ -1,0 +1,47 @@
+soc-v2.0 release test (fpga-coord: "Phase H: core drives array; clk_array on its own MMCM output with CDC; regression + hardware GEMM pass with clk_array != core clock; weight-transform hook; M extension; DRP registers")
+date: 2026-11-25  commit: 73b7e5e (RTL as of 696187b)  host: local, Verilator 5.050, Yosys 0.69+208, Vivado 2025.2
+
+step exit codes:
+lint rc=0
+accel-model rc=0
+aclk-check rc=0
+fw rc=0
+cocotb rc=0
+
+make accel-model (model self-checks):
+accel model: 517 checks passed
+12  16x16 equal clocks: exact cost per tile
+accel CDC model: 2416 checks passed
+mmcm_drp model: self-checks pass
+
+make aclk-check (DRP words = AMD's; array_clk_ctl against AMD's MMCME2_ADV model):
+/home/rodea/cocotb-env/bin/python sw/model/mmcm_drp.py
+mmcm_drp model: self-checks pass
+/home/rodea/cocotb-env/bin/python sw/model/mmcm_drp.py --table > tb/aclk/build/model.txt
+aclk-check: model's DRP words = AMD's, divides 1-128
+** TESTS=2 PASS=2 FAIL=0 SKIP=0               7038.00           0.17      42145.25  **
+
+cocotb:
+=== gemm_accel_cdc:test_gemm_accel ===
+  ** TESTS=8 PASS=8 FAIL=0 SKIP=0 **
+=== gemm_accel_4x4_cdc:test_gemm_accel ===
+  ** TESTS=8 PASS=8 FAIL=0 SKIP=0 **
+=== gemm_accel_4x4_wx:test_gemm_accel ===
+  ** TESTS=8 PASS=8 FAIL=0 SKIP=0 **
+=== gemm_accel_4x4_cdc_wx:test_gemm_accel ===
+  ** TESTS=8 PASS=8 FAIL=0 SKIP=0 **
+=== soc:test_gemm ===
+  ** TESTS=1 PASS=1 FAIL=0 SKIP=0 **
+=== soc_cdc:test_gemm ===
+  ** TESTS=1 PASS=1 FAIL=0 SKIP=0 **
+=== soc_tmr_cdc:test_gemm ===
+  ** TESTS=1 PASS=1 FAIL=0 SKIP=0 **
+=== soc_m:test_coremark ===
+  ** TESTS=1 PASS=1 FAIL=0 SKIP=0 **
+=== soc_tmr_m:test_coremark ===
+  ** TESTS=1 PASS=1 FAIL=0 SKIP=0 **
+  (the _wx builds include test_weight_order and test_weight_transform: P5 requests 0009/0010)
+
+full regression: CI (lint, sim, formal) on the pushed branch, see CHANGELOG.md
+board: docs/reports/gemmtest_board_soc-v2.0.txt (gemmtest 22/22 x 5 at 100 / 80 / 100 MHz array clock over DRP, model-checked)
+report_cdc: docs/reports/cdc_board_cdc.rpt (0 warnings, 0 unsafe)

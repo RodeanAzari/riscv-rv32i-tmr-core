@@ -1,0 +1,111 @@
+# soc-v2.0 release, board part: gemmtest on the Arty A7-100T, make impl CDC=1 at 696187b (the RTL of the tag; later commits are docs),
+# single core 100 MHz, array on its own MMCME2_ADV reprogrammed by the core over the DRP: /8 = 100 MHz, /10 = 80 MHz, back to /8.
+# 2026-11-25, five runs, each loaded with scripts/load.py after a DTR reset; each checked by scripts/gemm_board_check.py:
+#   run 1: 13 jobs, 0 failures
+#   run 2: 13 jobs, 0 failures
+#   run 3: 13 jobs, 0 failures
+#   run 4: 13 jobs, 0 failures
+#   run 5: 13 jobs, 0 failures
+# Relock ('array clock /d ... cycles', DRP writes + LOCKED) took 2,171-2,191 cycles (~22 us; DS181 allows 100 us), not the 141 of
+# gemmtest_board_cdc_drp.txt (2026-11-08): the 11-08 commit (9d5709a), rebuilt and run today on the same board, also gives 2,181-2,191,
+# so the difference is not in this release's RTL.
+
+== run 1
+gemmtest: 16x16 array, 16384-byte buffers, status 0x0
+gemmtest: 1x1x1 ok, job 52 cycles, call 746, core 123
+gemmtest: 16x16x16 ok, job 67 cycles, call 2630, core 285920
+gemmtest: 5x7x9 ok, job 56 cycles, call 2468, core 22931
+gemmtest: 3x33x17 ok, job 309 cycles, call 5954, core 117565
+gemmtest: 2x40x3 ok, job 153 cycles, call 5701, core 16944
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 809584
+gemmtest: array clock /10, rc 0, 2191 cycles
+gemmtest: 1x1x1 ok, job 62 cycles, call 756, core 124
+gemmtest: 16x16x16 ok, job 81 cycles, call 2640, core 289072
+gemmtest: 5x7x9 ok, job 67 cycles, call 2488, core 23181
+gemmtest: 3x33x17 ok, job 371 cycles, call 6014, core 116224
+gemmtest: 2x40x3 ok, job 183 cycles, call 5731, core 16952
+gemmtest: 24x20x24 ok, job 353 cycles, call 11775, core 816064
+gemmtest: array clock /8, rc 0, 2191 cycles
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 815488
+gemmtest: last a 0x3000 w 0x33c0 c 0x4a00
+gemmtest: 22/22 ok
+
+== run 2
+gemmtest: 16x16 array, 16384-byte buffers, status 0x0
+gemmtest: 1x1x1 ok, job 52 cycles, call 746, core 123
+gemmtest: 16x16x16 ok, job 67 cycles, call 2630, core 285920
+gemmtest: 5x7x9 ok, job 56 cycles, call 2468, core 22931
+gemmtest: 3x33x17 ok, job 309 cycles, call 5954, core 117565
+gemmtest: 2x40x3 ok, job 153 cycles, call 5701, core 16944
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 809584
+gemmtest: array clock /10, rc 0, 2181 cycles
+gemmtest: 1x1x1 ok, job 62 cycles, call 756, core 124
+gemmtest: 16x16x16 ok, job 81 cycles, call 2640, core 289072
+gemmtest: 5x7x9 ok, job 67 cycles, call 2488, core 23181
+gemmtest: 3x33x17 ok, job 371 cycles, call 6014, core 116224
+gemmtest: 2x40x3 ok, job 184 cycles, call 5731, core 16952
+gemmtest: 24x20x24 ok, job 354 cycles, call 11775, core 816064
+gemmtest: array clock /8, rc 0, 2171 cycles
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 815488
+gemmtest: last a 0x3000 w 0x33c0 c 0x4a00
+gemmtest: 22/22 ok
+
+== run 3
+gemmtest: 16x16 array, 16384-byte buffers, status 0x0
+gemmtest: 1x1x1 ok, job 52 cycles, call 746, core 123
+gemmtest: 16x16x16 ok, job 67 cycles, call 2630, core 285920
+gemmtest: 5x7x9 ok, job 56 cycles, call 2468, core 22931
+gemmtest: 3x33x17 ok, job 309 cycles, call 5954, core 117565
+gemmtest: 2x40x3 ok, job 153 cycles, call 5701, core 16944
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 809584
+gemmtest: array clock /10, rc 0, 2191 cycles
+gemmtest: 1x1x1 ok, job 62 cycles, call 756, core 124
+gemmtest: 16x16x16 ok, job 81 cycles, call 2640, core 289072
+gemmtest: 5x7x9 ok, job 67 cycles, call 2488, core 23181
+gemmtest: 3x33x17 ok, job 371 cycles, call 6014, core 116224
+gemmtest: 2x40x3 ok, job 183 cycles, call 5731, core 16952
+gemmtest: 24x20x24 ok, job 353 cycles, call 11775, core 816064
+gemmtest: array clock /8, rc 0, 2191 cycles
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 815488
+gemmtest: last a 0x3000 w 0x33c0 c 0x4a00
+gemmtest: 22/22 ok
+
+== run 4
+gemmtest: 16x16 array, 16384-byte buffers, status 0x0
+gemmtest: 1x1x1 ok, job 52 cycles, call 746, core 123
+gemmtest: 16x16x16 ok, job 67 cycles, call 2630, core 285920
+gemmtest: 5x7x9 ok, job 56 cycles, call 2468, core 22931
+gemmtest: 3x33x17 ok, job 309 cycles, call 5954, core 117565
+gemmtest: 2x40x3 ok, job 153 cycles, call 5701, core 16944
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 809584
+gemmtest: array clock /10, rc 0, 2191 cycles
+gemmtest: 1x1x1 ok, job 62 cycles, call 756, core 124
+gemmtest: 16x16x16 ok, job 81 cycles, call 2640, core 289072
+gemmtest: 5x7x9 ok, job 67 cycles, call 2488, core 23181
+gemmtest: 3x33x17 ok, job 371 cycles, call 6014, core 116224
+gemmtest: 2x40x3 ok, job 184 cycles, call 5731, core 16952
+gemmtest: 24x20x24 ok, job 354 cycles, call 11775, core 816064
+gemmtest: array clock /8, rc 0, 2191 cycles
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 815488
+gemmtest: last a 0x3000 w 0x33c0 c 0x4a00
+gemmtest: 22/22 ok
+
+== run 5
+gemmtest: 16x16 array, 16384-byte buffers, status 0x0
+gemmtest: 1x1x1 ok, job 52 cycles, call 746, core 123
+gemmtest: 16x16x16 ok, job 67 cycles, call 2630, core 285920
+gemmtest: 5x7x9 ok, job 56 cycles, call 2468, core 22931
+gemmtest: 3x33x17 ok, job 309 cycles, call 5954, core 117565
+gemmtest: 2x40x3 ok, job 153 cycles, call 5701, core 16944
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 809584
+gemmtest: array clock /10, rc 0, 2191 cycles
+gemmtest: 1x1x1 ok, job 62 cycles, call 756, core 124
+gemmtest: 16x16x16 ok, job 81 cycles, call 2640, core 289072
+gemmtest: 5x7x9 ok, job 67 cycles, call 2488, core 23181
+gemmtest: 3x33x17 ok, job 371 cycles, call 6014, core 116224
+gemmtest: 2x40x3 ok, job 184 cycles, call 5731, core 16952
+gemmtest: 24x20x24 ok, job 354 cycles, call 11775, core 816064
+gemmtest: array clock /8, rc 0, 2191 cycles
+gemmtest: 24x20x24 ok, job 291 cycles, call 11715, core 815488
+gemmtest: last a 0x3000 w 0x33c0 c 0x4a00
+gemmtest: 22/22 ok
