@@ -673,6 +673,11 @@ ASIC_RUN  := syn/build/asic/runs/$(ASIC_TAG)
 ASIC_SKIP := $(if $(filter 1,$(SOC)),--skip Magic.WriteLEF --skip Odb.CheckDesignAntennaProperties,)
 ASIC_CHK  := $(ASIC_RUN)/check
 CELL_V     = $(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/verilog
+# SCAN=1 coverage tools: Fault 0.9.4 (fault cut, nl2bench) and the Quaigh it
+# pins, patched to fit the SoC in memory (scripts/quaigh.nix). Fault's own test
+# of the PRNG path fails, so checks are off (docs/design-notes.md, "Fault,
+# tried 2026-11-09"); that path is not used.
+FAULT_NIX := (builtins.getFlake "github:AUCOHL/Fault/0.9.4").packages.x86_64-linux.default.overrideAttrs (_: { doCheck = false; doInstallCheck = false; })
 # SoC: the SRAM liberties with addr0/addr1/wmask0's 40 ps max_transition
 # raised to the 0.5 ns the same file gives every other input (syn/asic_soc.yaml).
 SRAM_LIB_SRC := $(PDK_ROOT)/sky130A/libs.ref/sky130_sram_macros/lib
@@ -703,15 +708,22 @@ ifneq ($(SCAN),1)
 else
 	python3 scripts/scan_chains.py $(ASIC_RUN)/final/nl/$(ASIC_TOP).nl.v --json $(ASIC_CHK)/chains.json \
 		> $(ASIC_CHK)/chains.txt || { cat $(ASIC_CHK)/chains.txt; exit 1; }
-	python3 scripts/scan_shift_tb.py $(ASIC_CHK)/chains.json $(ASIC_TOP) clk_i > $(ASIC_CHK)/shift_tb.v
+	python3 scripts/scan_shift_tb.py $(ASIC_CHK)/chains.json $(ASIC_TOP) clk_i $(if $(filter 1,$(SOC)),--tie rst_i=0,) > $(ASIC_CHK)/shift_tb.v
 	iverilog -g2012 -DFUNCTIONAL -DUNIT_DELAY=#1 -o $(ASIC_CHK)/shift.vvp $(ASIC_CHK)/shift_tb.v \
-		$(ASIC_RUN)/final/nl/$(ASIC_TOP).nl.v $(CELL_V)/primitives.v $(CELL_V)/sky130_fd_sc_hd.v
+		$(ASIC_RUN)/final/nl/$(ASIC_TOP).nl.v $(CELL_V)/primitives.v $(CELL_V)/sky130_fd_sc_hd.v \
+		$(if $(filter 1,$(SOC)),tb/asic/sram_blackbox.v,)
 	vvp -n $(ASIC_CHK)/shift.vvp | grep -a "^scan-shift" > $(ASIC_CHK)/shift.txt
 	{ echo "# Scan chains in the routed netlist (make asic SCAN=1), traced by scripts/scan_chains.py,"; \
 	  echo "# shifted at gate level by scripts/scan_shift_tb.py (Icarus, sky130_fd_sc_hd models)"; echo; \
 	  cat $(ASIC_CHK)/chains.txt; echo; cat $(ASIC_CHK)/shift.txt; } > docs/reports/scan_chains_asic$(subst _scan,,$(ASIC_SFX)).txt
 	@cat docs/reports/scan_chains_asic$(subst _scan,,$(ASIC_SFX)).txt
 	@grep -q " ok, " $(ASIC_CHK)/shift.txt
+	fault=$$(nix build --impure --no-link --print-out-paths --expr '$(FAULT_NIX)') && \
+	FAULT=$$fault/bin/fault NL2BENCH=$$fault/bin/nl2bench \
+	QUAIGH=$$(nix build --impure --no-link --print-out-paths -f scripts/quaigh.nix)/bin/quaigh \
+	python3 scripts/scan_coverage.py $(ASIC_RUN)/final/nl/$(ASIC_TOP).nl.v $(ASIC_TOP) \
+		$(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/lib/sky130_fd_sc_hd__tt_025C_1v80.lib $(ASIC_CHK)/coverage
+	cp $(ASIC_CHK)/coverage/coverage.txt docs/reports/scan_coverage_asic$(subst _scan,,$(ASIC_SFX)).txt
 endif
 
 # --- housekeeping ----------------------------------------------------------

@@ -98,7 +98,9 @@ def main():
             so = net                                # a bit of an output bus
         if so is not None:
             found.append(("out", so, inv))
-        if depth < 8:
+        # buffers per hop: the SoC's 6 mm die needs 13 to 16 (fanout trees plus
+        # hold buffers); 8 dropped 243 flops off chain 0. Only a loop guard.
+        if depth < 64:
             for o, i in bufs.get(net, []):
                 found += reach(o, inv ^ i, depth + 1)
         return found

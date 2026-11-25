@@ -525,6 +525,7 @@ max_transition to 0.5 ns (yaml comment). Numbers from
 | Date | Run | Clock | Die µm² | Std-cell µm² (util) | Cells (seq) | Setup WS worst | Hold WS worst | Fmax worst / typical | Power (tt) | DRC / LVS / antenna | Max slew / cap / fanout viol. (all corners) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 2026-11-23 | **#2, the SoC (committed reports, timing closes)** | 50 ns | 31,200,000 | 3,704,850 (51.2%) | 710,656 incl. 256,840 taps (19,557) | **+0.695 ns** (max_ss) | +0.075 ns (max_ff) | 20.3 / 26.6 MHz | 87.7 mW | clean / clean / 1 net | 83,303 / 2,274 / 8,081 |
+| 2026-11-25 | **#2 with scan chains** (`make asic SOC=1 SCAN=1`, 8 chains of 2,442 to 2,445; post-GRT slew/cap repair margin **10%, not 30%**; `summary_asic_soc_scan.txt`) | 50 ns | 31,200,000 | 3,954,360 (52.0%) | 741,927 incl. 256,840 taps (19,557) | +0.532 ns (max_ss) | +0.082 ns (max_ss) | 20.2 / 26.5 MHz | 95.3 mW* | clean / clean / 5 nets | 166,370 / 3,154 / 9,697 |
 
 **Timing closes, the electrical rules do not.** 0 setup and 0 hold
 violations at all 9 corners; Magic DRC 0 (KLayout DRC is off for the SoC,
@@ -557,6 +558,48 @@ met4 pitch; its pins were off the tracks the other 15 sit on) and
 violating nets → 0) so routing inserts almost none. About 13.5 h on the
 desktop (Ryzen 5 5600): 2.5 h to post-GRT repair, then 11.0 h resumed from
 that step (`ASIC_FROM`) with the 30% margin; peak memory 27.1 GB.
+
+**Scan on the SoC (2026-11-25).** Same flow, RTL and config as #2 plus
+`syn/asic_scan.yaml`, with one difference: it was started before #2's
+post-GRT slew/cap margin went from 10% to 30%, and was not rerun (user's
+call, 2026-11-25). Read from the run's step configs: the post-GRT repair
+step's `config.json` is the only one differing from #2's (`resolved.json`
+was rewritten by the signoff-only resume and shows 30%). **8 chains,
+2,442 to 2,445 flops, all 19,557 on a chain, one scan enable**
+([scan_chains_asic_soc.txt](reports/scan_chains_asic_soc.txt)), including
+the reset synchronizer's 2 flops (`sdfsbp`, asynchronous set); shifted at
+gate level on the routed netlist, 39,155 scan-out bits over 7,339 cycles,
+`rst_i` held low (`--tie`) and the SRAMs as port-only stand-ins
+(`tb/asic/sram_blackbox.v`). Timing: 0 setup and 0 hold violations at all
+9 corners, after one SDC change: `scan_in_*` given an input delay of half
+the period (`syn/asic_soc.sdc`). At the base 20% (10 ns) they failed hold
+at the ss corners (−1.822 ns at max_ss, 23 paths, all `scan_in`): the clock
+reaches the first scan flops ~13.6 ns after the edge. The test then has to
+drive `scan_in` 25 ns after `clk_i`; checked by a direct OpenSTA query on
+the final netlist (`input external delay 25.000`, hold slack +19.7 ns at
+max_ss, unannotated). **Overhead against #2:** standard-cell area +249,510
+µm² (+6.7%), of which the flops +122,381 µm² (+29.4%, the same as the
+core's; 3.3% of #2's cell area), routed wirelength +8.7%, cells +31,271,
+repair buffers +9,795. Only the flop figure is free of the margin
+difference: the rest (and the doubled slew count, 4 more antenna nets) mix
+scan with 10% against 30%. *Power +8.6%: the vectorless default activity
+on the scan ports and enable tree, as on the core.
+**Coverage** ([scan_coverage_asic_soc.txt](reports/scan_coverage_asic_soc.txt),
+`scripts/scan_coverage.py`): **98.96%** of 1,449,256 collapsed stuck-at
+faults (20,847 patterns); of the 15,034 undetected, 13,855 proven
+untestable and 1,179 unresolved (SAT found a pattern that fault simulation
+did not confirm; seed-dependent; on the core 6 with seed 1, 20 with seed
+7). The 48 SRAMs are cut at their boundary (read data controlled, inputs
+observed), which assumes a bypass wrapper this chip does not have; 4.83%
+of the uncollapsed faults sit on logic that assumption decides. Stock
+Quaigh 0.0.6 ran out of memory (killed at 25 GB on the laptop, at a 28 GB
+cap on the desktop at 96% detection): one bool per fault per pattern,
+~1.45 MB a pattern. `scripts/quaigh-sparse-detections.patch` stores them
+sparse (identical patterns and results on the core, seeds 1 and 7; peak
+1,004 → 126 MB there); the SoC then took 4 h 37 min at 8.3 GB peak on the
+desktop, run twice with identical numbers. The core's 99.02% (50,222
+faults) is from its stitched, unrouted netlist; its routed rerun is
+pending.
 
 Layout screenshots from KLayout (met4/met5 power grid hidden), in
 `docs/img/asic/run1/`: `layout.png`, the whole block, and `layout-zoom.png`,

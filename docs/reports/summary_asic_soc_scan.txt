@@ -1,0 +1,39 @@
+=== asic_top, LibreLane RTL-to-GDSII ===
+flow            LibreLane 3.0.16, classic
+PDK             sky130A (sky130_fd_sc_hd)
+constraint      50.000 ns (20.0 MHz), I/O delay 20% of the period
+PnR corners     nom_tt_025C_1v80, max_ss_100C_1v60, min_ff_n40C_1v95
+signoff corners 9 (ss/tt/ff x min/nom/max parasitics)
+
+Timing, post-layout (worst corner of all signoff corners)
+  setup WS        +0.532 ns  (max_ss_100C_1v60)  -> Fmax 20.2 MHz, I/O paths included
+  reg-to-reg WS   +0.532 ns  (max_ss_100C_1v60)  -> Fmax 20.2 MHz
+  hold WS         +0.082 ns  (max_ss_100C_1v60)
+  setup / hold violations   0 / 0
+  typical (nom_tt_025C_1v80): setup WS +12.201 ns -> Fmax 26.5 MHz
+Timing, pre-layout estimate (synthesised netlist, before placement)
+  setup WS        -1651.873 ns  (nom_tt_025C_1v80)  -> Fmax 0.6 MHz
+  reg-to-reg WS   -1651.873 ns  (nom_tt_025C_1v80)  -> Fmax 0.6 MHz
+
+Electrical rule checks (all corners)
+  max slew / max cap / max fanout violations  166370 / 3154 / 9697
+
+Area
+  die             31200000 um^2
+  core            30998700 um^2
+  standard cells  3954360 um^2 (52.0% of the core)
+  of which flops  538516 um^2 (19557 cells)
+
+Cells
+  standard cells  741927 (256840 tap cells among them; 3876094 fill cells besides)
+  combinational   194695
+  sequential      19557
+  timing repair buffers 91506 (hold 30, setup 0)
+  clock buffers   3527
+
+Power (nom_tt_025C_1v80, vectorless default activity)
+  total           95.319 mW (internal 76.935, switching 17.647, leakage 737.037 uW)
+
+Signoff
+  Magic DRC 0, KLayout DRC not run (RUN_KLAYOUT_DRC off), LVS errors 0, antenna violations 5, GDS XOR differences 0
+  routed wirelength 18165046 um, IR drop worst 0.38 mV

@@ -1,0 +1,130 @@
+Quaigh 0.0.6 ATPG: store each pattern's detected faults as a sparse list of
+fault indices instead of one bool per fault (TestPatternGenerator::
+pattern_detections). Patterns, detections and compaction are unchanged; only
+memory changes. The dense table needed ~1.45 MB per pattern on the SoC's
+1,449,256 faults and ran out of memory at 28 GB after ~20,000 patterns.
+Checked (2026-11-24): on the core's scanned netlist (50,222 faults), seeds 1
+and 7, stock and patched give byte-identical pattern files and result lines;
+peak memory 1,004 -> 126 MB.
+
+diff --git a/src/atpg.rs b/src/atpg.rs
+index e0dd4a3..c7cbd85 100644
+--- a/src/atpg.rs
++++ b/src/atpg.rs
+@@ -120,7 +120,9 @@ struct TestPatternGenerator<'a> {
+     aig: &'a Network,
+     faults: Vec<Fault>,
+     patterns: Vec<Vec<bool>>,
+-    pattern_detections: Vec<Vec<bool>>,
++    /// Per pattern, the indices (ascending) of the faults it detects: sparse,
++    /// since SAT patterns are only checked against still-undetected faults
++    pattern_detections: Vec<Vec<u32>>,
+     detection: Vec<bool>,
+     rng: SmallRng,
+ }
+@@ -159,6 +161,21 @@ impl<'a> TestPatternGenerator<'a> {
+         }
+     }
+ 
++    /// Extend the sparse detections with 64 patterns at once
++    fn extend_detections(v: &mut Vec<Vec<u32>>, added: Vec<u64>) {
++        let mut lists = vec![Vec::new(); 64];
++        for (f, d) in added.iter().enumerate() {
++            if *d != 0 {
++                for i in 0..64 {
++                    if (d >> i) & 1 != 0 {
++                        lists[i].push(f as u32);
++                    }
++                }
++            }
++        }
++        v.extend(lists);
++    }
++
+     /// Obtain all faults, or only the ones that are not yet detected, and their index
+     pub fn get_faults(&self, check_already_detected: bool) -> (Vec<Fault>, Vec<usize>) {
+         let mut faults = Vec::new();
+@@ -177,10 +194,12 @@ impl<'a> TestPatternGenerator<'a> {
+     pub fn add_single_pattern(&mut self, pattern: Vec<bool>, check_already_detected: bool) {
+         let (faults, indices) = self.get_faults(check_already_detected);
+         let detected = detects_faults(self.aig, &pattern, &faults);
+-        let mut det = vec![false; self.nb_faults()];
++        let mut det = Vec::new();
+         for (i, d) in zip(indices, detected) {
+             self.detection[i] |= d;
+-            det[i] = d;
++            if d {
++                det.push(i as u32);
++            }
+         }
+         self.patterns.push(pattern);
+         self.pattern_detections.push(det);
+@@ -213,7 +232,7 @@ impl<'a> TestPatternGenerator<'a> {
+             det[i] = d;
+         }
+         Self::extend_vec(&mut self.patterns, patterns);
+-        Self::extend_vec(&mut self.pattern_detections, det);
++        Self::extend_detections(&mut self.pattern_detections, det);
+     }
+ 
+     /// Generate a random pattern and add it to the current set
+@@ -231,7 +250,8 @@ impl<'a> TestPatternGenerator<'a> {
+             assert_eq!(p.len(), self.aig.nb_inputs());
+         }
+         for p in &self.pattern_detections {
+-            assert_eq!(p.len(), self.nb_faults());
++            assert!(p.windows(2).all(|w| w[0] < w[1]));
++            assert!(p.iter().all(|f| (*f as usize) < self.nb_faults()));
+         }
+         assert_eq!(self.detection.len(), self.nb_faults());
+     }
+@@ -251,37 +271,22 @@ impl<'a> TestPatternGenerator<'a> {
+         let mut remaining_to_detect = self.nb_detected();
+         let mut it = 0;
+ 
+-        // Which patterns detect a given fault
+-        let mut fault_to_patterns = Vec::new();
+-        for f in 0..self.nb_faults() {
+-            let mut patterns = Vec::new();
+-            for p in 0..self.nb_patterns() {
+-                if self.pattern_detections[p][f] {
+-                    patterns.push(p);
+-                }
+-                it += 1;
+-                if it % 256 == 0 {
+-                    progress.update_to(it).unwrap();
+-                }
++        // Which patterns detect a given fault (ascending, as the dense scan gave)
++        let mut fault_to_patterns: Vec<Vec<usize>> = vec![Vec::new(); self.nb_faults()];
++        for (p, faults) in self.pattern_detections.iter().enumerate() {
++            for f in faults {
++                fault_to_patterns[*f as usize].push(p);
+             }
+-            fault_to_patterns.push(patterns);
+         }
+ 
+         // Which faults are detected by a given pattern
+-        let mut pattern_to_faults = Vec::new();
+-        for p in 0..self.nb_patterns() {
+-            let mut faults = Vec::new();
+-            for f in 0..self.nb_faults() {
+-                if self.pattern_detections[p][f] {
+-                    faults.push(f);
+-                }
+-                it += 1;
+-                if it % 256 == 0 {
+-                    progress.update_to(it).unwrap();
+-                }
+-            }
+-            pattern_to_faults.push(faults);
+-        }
++        let pattern_to_faults: Vec<Vec<usize>> = self
++            .pattern_detections
++            .iter()
++            .map(|v| v.iter().map(|f| *f as usize).collect())
++            .collect();
++        it += 2 * self.nb_faults() * self.nb_patterns();
++        progress.update_to(it).unwrap();
+ 
+         // How many new faults each pattern detects
+         let mut nb_detected_by_pattern: Vec<_> =

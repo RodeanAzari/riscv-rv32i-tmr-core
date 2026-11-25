@@ -341,8 +341,8 @@ A phase is done when **every** box is checked. No partial credit.
 - [x] Full regression and the hardware GEMM test pass with `clk_array` at a different frequency from the core (e.g. 80 MHz vs. 100 MHz): every SoC test also on `soc_cdc` (array 25 ns, core 20 ns), whole regression 844 tests 0 failures (2026-11-10); board `gemmtest` 22/22 at 80 vs 100 MHz, `docs/reports/gemmtest_board_cdc_drp.txt`; measurements.md "Full regression, array on its own clock"
 - [x] Benchmarked against software matmul on the same core, several matrix sizes: `sw/apps/matbench.c`, 7 shapes 8×8×8 to 56×56×56 on the board at 100 MHz, RV32I (shift-add) and RV32IM (`mul`, `make impl M=1`) software, three runs each identical; call speedup 1.8-72× over RV32IM, 10-447× over RV32I; `docs/reports/matbench_board.txt`, measurements.md "Accelerator against software matmul"
 - [x] Measured PE utilization reported: measurements.md "Accelerator PE utilization", `docs/reports/pe_utilization.txt` (`scripts/pe_utilization.py`): board jobs 26.2% at 16×16×16, model up to 85.7% at 256×64×16; the whole call 0.4-0.6% (the DMA)
-- [ ] Scan chain insertion; chain count, coverage, area overhead reported (§6.5)
-- [ ] **LibreLane run #2** on the full SoC (§6.4)
+- [x] Scan chain insertion; chain count, coverage, area overhead reported (§6.5) — SoC 2026-11-25 (98.96%); the core's routed coverage still to rerun
+- [x] **LibreLane run #2** on the full SoC (§6.4) — 2026-11-23, `2e0dfa3`
 - [ ] Written comparison of run #1 vs. run #2 — how area, congestion, and timing changed
 - [ ] Written FPGA-vs-ASIC comparison for the same RTL (§6.4)
 - [ ] Release `soc-v2.0` (fpga-coord §5); P4, P5 and P7 wait on it

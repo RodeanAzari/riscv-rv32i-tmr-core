@@ -14,3 +14,13 @@ set_false_path -from [get_ports rst_i]
 # synchronizer (rtl/periph/uart_rx.sv). Timed as a synchronous input it failed
 # hold by -0.92 ns at max_ss (50 ns run, 2026-11-15).
 set_false_path -from [get_ports uart_rx_i]
+
+# scan_in_<k> (make asic SCAN=1 only; absent otherwise): the tester drives
+# them at mid-cycle, not 20% after the edge. With the base file's 10 ns they
+# failed hold at the ss corners (-1.82 ns at max_ss, 23 paths, all scan_in,
+# 2026-11-23): the clock reaches the first scan flop about 13.6 ns after the
+# edge. Test requirement, stated in the README: drive scan_in 25 ns after clk_i.
+set scan_in_ports [get_ports -quiet scan_in_*]
+if { [llength $scan_in_ports] } {
+    set_input_delay [expr $::env(CLOCK_PERIOD) / 2.0] -clock $clocks $scan_in_ports
+}

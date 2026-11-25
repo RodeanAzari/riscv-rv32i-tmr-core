@@ -316,6 +316,21 @@ history, [formal-properties.md](formal-properties.md) and
   provide; flops left off a chain must then be subtracted, from
   `report_dft_plan`), quoting Quaigh's collapsed ("unique") fault count.
   Fault's `atpg` simulation is not used.
+  **As built (`scripts/scan_coverage.py`, run by `make asic SCAN=1`):**
+  `fault cut` keeps only a flop's D and Q, so the script first splits each
+  scan flop into the mux2 it contains plus a `dfxtp` (the scan muxes'
+  faults counted, SCE an ordinary input); `sdfsbp` (the SoC's reset
+  synchronizer, asynchronous set) the same way with SET_B dropped, so the
+  logic driving it stays undetected and counted. Decap/fill/tap/diode cells
+  are dropped; each SRAM macro is cut like a flop (read data in, inputs
+  out), an assumption the report states with the share of faults it
+  decides. Quaigh is built by `scripts/quaigh.nix` from the exact source and
+  Cargo.lock Fault 0.9.4 pins, plus `scripts/quaigh-sparse-detections.patch`
+  (memory only; the stock 0.0.6 holds a bool per fault per pattern and ran
+  out of memory on the SoC's 1.45 M faults). The report splits undetected
+  faults into proven untestable (Quaigh's final `unobservable=`) and
+  unresolved (a SAT pattern its fault simulation did not confirm; varies
+  with the seed). Numbers: measurements.md, "Scan on the SoC".
   **Feasibility on the core (2026-11-09, not a result: a pre-scan
   netlist, nothing committed):** run #1's config synthesized on the current
   RTL (6,656 cells, 1,496 `dfxtp_2`), `fault cut` with a sky130 cell config

@@ -10,9 +10,13 @@ that chain's length; inverted if the chain's path inverts, which
 scan_chains.py reports). Bits before the chain is first filled are not
 checked. Only the clock and scan ports are connected: functional inputs
 float (X), which the scan mux does not select during shift, so an X at a
-scan out means the chain is broken.
+scan out means the chain is broken. An input reaching a flop's asynchronous
+set or reset is the exception: a tester holds it inactive while shifting,
+and --tie PORT=VALUE does the same (the SoC's rst_i, whose reset
+synchronizer flops have an asynchronous set).
 
-Usage: scripts/scan_shift_tb.py <chains.json> <top module> <clock port> > tb.v
+Usage: scripts/scan_shift_tb.py <chains.json> <top module> <clock port>
+       [--tie PORT=VALUE ...] > tb.v
 Run with Icarus and the PDK's cell models (make asic-scan-check).
 """
 
@@ -22,6 +26,16 @@ import sys
 
 def main():
     chains_json, top, clk = sys.argv[1:4]
+    args = sys.argv[4:]
+    ties = {}
+    while args:
+        if args[0] != "--tie" or len(args) < 2 or "=" not in args[1]:
+            sys.exit(f"scan_shift_tb.py: expected --tie PORT=VALUE, got {args[:2]}")
+        port, _, val = args[1].partition("=")
+        if val not in ("0", "1"):
+            sys.exit(f"scan_shift_tb.py: --tie {port}: value must be 0 or 1, got {val!r}")
+        ties[port] = val
+        args = args[2:]
     d = json.load(open(chains_json))
     chains = d["chains"]
     se = d["scan_enable"]
@@ -60,6 +74,7 @@ def main():
     conns = [f".{clk}(clk)", f".{se}(1'b1)"]
     conns += [f".{c['scan_in']}(si[{k}])" for k, c in enumerate(chains)]
     conns += [f".{port}(o_{port})" for port in outs]
+    conns += [f".{port}(1'b{val})" for port, val in ties.items()]
     w.append(f"  {top} dut ({', '.join(conns)});")
     w.append(f"  reg [NCH-1:0] hist [0:CYCLES];")
     w.append("  integer n, k, errors, checked, seed;")

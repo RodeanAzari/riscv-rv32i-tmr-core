@@ -1,0 +1,14 @@
+# Scan chains in the routed netlist (make asic SCAN=1), traced by scripts/scan_chains.py,
+# shifted at gate level by scripts/scan_shift_tb.py (Icarus, sky130_fd_sc_hd models)
+
+ scan_in_0 -> scan_out_0               2445 flops
+ scan_in_1 -> scan_out_1               2445 flops
+ scan_in_2 -> scan_out_2               2445 flops
+ scan_in_3 -> scan_out_3               2445 flops
+ scan_in_4 -> scan_out_4               2445 flops
+ scan_in_5 -> scan_out_5               2445 flops
+ scan_in_6 -> scan_out_6               2445 flops
+ scan_in_7 -> scan_out_7               2442 flops
+chains 8, scan flops 19557, on chains 19557, longest 2445, scan enable ['scan_enable_0']
+
+scan-shift: 8 chains ok, 39155 scan-out bits checked over 7339 cycles

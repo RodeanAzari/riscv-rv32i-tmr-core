@@ -70,7 +70,7 @@ TMR core from Phase E [here](docs/img/vivado/phase-e/floorplan_board_core.svg).*
 | | E — TMR + fault injection, ASIC run #1 | **Done** |
 | **2 — SoC** | F — Systolic array | **Done** (on its own; joined to the core in H) |
 | | G — DMA + AXI interconnect | **Done**, released as `soc-v1.0`: the DMA engine replays DMA-Engine's golden trace and runs on the SoC under software, through an AXI4 crossbar whose §6.2 properties are proven; software on the core runs GEMM jobs on the accelerator (the DMA fills its buffers) |
-| | H — Integration + DFT, ASIC run #2 | **In progress**: the M extension, the array clock domain and ASIC run #2 (the SoC on Sky130, timing met at all 9 corners) are done; the SoC's scan coverage and the run #1/#2 comparison remain |
+| | H — Integration + DFT, ASIC run #2 | **In progress**: the M extension, the array clock domain and ASIC run #2 (the SoC on Sky130, timing met at all 9 corners) and the SoC's scan chains (98.96% stuck-at coverage) are done; the run #1/#2 comparison remains |
 
 Full scope and each phase's definition of done: [docs/buildplan.md](docs/buildplan.md).
 Trend tables and verification detail: [docs/measurements.md](docs/measurements.md); implementation notes and decisions: [docs/design-notes.md](docs/design-notes.md).
@@ -573,13 +573,31 @@ benchmark circuit:
 **The workaround:** Fault is used only to prepare the netlist (`fault cut`,
 then `nl2bench`), and the patterns and the coverage come from
 [Quaigh](https://github.com/coloquinte/quaigh), the open-source ATPG Fault can
-call. Quaigh proves its result with a SAT solver: on the same s27 it detects
-34 of 34 faults (100%). Fault's simulation and its bundled ATPGs (Atalanta,
-PODEM; licensed for non-commercial use only) are not used. Tried on the core's
-pre-scan netlist the flow took 2 minutes for 98.8% of 41,192 faults; that is a
-check that it scales, not a result. Run #2's number will come from the
-netlist with the chains in it. Details in
-[docs/design-notes.md](docs/design-notes.md).
+call. Quaigh generates patterns with a SAT solver and checks them by fault
+simulation: on the same s27 it detects 34 of 34 faults (100%). Fault's
+simulation and its bundled ATPGs (Atalanta, PODEM; licensed for
+non-commercial use only) are not used.
+
+**The SoC needed one more fix.** Quaigh 0.0.6 keeps one byte per fault per
+pattern; on the SoC's 1.45 million faults that is ~1.45 MB a pattern, and it
+ran out of memory at 28 GB near 20,000 patterns. A small patch
+([scripts/quaigh-sparse-detections.patch](scripts/quaigh-sparse-detections.patch))
+stores each pattern's detections as a list instead: on the core it gives
+byte-identical patterns and results with 8× less memory, and the SoC ran in
+4 h 37 min at 8.3 GB. `make asic SCAN=1` builds this patched Quaigh from the
+exact source Fault 0.9.4 pins ([scripts/quaigh.nix](scripts/quaigh.nix)).
+
+**Result, on the routed SoC** ([scan_coverage_asic_soc.txt](docs/reports/scan_coverage_asic_soc.txt)):
+**98.96%** of 1,449,256 collapsed stuck-at faults, 20,847 patterns, every
+undetected fault counted against it. Of the 15,034 undetected, 13,855 are
+proven untestable (no pattern exists) and 1,179 unresolved (a pattern the
+SAT solver found but the fault simulation did not confirm; the count varies
+with the random seed). **One assumption:** the 48 SRAMs are cut at their
+pins, read data driven and inputs observed directly, which is what a memory
+bypass wrapper would give; this chip has none, and 4.83% of the faults sit
+on logic that assumption decides. Details in
+[docs/design-notes.md](docs/design-notes.md) and
+[docs/measurements.md](docs/measurements.md).
 
 ## Results
 
@@ -633,7 +651,7 @@ the period, worst of 9 signoff corners
 | Pre-layout estimate, synthesised netlist | 35.1 MHz including I/O; 46.0 MHz register to register | not usable (−1,652 ns before any buffering) |
 | Power estimate (typical, vectorless) | 4.60 mW at 35 ns | 87.7 mW at 50 ns |
 | DRC / LVS clean | **Clean**: Magic and KLayout DRC 0, LVS 0, antenna 0 | **Clean**: Magic DRC 0, LVS 0 (KLayout DRC off); antenna 1 net; max slew 83,303 pins at the slow corner (see Run #2) |
-| Scan chains: count, coverage, area overhead | — (Phase H) | — |
+| Scan chains: count, coverage, area overhead | 8 × 187 flops, all 1,496 on a chain, shifted at gate level; coverage pending its routed rerun; standard-cell area +10.7%, no setup cost ([scan_chains_asic.txt](docs/reports/scan_chains_asic.txt), [summary_asic_scan.txt](docs/reports/summary_asic_scan.txt)) | 8 × 2,442 to 2,445, all 19,557 on a chain, shifted at gate level; **98.96%** stuck-at coverage (SRAMs cut at their pins); flops +29.4% area, cells +6.7% overall, but that run used a 10% slew-repair margin against run 2's 30%, so only the flop figure is like for like ([scan_chains_asic_soc.txt](docs/reports/scan_chains_asic_soc.txt), [scan_coverage_asic_soc.txt](docs/reports/scan_coverage_asic_soc.txt), [summary_asic_soc_scan.txt](docs/reports/summary_asic_soc_scan.txt)) |
 
 ## Limitations
 
@@ -671,7 +689,12 @@ Stated plainly, because they are real:
 - **Scan coverage is stuck-at only, from an open ATPG.** Quaigh's
   collapsed fault count under full scan, not a commercial tool's figure; no
   transition faults, and Fault's own coverage is not used (see "Scan test
-  coverage").
+  coverage"). The SoC's 98.96% assumes the SRAMs can be bypassed in test,
+  which this chip cannot do. A tester must drive `scan_in` half a cycle
+  (25 ns) after `clk_i`: at the usual 20% it fails hold at the slow corner.
+  The scan run left 5 antenna nets and twice run 2's slew violations; it
+  used a 10% slew-repair margin, not the 30% run 2 closed with, and was not
+  rerun.
 - **TMR guards the core, not the memory.** The RAM, the I/O and the voter
   itself are single; protecting memory (ECC) is out of scope. Register-file
   faults in unused registers stay latent until rewritten (see Fault

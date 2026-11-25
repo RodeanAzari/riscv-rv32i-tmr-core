@@ -1,0 +1,21 @@
+# Stuck-at test coverage of asic_top.nl.v (scripts/scan_coverage.py):
+# fault cut + nl2bench (Fault 0.9.4), quaigh atpg (0.0.6 with
+# scripts/quaigh-sparse-detections.patch: memory only, same patterns), full scan.
+
+scan flops (split into mux2 + dfxtp): 19557
+  of them with an asynchronous set:  2 (SET_B dropped: its driving logic is untestable by scan, counted)
+cells without logic dropped:         4303680
+network: 22641 inputs, 22275 outputs, 924486 gates, 4729844 faults, 1449256 unique (collapsed)
+patterns: 20847
+coverage: 1434222/1449256 unique faults detected = 98.96% (every undetected fault counts against it)
+  undetected: 13855 proven untestable (no pattern exists), 1179 unresolved (a SAT pattern that the
+  fault simulation then did not confirm; varies with the seed)
+
+SRAM macros: 48, cut at their boundary: 3072 read-data bits
+as inputs (controlled), 2704 input bits as outputs (observed).
+ASSUMPTION: that boundary is what a bypass wrapper would give; this chip has
+none, so in a scan test the read data is unknown. Logic it decides (fan-out
+of a read bit, or observable only at an SRAM input):
+exposed: 228308/4729778 uncollapsed faults = 4.83%
+(counted by this script from the .bench, two per gate pin: not Quaigh's
+own fault count above, which can differ slightly)
