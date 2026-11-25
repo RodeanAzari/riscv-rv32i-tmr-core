@@ -598,9 +598,12 @@ cap on the desktop at 96% detection): one bool per fault per pattern,
 ~1.45 MB a pattern. `scripts/quaigh-sparse-detections.patch` stores them
 sparse (identical patterns and results on the core, seeds 1 and 7; peak
 1,004 → 126 MB there); the SoC then took 4 h 37 min at 8.3 GB peak on the
-desktop, run twice with identical numbers. The core's 99.02% (50,222
-faults) is from its stitched, unrouted netlist; its routed rerun is
-pending.
+desktop, run twice with identical numbers. **The core, routed**
+([scan_coverage_asic.txt](reports/scan_coverage_asic.txt), 2026-11-25,
+`make asic SCAN=1`, whose summary and chain reports came out identical to
+the committed ones): **99.12%** of 56,246 (486 proven untestable, 8
+unresolved), 1,977 patterns. The 99.02% of 50,222 quoted earlier was the
+stitched, unrouted netlist (no resizer buffers yet).
 
 Layout screenshots from KLayout (met4/met5 power grid hidden), in
 `docs/img/asic/run1/`: `layout.png`, the whole block, and `layout-zoom.png`,

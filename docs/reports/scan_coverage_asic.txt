@@ -1,0 +1,11 @@
+# Stuck-at test coverage of riscv_core.nl.v (scripts/scan_coverage.py):
+# fault cut + nl2bench (Fault 0.9.4), quaigh atpg (0.0.6 with
+# scripts/quaigh-sparse-detections.patch: memory only, same patterns), full scan.
+
+scan flops (split into mux2 + dfxtp): 1496
+cells without logic dropped:         27189
+network: 1644 inputs, 2050 outputs, 32586 gates, 172560 faults, 56246 unique (collapsed)
+patterns: 1977
+coverage: 55752/56246 unique faults detected = 99.12% (every undetected fault counts against it)
+  undetected: 486 proven untestable (no pattern exists), 8 unresolved (a SAT pattern that the
+  fault simulation then did not confirm; varies with the seed)
