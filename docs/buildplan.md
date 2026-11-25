@@ -343,8 +343,8 @@ A phase is done when **every** box is checked. No partial credit.
 - [x] Measured PE utilization reported: measurements.md "Accelerator PE utilization", `docs/reports/pe_utilization.txt` (`scripts/pe_utilization.py`): board jobs 26.2% at 16×16×16, model up to 85.7% at 256×64×16; the whole call 0.4-0.6% (the DMA)
 - [x] Scan chain insertion; chain count, coverage, area overhead reported (§6.5) — 2026-11-25: SoC 98.96%, core 99.12%
 - [x] **LibreLane run #2** on the full SoC (§6.4) — 2026-11-23, `2e0dfa3`
-- [ ] Written comparison of run #1 vs. run #2 — how area, congestion, and timing changed
-- [ ] Written FPGA-vs-ASIC comparison for the same RTL (§6.4)
+- [x] Written comparison of run #1 vs. run #2 — how area, congestion, and timing changed — `docs/asic-comparison.md` §1
+- [x] Written FPGA-vs-ASIC comparison for the same RTL (§6.4) — `docs/asic-comparison.md` §2
 - [ ] Release `soc-v2.0` (fpga-coord §5); P4, P5 and P7 wait on it
 
 ---

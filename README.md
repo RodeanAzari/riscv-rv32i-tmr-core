@@ -70,7 +70,7 @@ TMR core from Phase E [here](docs/img/vivado/phase-e/floorplan_board_core.svg).*
 | | E — TMR + fault injection, ASIC run #1 | **Done** |
 | **2 — SoC** | F — Systolic array | **Done** (on its own; joined to the core in H) |
 | | G — DMA + AXI interconnect | **Done**, released as `soc-v1.0`: the DMA engine replays DMA-Engine's golden trace and runs on the SoC under software, through an AXI4 crossbar whose §6.2 properties are proven; software on the core runs GEMM jobs on the accelerator (the DMA fills its buffers) |
-| | H — Integration + DFT, ASIC run #2 | **In progress**: the M extension, the array clock domain and ASIC run #2 (the SoC on Sky130, timing met at all 9 corners) and the SoC's scan chains (98.96% stuck-at coverage) are done; the run #1/#2 comparison remains |
+| | H — Integration + DFT, ASIC run #2 | **In progress**: the M extension, the array clock domain and ASIC run #2 (the SoC on Sky130, timing met at all 9 corners), the SoC's scan chains (98.96% stuck-at coverage) and the two written comparisons are done |
 
 Full scope and each phase's definition of done: [docs/buildplan.md](docs/buildplan.md).
 Trend tables and verification detail: [docs/measurements.md](docs/measurements.md); implementation notes and decisions: [docs/design-notes.md](docs/design-notes.md).
@@ -652,6 +652,20 @@ the period, worst of 9 signoff corners
 | Power estimate (typical, vectorless) | 4.60 mW at 35 ns | 87.7 mW at 50 ns |
 | DRC / LVS clean | **Clean**: Magic and KLayout DRC 0, LVS 0, antenna 0 | **Clean**: Magic DRC 0, LVS 0 (KLayout DRC off); antenna 1 net; max slew 83,303 pins at the slow corner (see Run #2) |
 | Scan chains: count, coverage, area overhead | 8 × 187 flops, all 1,496 on a chain, shifted at gate level; **99.12%** stuck-at coverage ([scan_coverage_asic.txt](docs/reports/scan_coverage_asic.txt)); standard-cell area +10.7%, no setup cost ([scan_chains_asic.txt](docs/reports/scan_chains_asic.txt), [summary_asic_scan.txt](docs/reports/summary_asic_scan.txt)) | 8 × 2,442 to 2,445, all 19,557 on a chain, shifted at gate level; **98.96%** stuck-at coverage (SRAMs cut at their pins); flops +29.4% area, cells +6.7% overall, but that run used a 10% slew-repair margin against run 2's 30%, so only the flop figure is like for like ([scan_chains_asic_soc.txt](docs/reports/scan_chains_asic_soc.txt), [scan_coverage_asic_soc.txt](docs/reports/scan_coverage_asic_soc.txt), [summary_asic_soc_scan.txt](docs/reports/summary_asic_soc_scan.txt)) |
+
+**What changed from run 1 to run 2, and why the FPGA is 5× faster**
+([docs/asic-comparison.md](docs/asic-comparison.md)). The SRAMs, not the
+logic, set run 2's die: 12.16 mm² of macros against 3.7 mm² of standard
+cells. Routing was not congested (17.7% global-route usage, against 42% on
+run 1, no overflow in either); distance was the problem, with clock latency
+growing from about 2.4 ns to 12.3 ns. The critical path moved from the
+core's fetch address to the memory interface: the SRAM model launches read
+data on the falling clock edge, so the logic after a read gets half the
+period. Registering every SRAM output is the RTL change that would let the
+clock rise. Against the FPGA (100 MHz, same RTL), most of the gap is 130 nm
+against 28 nm, signed off at the slow corner; the rest is that memory and
+multipliers are hard blocks on the FPGA and the most expensive things on the
+ASIC.
 
 ## Limitations
 

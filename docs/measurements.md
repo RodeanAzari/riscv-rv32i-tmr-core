@@ -513,7 +513,7 @@ the SoC's chains come with run #2.
 
 ### Run #2: the SoC (Phase H)
 
-`make asic SOC=1`: `asic_top` (TMR core with M, AXI crossbar, DMA, 16×16
+`make asic SOC=1`: `asic_top` (`soc`'s defaults: single core, RV32I; AXI crossbar, DMA, 16×16
 GEMM accelerator, UART; `syn/asic_soc.yaml`, `syn/asic_soc.sdc`), every RAM
 as one of **48 OpenRAM macros** placed by hand, die 6000 × 5200 µm, 50 ns
 (20 MHz), I/O delay 20% of the period, `rst_i` and `uart_rx_i` false paths,

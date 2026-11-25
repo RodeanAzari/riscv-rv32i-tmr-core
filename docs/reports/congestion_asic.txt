@@ -1,0 +1,35 @@
+# Global-routing congestion (OpenROAD GRT-0096, LibreLane step 39-openroad-globalrouting), copied from the run logs:
+# run #1 = syn/build/asic/runs/asic (its summary regenerates docs/reports/summary_asic.txt),
+# run #2 = asic_soc_r2b on the desktop (the run docs/reports/summary_asic_soc.txt came from, 2e0dfa3).
+
+== Run #1: riscv_core, 35 ns
+[INFO GRT-0096] Final congestion report:
+Layer         Resource        Demand        Usage (%)    Max H / Max V / Total Overflow
+---------------------------------------------------------------------------------------
+li1                  0             0            0.00%             0 /  0 /  0
+met1             44885         24789           55.23%             0 /  0 /  0
+met2             49863         27859           55.87%             0 /  0 /  0
+met3             33047          7984           24.16%             0 /  0 /  0
+met4             22654          4333           19.13%             0 /  0 /  0
+met5              4623           155            3.35%             0 /  0 /  0
+---------------------------------------------------------------------------------------
+Total           155072         65120           41.99%             0 /  0 /  0
+
+[INFO GRT-0018] Total wirelength: 635545 um
+[INFO GRT-0014] Routed nets: 10789
+
+== Run #2: asic_top (the SoC, 48 SRAM macros), 50 ns
+[INFO GRT-0096] Final congestion report:
+Layer         Resource        Demand        Usage (%)    Max H / Max V / Total Overflow
+---------------------------------------------------------------------------------------
+li1                  0             0            0.00%             0 /  0 /  0
+met1           4003674       1078985           26.95%             0 /  0 /  0
+met2           3834824        807814           21.07%             0 /  0 /  0
+met3           2724793        260005            9.54%             0 /  0 /  0
+met4           1735819         88903            5.12%             0 /  0 /  0
+met5            388191          9744            2.51%             0 /  0 /  0
+---------------------------------------------------------------------------------------
+Total         12687301       2245451           17.70%             0 /  0 /  0
+
+[INFO GRT-0018] Total wirelength: 19537764 um
+[INFO GRT-0014] Routed nets: 272762
