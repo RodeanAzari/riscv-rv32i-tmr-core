@@ -124,7 +124,8 @@ TESTS ?= riscv_core:test_core,test_riscv_tests \
          soc_tmr:test_gemm \
          soc_m:test_coremark \
          soc_tmr_m:test_coremark \
-         soc_llm:test_llm
+         soc_llm:test_llm \
+         soc_ext:test_ext
 
 # The SoC runs a firmware simulation image from sw/build/, built by `make fw`
 # and `make bench` (the regression below builds both first; a TEST_ONE run of
@@ -165,6 +166,12 @@ ifdef TEST_ONE
     LLM_SUFFIX          := _llm
     COMPILE_ARGS        += -GRAM_WORDS=98304
   endif
+  # soc_ext: the SoC with the external window (EXT_EN, fpga-coord 0014),
+  # its ext_* ports driven by test_ext's register model.
+  ifeq ($(TOPLEVEL),soc_ext)
+    TOPLEVEL            := soc
+    COMPILE_ARGS        += -GEXT_EN=1
+  endif
   ifneq ($(filter soc_m soc_tmr_m,$(TOPLEVEL)),)
     TOPLEVEL            := $(patsubst %_m,%,$(TOPLEVEL))
     M_SUFFIX            := _m
@@ -177,11 +184,11 @@ ifdef TEST_ONE
     COMPILE_ARGS        += -GTMR=1
   endif
   ifeq ($(TOPLEVEL),soc)
-    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark$(M_SUFFIX)_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,$(if $(filter test_dma,$(MODULE)),boot_dma_sim,$(if $(filter test_gemm,$(MODULE)),boot_gemm_sim,$(if $(filter test_llm,$(MODULE)),boot_llm_sim,hello_sim))))))
+    SOC_IMAGE           := $(if $(filter test_coremark,$(MODULE)),coremark$(M_SUFFIX)_sim,$(if $(filter test_boot,$(MODULE)),boot,$(if $(filter test_demo,$(MODULE)),boot_demo_sim,$(if $(filter test_dma,$(MODULE)),boot_dma_sim,$(if $(filter test_gemm,$(MODULE)),boot_gemm_sim,$(if $(filter test_llm,$(MODULE)),boot_llm_sim,$(if $(filter test_ext,$(MODULE)),boot_ext_sim,hello_sim)))))))
     BUILD_TAG           := soc_$(SOC_IMAGE)$(TMR_SUFFIX)$(if $(filter coremark%,$(SOC_IMAGE)),,$(M_SUFFIX))$(CDC_SUFFIX)
     # The demo, DMA and GEMM tests run the UART at CLK/16: their output is
     # thousands of characters.
-    ifneq ($(filter test_demo test_dma test_gemm test_llm,$(MODULE)),)
+    ifneq ($(filter test_demo test_dma test_gemm test_llm test_ext,$(MODULE)),)
       COMPILE_ARGS      += -GBAUD=3125000
     endif
     ifeq ($(MODULE),test_demo)

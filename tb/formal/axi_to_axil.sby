@@ -1,0 +1,24 @@
+# axi_to_axil's AXI rules on both sides (axi_to_axil_formal.sv), any slave
+# timing, bursts up to 4 beats. prove: k-induction; cover: W before AW, a
+# write burst and a read burst each complete.
+
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+cover: mode cover
+prove: depth 12
+cover: depth 24
+
+[engines]
+smtbmc yices
+
+[script]
+read_verilog -sv -formal axi_to_axil.sv axi_to_axil_formal.sv
+prep -top axi_to_axil_formal
+
+[files]
+../../rtl/bus/axi_to_axil.sv
+axi_to_axil_formal.sv

@@ -1,6 +1,6 @@
 # Board-level synthesis, implementation and bitstream for the Arty A7-100T.
 #
-#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila] [tmr] [m] [cdc] [llm]
+#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila] [tmr] [m] [cdc] [llm] [ext]
 #
 # Top: rtl/top/arty_a7_top.sv, pins in constr/arty_a7.xdc, the RAM loaded
 # from <hex> (sw/build/hello.hex, from `make fw`). Unlike synth_ooc.tcl this
@@ -41,6 +41,10 @@ if {$cdc} { set sfx "${sfx}_cdc" }
 set llm  [expr {[lindex $argv 6] eq "1"}]
 if {$llm} { set sfx "${sfx}_llm" }
 set ram_words [expr {$llm ? 98304 : 8192}]
+# ext = 1: the SoC's external window (EXT_EN, fpga-coord 0014) with a
+# 16-word register file on it (rtl/periph/axil_regfile.sv), reports *_ext.*
+set ext  [expr {[lindex $argv 7] eq "1"}]
+if {$ext} { set sfx "${sfx}_ext" }
 if {$part eq ""} { set part xc7a100tcsg324-1 }
 
 set top     arty_a7_top
@@ -82,7 +86,7 @@ read_xdc [file join $repo constr arty_a7.xdc]
 
 synth_design -top $top -part $part -generic "INIT_FILE=\"$hex\"" -generic "ILA=$ila" \
     -generic "TMR=$tmr" -generic "M_EXT=$m" -generic "ARRAY_CDC=$cdc" \
-    -generic "RAM_WORDS=$ram_words"
+    -generic "RAM_WORDS=$ram_words" -generic "EXT_EN=$ext"
 if {$cdc} {
     # names synthesized cells, so after synthesis (implementation uses it)
     read_xdc [file join $repo constr accel_cdc.xdc]
@@ -195,7 +199,7 @@ foreach {label group total} [list \
 set fh [open [file join $reports summary$sfx.txt] w]
 foreach out [list stdout $fh] {
     puts $out ""
-    puts $out "=== arty_a7_top ([expr {$tmr ? "TMR core" : "core"}] + [expr {$ram_words * 4 / 1024}] KiB RAM + LED + UART[expr {$ila ? " + ILA" : ""}]), board-level, post-route ==="
+    puts $out "=== arty_a7_top ([expr {$tmr ? "TMR core" : "core"}] + [expr {$ram_words * 4 / 1024}] KiB RAM + LED + UART[expr {$ila ? " + ILA" : ""}][expr {$ext ? " + external window (16-word regfile)" : ""}]), board-level, post-route ==="
     puts $out [format "part            %s" $part]
     puts $out [format "core clock      %s, %.3f ns (%.1f MHz), MMCM from 100 MHz" \
                [get_property NAME $clk] $period [expr {1000.0/$period}]]

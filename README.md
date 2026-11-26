@@ -794,9 +794,10 @@ its reports are committed with the RTL that produced them.
 ## Used by
 
 This repository is the `soc` block other projects build on, consumed only at
-release tags (`soc-v1.0` released; `soc-v2.0` comes with Phase H). No
-project consumes a release yet; [Open SerDes Lab](https://github.com/RodeanAzari/serdes-lab)
-is cleared to start from `soc-v1.0`, and two more projects wait on
+release tags (`soc-v1.0`, `soc-v2.0`, `soc-v2.1`; [CHANGELOG.md](CHANGELOG.md)).
+No project consumes a release yet; [Open SerDes Lab](https://github.com/RodeanAzari/serdes-lab)
+is cleared to build its adaptation firmware on `soc-v2.1` (the external
+register window it asked for), and two more projects can start from
 `soc-v2.0`. Each is listed here when it starts consuming a tag.
 
 ## License

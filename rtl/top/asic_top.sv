@@ -53,8 +53,14 @@ module asic_top #(
   logic n_dbg_wb_rd_we;
   logic [4:0] n_dbg_wb_rd_addr;
   logic [31:0] n_dbg_wb_rd_wdata;
+  // the external window (EXT_EN, off here): outputs constant 0
+  logic [11:0] n_ext_awaddr, n_ext_araddr;
+  logic [31:0] n_ext_wdata;
+  logic [3:0]  n_ext_wstrb;
+  logic        n_ext_awvalid, n_ext_wvalid, n_ext_bready, n_ext_arvalid, n_ext_rready;
   logic unused;
-  assign unused = ^{n_aclk_rst, n_drp_den, n_drp_dwe, n_drp_daddr, n_drp_di, n_wx_start, n_wx_valid, n_wx_kt, n_wx_nt, n_wx_row, n_wx_pad, n_wx_w, n_dbg_if_id_pc, n_dbg_if_id_instr, n_dbg_id_ex_pc, n_dbg_id_ex_instr, n_dbg_ex_mem_pc, n_dbg_ex_mem_instr, n_dbg_ex_mem_alu_result, n_dbg_mem_wb_pc, n_dbg_mem_wb_instr, n_dbg_wb_rd_we, n_dbg_wb_rd_addr, n_dbg_wb_rd_wdata};
+  assign unused = ^{n_ext_awaddr, n_ext_araddr, n_ext_wdata, n_ext_wstrb, n_ext_awvalid,
+                    n_ext_wvalid, n_ext_bready, n_ext_arvalid, n_ext_rready, n_aclk_rst, n_drp_den, n_drp_dwe, n_drp_daddr, n_drp_di, n_wx_start, n_wx_valid, n_wx_kt, n_wx_nt, n_wx_row, n_wx_pad, n_wx_w, n_dbg_if_id_pc, n_dbg_if_id_instr, n_dbg_id_ex_pc, n_dbg_id_ex_instr, n_dbg_ex_mem_pc, n_dbg_ex_mem_instr, n_dbg_ex_mem_alu_result, n_dbg_mem_wb_pc, n_dbg_mem_wb_instr, n_dbg_wb_rd_we, n_dbg_wb_rd_addr, n_dbg_wb_rd_wdata};
 
   cdc_reset_sync #(.STAGES (2)) u_rst (
       .clk_i  (clk_i),
@@ -87,6 +93,23 @@ module asic_top #(
       .led_o                   (led_o),
       .uart_tx_o               (uart_tx_o),
       .uart_rx_i               (uart_rx_i),
+      .ext_awaddr_o            (n_ext_awaddr),
+      .ext_awvalid_o           (n_ext_awvalid),
+      .ext_awready_i           (1'b0),
+      .ext_wdata_o             (n_ext_wdata),
+      .ext_wstrb_o             (n_ext_wstrb),
+      .ext_wvalid_o            (n_ext_wvalid),
+      .ext_wready_i            (1'b0),
+      .ext_bresp_i             (2'b00),
+      .ext_bvalid_i            (1'b0),
+      .ext_bready_o            (n_ext_bready),
+      .ext_araddr_o            (n_ext_araddr),
+      .ext_arvalid_o           (n_ext_arvalid),
+      .ext_arready_i           (1'b0),
+      .ext_rdata_i             ('0),
+      .ext_rresp_i             (2'b00),
+      .ext_rvalid_i            (1'b0),
+      .ext_rready_o            (n_ext_rready),
       .dbg_if_id_pc_o          (n_dbg_if_id_pc),
       .dbg_if_id_instr_o       (n_dbg_if_id_instr),
       .dbg_id_ex_pc_o          (n_dbg_id_ex_pc),

@@ -1,5 +1,6 @@
 # axi_xbar's properties (buildplan 6.2) under the AXI-rules environment in
-# axi_xbar_formal.sv. prove: k-induction; cover: each event is reachable.
+# axi_xbar_formal.sv. prove: k-induction; cover: each event is reachable;
+# prove5, cover5: the same at five slaves (the SoC's count with EXT_EN).
 # The structural half of deadlock freedom (X2) is checked on the netlist
 # below, `select -assert-none` per source: no master VALID input reaches a
 # master READY output, and no READY input reaches any VALID output, except
@@ -9,18 +10,26 @@
 [tasks]
 prove
 cover
+prove5
+cover5
 
 [options]
 prove: mode prove
 cover: mode cover
+prove5: mode prove
+cover5: mode cover
 prove: depth 8
 cover: depth 16
+prove5: depth 8
+cover5: depth 16
 
 [engines]
 smtbmc yices
 
 [script]
 read_verilog -sv -formal axi_xbar.sv axi_xbar_formal.sv
+prove5: chparam -set M 5 axi_xbar_formal
+cover5: chparam -set M 5 axi_xbar_formal
 prep -top axi_xbar_formal
 flatten
 select -assert-none w:m_arvalid_i %co*:-$dff,$sdff,$sdffe,$dffe,$sdffce w:u_xbar.m_arready_o w:u_xbar.m_awready_o %u w:u_xbar.m_wready_o %u %i

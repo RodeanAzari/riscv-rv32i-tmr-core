@@ -1,8 +1,10 @@
 // Formal harness for axi_xbar's properties (the `ifdef FORMAL block in
 // rtl/bus/axi_xbar.sv: X1 handshake stability, X2 grant progress, X3
 // outstanding limit, X4 write response after write data; buildplan 6.2).
-// A 2 x 2 crossbar with 8-bit addresses and data: slave 0 at 0x00-0x3F,
-// slave 1 at 0x40-0x7F, the rest DECERR.
+// A 2-master crossbar with 8-bit addresses and data. M = 2 (task prove,
+// cover): slave 0 at 0x00-0x3F, slave 1 at 0x40-0x7F. M = 5 (prove5, cover5;
+// the SoC's slave count since EXT_EN, fpga-coord 0014): slave s at
+// 0x20 * s, 32 bytes each, so 0x00-0x9F. The rest DECERR either way.
 //
 // Every master and slave input is free, constrained only by what AXI asks
 // of the blocks around the crossbar -- the assumptions below, and nothing
@@ -12,7 +14,9 @@
 //            slave took, RLAST on its last beat; B only after the slave
 //            took AW and the W beat with WLAST
 // The first cycle is a reset.
-module axi_xbar_formal (
+module axi_xbar_formal #(
+    parameter int M = 2
+) (
     input logic clk_i,
     input logic rst_i,
     input logic [1:0][7:0] m_araddr_i, m_awaddr_i,
@@ -23,12 +27,20 @@ module axi_xbar_formal (
     input logic [1:0]      m_rready_i, m_bready_i,
     input logic [1:0][7:0] m_wdata_i,
     input logic [1:0][0:0] m_wstrb_i,
-    input logic [1:0]      s_arready_i, s_awready_i, s_wready_i,
-    input logic [1:0]      s_rvalid_i, s_rlast_i, s_bvalid_i,
-    input logic [1:0][7:0] s_rdata_i,
-    input logic [1:0][1:0] s_rresp_i, s_bresp_i
+    input logic [M-1:0]      s_arready_i, s_awready_i, s_wready_i,
+    input logic [M-1:0]      s_rvalid_i, s_rlast_i, s_bvalid_i,
+    input logic [M-1:0][7:0] s_rdata_i,
+    input logic [M-1:0][1:0] s_rresp_i, s_bresp_i
 );
-  localparam int N = 2, M = 2;
+  localparam int N = 2;
+  localparam logic [7:0] SLOT = (M == 2) ? 8'h40 : 8'h20;   // bytes per slave
+
+  function automatic logic [M*8-1:0] bases();
+    for (int s = 0; s < M; s++) bases[s*8 +: 8] = SLOT * s;            // truncated to 8 bits
+  endfunction
+  function automatic logic [M*8-1:0] masks();
+    for (int s = 0; s < M; s++) masks[s*8 +: 8] = ~(SLOT - 8'd1);
+  endfunction
 
   logic [N-1:0]      m_arready_o, m_awready_o, m_wready_o, m_rvalid_o, m_rlast_o, m_bvalid_o;
   logic [N-1:0][7:0] m_rdata_o;
@@ -42,8 +54,8 @@ module axi_xbar_formal (
 
   axi_xbar #(
       .N(N), .M(M), .ADDR_W(8), .DATA_W(8),
-      .S_BASE({8'h40, 8'h00}),
-      .S_MASK({8'hC0, 8'hC0})
+      .S_BASE(bases()),
+      .S_MASK(masks())
   ) u_xbar (
       .clk_i, .rst_i,
       .f_rb_o (f_rb), .f_wb_o (f_wb), .f_wl_o (f_wl),
@@ -143,8 +155,10 @@ module axi_xbar_formal (
       cover (m_rvalid_o[0] && m_rready_i[0] && m_rlast_o[0] && m_rresp_o[0] == 2'b11);  // DECERR read
       cover (m_bvalid_o[1] && m_bready_i[1] && m_bresp_o[1] == 2'b00);
       cover (s_arvalid_o[0] && s_arready_i[0] && s_awvalid_o[1] && s_awready_i[1]);
-      cover (m_arvalid_i[0] && m_arvalid_i[1] && m_araddr_i[0][7:6] == 2'b00 &&
-             m_araddr_i[1][7:6] == 2'b00 && !m_arready_o[1]);              // contention
+      cover (m_arvalid_i[0] && m_arvalid_i[1] && m_araddr_i[0] < SLOT &&
+             m_araddr_i[1] < SLOT && !m_arready_o[1]);                     // contention
+      // the last slave (the extra one at M = 5) is reached both ways
+      cover (s_arvalid_o[M-1] && s_arready_i[M-1] && s_awvalid_o[M-1] && s_awready_i[M-1]);
     end
   end
 endmodule

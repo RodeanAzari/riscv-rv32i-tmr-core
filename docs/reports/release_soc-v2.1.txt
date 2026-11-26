@@ -1,0 +1,47 @@
+soc-v2.1 release test (fpga-coord 0014, P4: external AXI4-Lite slave window, EXT_EN)
+date: 2026-11-26  RTL: array-cdc 102ba1f + this commit's changes  Verilator 5.050, Yosys 0.69+208, Vivado 2025.2
+full regression and make formal ran on the build desktop on the same tree
+(git diff and new files checksum-identical to the laptop's)
+
+make lint (all configs, incl. -GEXT_EN=1 and -GEXT_EN=1 -GTMR=1 -DRISCV_FORMAL -DFORMAL):
+lint rc=0, 0 warnings
+
+make -C tb/cocotb TEST_ONE=soc_ext:test_ext (from the full regression's log):
+  exttest: words 4/4
+  exttest: lanes 4/4
+  exttest: decode error 2/2
+  exttest: slverr store 1 load 1
+  exttest: 11/11 ok
+  slave: 8 writes, 11 reads, longest stall 200 cycles
+  ** TESTS=1 PASS=1 FAIL=0 SKIP=0 **
+  (slave in the test: random READY stalls on every channel, AW and W taken in
+  either order, SLVERR at 0xFFC; it checks the AXI master rules every cycle.
+  Before the axi_to_axil fix it failed "aw: VALID dropped before READY".
+  Also passed with 5 seeds locally.)
+
+make sim (full regression, 61 entries incl. soc_ext:test_ext and soc_llm:test_llm):
+  tests 843  pass 837  fail 0  skip 6 (skipped by design, as in v2.0)
+  exit 0
+
+make formal (all of it):
+  tb/formal/axi_to_axil.sby   prove PASS (k-induction, depth 12), cover PASS (3/3:
+                              W before AW, write burst done, read burst done)
+  tb/formal/axi_xbar.sby      prove, cover (2 slaves) PASS; prove5, cover5 (5 slaves,
+                              the EXT_EN=1 crossbar) PASS
+  cdc_async_fifo, cdc_pulse, cdc_reset_sync, core, muldiv, regfile_x0,
+  tmr_voter, xprop            all tasks PASS
+  riscv-formal checks.cfg     checks 46/46, covers 46/46
+  riscv-formal checks_m.cfg   checks 54/54, covers 54/54
+  exit 0
+  (planted bugs, each caught then reverted: the original AWVALID bug fails
+  axi_to_axil prove at step 3; a crossbar decode that skips the last slave
+  fails cover5)
+
+make impl (EXT_EN=0, the v2.0 SoC): docs/reports/summary_board.txt
+  LUT 13187, WNS +0.296 ns, Fmax 103.1 MHz (100 MHz met)
+make impl EXT=1 (axil_regfile in the window): docs/reports/summary_board_ext.txt
+  LUT 13623, WNS +0.075 ns, Fmax 100.8 MHz (100 MHz met)
+
+CI: lint, sim, formal on the pushed commit, see CHANGELOG.md
+board: not run (no hardware attached on 2026-11-26); the window is exercised
+in simulation only

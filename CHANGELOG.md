@@ -3,6 +3,54 @@
 Releases of the `soc` block (owner P1, `~/fpga-coord/dependencies.toml`).
 Consume only at a tag, as a git submodule checked out at that tag.
 
+## soc-v2.1 (2026-11-26)
+
+fpga-coord 0014 (P4): an **external AXI4-Lite slave window** for a consumer's
+own registers. `EXT_EN` defaults off; with it off the SoC is v2.0's (the
+crossbar keeps its four slaves).
+
+- **Release test:** `make lint`; `make -C tb/cocotb TEST_ONE=soc_ext:test_ext`;
+  `sby -f axi_xbar.sby` (tasks prove, cover, prove5, cover5) and
+  `sby -f axi_to_axil.sby` in `tb/formal/`; the full regression (`make sim`)
+  and `make formal` with these changes; `make impl` and `make impl EXT=1`.
+- **Result:** all pass. `test_ext` 11/11 against a slave that stalls every
+  channel up to 200 cycles and takes AW/W in either order; full regression
+  843 tests, 837 pass, 0 fail, 6 skipped by design; `make formal` all pass
+  (the converter by k-induction at depth 12, the crossbar at 2 and 5 slaves);
+  100 MHz met on the board build with and without the window (+0.296 /
+  +0.075 ns). Not yet run on hardware.
+- **Evidence:** [docs/reports/release_soc-v2.1.txt](docs/reports/release_soc-v2.1.txt),
+  [docs/reports/summary_board_ext.txt](docs/reports/summary_board_ext.txt),
+  [docs/reports/summary_board.txt](docs/reports/summary_board.txt).
+
+**What consumers must change:** nothing at `EXT_EN = 0` except tying the new
+inputs to 0 (`ext_awready_i`, `ext_wready_i`, `ext_bresp_i`, `ext_bvalid_i`,
+`ext_arready_i`, `ext_rdata_i`, `ext_rresp_i`, `ext_rvalid_i`) and leaving the
+new outputs open.
+
+| Parameter (default) | What it adds | Ports, registers |
+|---|---|---|
+| `EXT_EN` (0) | Crossbar slave 4 at **0x2000_2000-0x2000_2FFF** (4 KiB) behind an `axi_to_axil`; everything else unmapped still answers DECERR (0x2000_3000 included) | `ext_aw{addr[11:0],valid,ready}`, `ext_w{data,strb,valid,ready}`, `ext_b{resp,valid,ready}`, `ext_ar{addr[11:0],valid,ready}`, `ext_r{data,resp,valid,ready}`, AXI4-Lite, 32-bit, on `clk_i`, the address the offset in the window; `SOC_EXT_BASE` in `sw/lib/soc.h` |
+
+The slave may hold any READY low as long as it likes (the core waits) and
+take AW and W in either order; SLVERR or DECERR sets BUSERR (0x1000_0018),
+and a load that errs reads 0. One transaction at a time. The DMA can reach
+the window too (its bursts become one AXI4-Lite transaction per beat).
+`rtl/periph/axil_regfile.sv` is a minimal example slave (the board build's).
+
+**Fixed:** `axi_to_axil` dropped AWVALID when its slave took W before AW,
+hanging the store. v2.0's own slaves always take both together, so v2.0 never
+showed it; a consumer's slave could. The converter now has a formal proof
+of the AXI rules on both sides.
+
+**Released interface for firmware** (consume from the submodule at the tag,
+don't copy): `sw/lib/soc.h` (memory map, `REG`, BUSERR, CYCLE),
+`sw/lib/io.{h,c}` (UART console, `printf_`), `sw/app/crt0.S` and
+`sw/app/link.ld` (programs loaded by the bootloader at 0x1000, 32 KiB RAM,
+1 KiB stack). `link.ld` assumes the default RAM size and the bootloader's
+layout; a build with another `RAM_WORDS` needs its own (as `sw/llm/link.ld`).
+Changing any of these is a new tag with a note here.
+
 ## soc-v2.0 (2026-11-25)
 
 Phase H: the array on its own clock, reprogrammable by the core; the

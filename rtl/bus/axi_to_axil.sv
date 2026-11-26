@@ -5,7 +5,8 @@
 // passed through, RLAST on the last. Writes: each W beat goes out with its
 // own AW; the burst's B is the worst of the beats' responses.
 //
-// VALIDs out are flop-decoded states or pass-throughs of VALIDs in, READYs
+// VALIDs out are flop-decoded states or pass-throughs of VALIDs in (AWVALID
+// also held by a flop once W is taken), READYs
 // out are pass-throughs of READYs in: no READY depends on a VALID.
 
 module axi_to_axil #(
@@ -15,6 +16,14 @@ module axi_to_axil #(
 ) (
   input  logic              clk_i,
   input  logic              rst_i,
+`ifdef FORMAL
+  // the state, for the harness's strengthening invariants
+  // (tb/formal/axi_to_axil_formal.sv)
+  output logic [2:0]        f_state_o,
+  output logic [7:0]        f_left_o,
+  output logic              f_aw_done_o,
+  output logic              f_w_done_o,
+`endif
 
   // AXI4 slave
   input  logic [ADDR_W-1:0] s_araddr_i,
@@ -85,7 +94,11 @@ module axi_to_axil #(
 
   // writes: per W beat, its AW and the beat together, then its B
   assign m_awaddr_o  = addr_q;
-  assign m_awvalid_o = state_q == S_W && !aw_done_q && s_wvalid_i;
+  // AW waits for its beat to be offered, then stays up until taken: once a
+  // slave has taken W first, the beat is gone upstream, and w_done_q holds
+  // AWVALID (it fell with WVALID before, which AXI forbids and which hung
+  // the core's store; found by test_ext, fpga-coord 0014)
+  assign m_awvalid_o = state_q == S_W && !aw_done_q && (s_wvalid_i || w_done_q);
   assign m_wdata_o   = s_wdata_i;
   assign m_wstrb_o   = s_wstrb_i;
   assign m_wvalid_o  = state_q == S_W && !w_done_q && s_wvalid_i;
@@ -93,6 +106,13 @@ module axi_to_axil #(
   assign m_bready_o  = state_q == S_WB;
   assign s_bvalid_o  = state_q == S_B;
   assign s_bresp_o   = bresp_q;
+
+`ifdef FORMAL
+  assign f_state_o   = state_q;
+  assign f_left_o    = left_q;
+  assign f_aw_done_o = aw_done_q;
+  assign f_w_done_o  = w_done_q;
+`endif
 
   // the worse of two responses (DECERR 3 > SLVERR 2 > OKAY 0)
   function automatic logic [1:0] worse(input logic [1:0] a, input logic [1:0] b);

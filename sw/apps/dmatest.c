@@ -159,8 +159,8 @@ static void decode_error(void)
 {
     uint32_t before = passed;
     check(BUSERR == 0, "no bus error yet");
-    uint32_t v = REG(DMA_BASE + 0x2000u);            /* past the DMA's and the
-                                                        accelerator's windows */
+    uint32_t v = REG(DMA_BASE + 0x3000u);            /* past every window, the
+                                                        external one included */
     check(v == 0 && (BUSERR & 1u), "unmapped load: DECERR");
     BUSERR = 0;
     check(BUSERR == 0, "BUSERR cleared");

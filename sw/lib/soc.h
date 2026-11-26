@@ -24,6 +24,7 @@
 /* The AXI4-Lite region: loads and stores here wait for the bus. */
 #define DMA_BASE 0x20000000u         /* the DMA engine's registers (sw/lib/dma.h) */
 #define GEMM_BASE 0x20001000u        /* the GEMM accelerator's registers (sw/lib/gemm.h) */
+#define SOC_EXT_BASE 0x20002000u     /* the external window, 4 KiB (soc EXT_EN; DECERR without) */
 #define GEMM_BUF  0x20100000u        /* its buffers: A, W, C */
 
 #define UART_TX_READY 1u

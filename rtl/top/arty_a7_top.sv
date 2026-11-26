@@ -41,7 +41,8 @@ module arty_a7_top #(
     parameter bit    TMR       = 1'b0,    // three voted cores: soc.sv, make impl TMR=1
     parameter bit    M_EXT     = 1'b0,    // RV32IM core(s): make impl M=1
     parameter bit    ARRAY_CDC = 1'b0,    // the array on clk_array: make impl CDC=1
-    parameter int unsigned RAM_WORDS = 8192 // 32 KiB; 98304 (384 KiB): make impl LLM=1
+    parameter int unsigned RAM_WORDS = 8192, // 32 KiB; 98304 (384 KiB): make impl LLM=1
+    parameter bit    EXT_EN    = 1'b0     // the external window, here axil_regfile: make impl EXT=1
 ) (
     input  logic       clk100_i,     // CLK100MHZ, E3
     input  logic       rst_ni,       // ck_rst, the RESET button, C2
@@ -152,13 +153,22 @@ module arty_a7_top #(
   logic [3:0]   wx_row;
   logic [127:0] wx_w;
 
+  // the SoC's external window (EXT_EN): with it, a 16-word register file
+  logic [11:0] ext_awaddr, ext_araddr;
+  logic [31:0] ext_wdata, ext_rdata;
+  logic [3:0]  ext_wstrb;
+  logic [1:0]  ext_bresp, ext_rresp;
+  logic        ext_awvalid, ext_awready, ext_wvalid, ext_wready, ext_bvalid, ext_bready;
+  logic        ext_arvalid, ext_arready, ext_rvalid, ext_rready;
+
   soc #(
       .CLK_HZ    (CLK_HZ),
       .INIT_FILE (INIT_FILE),
       .TMR       (TMR),
       .M_EXT     (M_EXT),
       .ARRAY_CDC (ARRAY_CDC),
-      .RAM_WORDS (RAM_WORDS)
+      .RAM_WORDS (RAM_WORDS),
+      .EXT_EN    (EXT_EN)
   ) u_soc (
       .clk_i                   (clk),
       .rst_i                   (rst),
@@ -182,6 +192,23 @@ module arty_a7_top #(
       .led_o                   (led_o),
       .uart_tx_o               (uart_tx_o),
       .uart_rx_i               (uart_rx_i),
+      .ext_awaddr_o            (ext_awaddr),
+      .ext_awvalid_o           (ext_awvalid),
+      .ext_awready_i           (ext_awready),
+      .ext_wdata_o             (ext_wdata),
+      .ext_wstrb_o             (ext_wstrb),
+      .ext_wvalid_o            (ext_wvalid),
+      .ext_wready_i            (ext_wready),
+      .ext_bresp_i             (ext_bresp),
+      .ext_bvalid_i            (ext_bvalid),
+      .ext_bready_o            (ext_bready),
+      .ext_araddr_o            (ext_araddr),
+      .ext_arvalid_o           (ext_arvalid),
+      .ext_arready_i           (ext_arready),
+      .ext_rdata_i             (ext_rdata),
+      .ext_rresp_i             (ext_rresp),
+      .ext_rvalid_i            (ext_rvalid),
+      .ext_rready_o            (ext_rready),
       .dbg_if_id_pc_o          (if_id_pc),
       .dbg_if_id_instr_o       (if_id_instr),
       .dbg_id_ex_pc_o          (id_ex_pc),
@@ -196,6 +223,45 @@ module arty_a7_top #(
       .dbg_wb_rd_wdata_o       (wb_rd_wdata),
       .dbg_halt_o              (halt)
   );
+
+  if (EXT_EN) begin : g_ext
+    axil_regfile #(
+        .WORDS  (16),
+        .ADDR_W (12)
+    ) u_ext_regs (
+        .clk_i       (clk),
+        .rst_i       (rst),
+        .s_awaddr_i  (ext_awaddr),
+        .s_awvalid_i (ext_awvalid),
+        .s_awready_o (ext_awready),
+        .s_wdata_i   (ext_wdata),
+        .s_wstrb_i   (ext_wstrb),
+        .s_wvalid_i  (ext_wvalid),
+        .s_wready_o  (ext_wready),
+        .s_bresp_o   (ext_bresp),
+        .s_bvalid_o  (ext_bvalid),
+        .s_bready_i  (ext_bready),
+        .s_araddr_i  (ext_araddr),
+        .s_arvalid_i (ext_arvalid),
+        .s_arready_o (ext_arready),
+        .s_rdata_o   (ext_rdata),
+        .s_rresp_o   (ext_rresp),
+        .s_rvalid_o  (ext_rvalid),
+        .s_rready_i  (ext_rready)
+    );
+  end else begin : g_ext_none
+    assign ext_awready = 1'b0;
+    assign ext_wready  = 1'b0;
+    assign ext_bresp   = 2'b00;
+    assign ext_bvalid  = 1'b0;
+    assign ext_arready = 1'b0;
+    assign ext_rdata   = '0;
+    assign ext_rresp   = 2'b00;
+    assign ext_rvalid  = 1'b0;
+    logic unused_ext;
+    assign unused_ext = ^{ext_awaddr, ext_araddr, ext_wdata, ext_wstrb, ext_awvalid,
+                          ext_wvalid, ext_bready, ext_arvalid, ext_rready};
+  end
 
   // The probe nets. Their names are the probe names Hardware Manager shows
   // (prefixed g_ila.), so they are named after the pipeline register.

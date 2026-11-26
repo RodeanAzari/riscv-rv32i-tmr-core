@@ -30,7 +30,9 @@
 //                            registers at 0x2000_1000-0x2000_1FFF and its
 //                            buffers at 0x2010_0000 (A), 0x2010_4000 (W),
 //                            0x2010_8000 (C) (rtl/accel/gemm_accel.sv; the
-//                            DMA fills and empties them). Loads and stores
+//                            DMA fills and empties them); with EXT_EN, an
+//                            external AXI4-Lite slave at 0x2000_2000-
+//                            0x2000_2FFF (the ext_* ports). Loads and stores
 //                            here hold the core until the bus answers
 //                            (core_axil_bridge.sv); RAM and I/O never do.
 //
@@ -69,7 +71,12 @@ module soc #(
     parameter bit          ARRAY_CDC = 1'b0,
     // Weight-transform hook (gemm_accel WX_EXT, Phase H): with 1 the array
     // loads wx_w_i; with 0 (identity) wx_w_i is unused.
-    parameter bit          WX_EXT    = 1'b0
+    parameter bit          WX_EXT    = 1'b0,
+    // An external AXI4-Lite slave window at 0x2000_2000-0x2000_2FFF on the
+    // ext_* ports (fpga-coord 0014, P4's registers). With 0 the window
+    // answers DECERR like any unmapped address, the outputs are 0 and the
+    // inputs unused: the SoC is the one without the parameter.
+    parameter bit          EXT_EN    = 1'b0
 ) (
     input  logic       clk_i,
     input  logic       rst_i,
@@ -97,6 +104,26 @@ module soc #(
     output logic [3:0] led_o,
     output logic       uart_tx_o,
     input  logic       uart_rx_i,
+    // the external window (EXT_EN), an AXI4-Lite master on clk_i: the
+    // address is the offset in the window. A slave may hold READY low as
+    // long as it likes (the core waits); SLVERR or DECERR sets BUSERR.
+    output logic [11:0] ext_awaddr_o,
+    output logic        ext_awvalid_o,
+    input  logic        ext_awready_i,
+    output logic [31:0] ext_wdata_o,
+    output logic [3:0]  ext_wstrb_o,
+    output logic        ext_wvalid_o,
+    input  logic        ext_wready_i,
+    input  logic [1:0]  ext_bresp_i,
+    input  logic        ext_bvalid_i,
+    output logic        ext_bready_o,
+    output logic [11:0] ext_araddr_o,
+    output logic        ext_arvalid_o,
+    input  logic        ext_arready_i,
+    input  logic [31:0] ext_rdata_i,
+    input  logic [1:0]  ext_rresp_i,
+    input  logic        ext_rvalid_i,
+    output logic        ext_rready_o,
 
     // The core's pipeline registers and writeback, for the board top's ILA
     // (make impl ILA=1). Left open otherwise, and then trimmed.
@@ -131,6 +158,7 @@ module soc #(
   localparam int unsigned DMA_OFF_W = 12;      // the DMA's 4 KiB register window
   localparam int unsigned ACC_OFF_W = 12;      // the accelerator's, likewise
   localparam int unsigned ACC_BUF   = 16384;   // bytes per buffer (A, W, C)
+  localparam int unsigned EXT_OFF_W = 12;      // the external window, 4 KiB
 
   logic [31:0] imem_addr, imem_rdata;
   logic [31:0] dmem_addr, dmem_wdata, dmem_rdata;
@@ -358,11 +386,19 @@ module soc #(
   //            behind axi_to_axil
   //          2 the accelerator's registers (0x2000_1000-0x2000_1FFF), likewise
   //          3 the accelerator's buffers (0x2010_0000, four ACC_BUF slots)
+  //          4 with EXT_EN only: the external window (0x2000_2000-
+  //            0x2000_2FFF), AXI4-Lite behind axi_to_axil, on ext_*
   // anything else in the AXI region answers DECERR, and BUSERR shows it
-  localparam logic [127:0] XBAR_BASE = {32'h2010_0000, 32'h2000_1000,
-                                        32'h2000_0000, 32'h0000_0000};
-  localparam logic [127:0] XBAR_MASK = {~(32'(4 * ACC_BUF) - 32'd1), 32'hFFFF_F000,
-                                        32'hFFFF_F000, 32'hF000_0000};
+  localparam int unsigned  XM        = EXT_EN ? 5 : 4;   // the crossbar's slaves
+  localparam logic [127:0] XBAR_BASE4 = {32'h2010_0000, 32'h2000_1000,
+                                         32'h2000_0000, 32'h0000_0000};
+  localparam logic [127:0] XBAR_MASK4 = {~(32'(4 * ACC_BUF) - 32'd1), 32'hFFFF_F000,
+                                         32'hFFFF_F000, 32'hF000_0000};
+  // the five-slave map; without EXT_EN the crossbar takes the first four
+  localparam logic [159:0] XBAR_BASE5 = {32'h2000_2000, XBAR_BASE4};
+  localparam logic [159:0] XBAR_MASK5 = {32'hFFFF_F000, XBAR_MASK4};
+  localparam logic [XM*32-1:0] XBAR_BASE = XBAR_BASE5[XM*32-1:0];
+  localparam logic [XM*32-1:0] XBAR_MASK = XBAR_MASK5[XM*32-1:0];
 
   logic [1:0]        xm_arready, xm_awready, xm_wready, xm_rvalid, xm_rlast, xm_bvalid;
   logic [1:0][31:0]  xm_rdata;
@@ -404,11 +440,21 @@ module soc #(
   logic        xbuf_awvalid, xbuf_awready, xbuf_wlast, xbuf_wvalid, xbuf_wready;
   logic        xbuf_bvalid, xbuf_bready;
 
+  // the crossbar's slave side, slot s for slave s
+  logic [XM-1:0][31:0] xs_araddr, xs_awaddr, xs_wdata, xs_rdata;
+  logic [XM-1:0][7:0]  xs_arlen, xs_awlen;
+  logic [XM-1:0][2:0]  xs_arsize, xs_awsize;
+  logic [XM-1:0][1:0]  xs_arburst, xs_awburst, xs_rresp, xs_bresp;
+  logic [XM-1:0][3:0]  xs_wstrb;
+  logic [XM-1:0]       xs_arvalid, xs_arready, xs_rlast, xs_rvalid, xs_rready;
+  logic [XM-1:0]       xs_awvalid, xs_awready, xs_wlast, xs_wvalid, xs_wready;
+  logic [XM-1:0]       xs_bvalid, xs_bready;
+
   // its formal-only ports serve tb/formal/axi_xbar_formal.sv, not this top
   /* verilator lint_off PINCONNECTEMPTY */
   axi_xbar #(
       .N      (2),
-      .M      (4),
+      .M      (XM),
       .S_BASE (XBAR_BASE),
       .S_MASK (XBAR_MASK)
   ) u_xbar (
@@ -445,33 +491,60 @@ module soc #(
       .m_bresp_o   (xm_bresp),
       .m_bvalid_o  (xm_bvalid),
       .m_bready_i  ({dma_bready,  lite_bready}),
-      .s_araddr_o  ({xbuf_araddr, xacc_araddr, xreg_araddr,  xram_araddr}),
-      .s_arlen_o   ({xbuf_arlen, xacc_arlen, xreg_arlen,   xram_arlen}),
-      .s_arsize_o  ({xbuf_arsize, xacc_arsize, xreg_arsize,  xram_arsize}),
-      .s_arburst_o ({xbuf_arburst, xacc_arburst, xreg_arburst, xram_arburst}),
-      .s_arvalid_o ({xbuf_arvalid, xacc_arvalid, xreg_arvalid, xram_arvalid}),
-      .s_arready_i ({xbuf_arready, xacc_arready, xreg_arready, xram_arready}),
-      .s_rdata_i   ({xbuf_rdata, xacc_rdata, xreg_rdata,   xram_rdata}),
-      .s_rresp_i   ({xbuf_rresp, xacc_rresp, xreg_rresp,   xram_rresp}),
-      .s_rlast_i   ({xbuf_rlast, xacc_rlast, xreg_rlast,   xram_rlast}),
-      .s_rvalid_i  ({xbuf_rvalid, xacc_rvalid, xreg_rvalid,  xram_rvalid}),
-      .s_rready_o  ({xbuf_rready, xacc_rready, xreg_rready,  xram_rready}),
-      .s_awaddr_o  ({xbuf_awaddr, xacc_awaddr, xreg_awaddr,  xram_awaddr}),
-      .s_awlen_o   ({xbuf_awlen, xacc_awlen, xreg_awlen,   xram_awlen}),
-      .s_awsize_o  ({xbuf_awsize, xacc_awsize, xreg_awsize,  xram_awsize}),
-      .s_awburst_o ({xbuf_awburst, xacc_awburst, xreg_awburst, xram_awburst}),
-      .s_awvalid_o ({xbuf_awvalid, xacc_awvalid, xreg_awvalid, xram_awvalid}),
-      .s_awready_i ({xbuf_awready, xacc_awready, xreg_awready, xram_awready}),
-      .s_wdata_o   ({xbuf_wdata, xacc_wdata, xreg_wdata,   xram_wdata}),
-      .s_wstrb_o   ({xbuf_wstrb, xacc_wstrb, xreg_wstrb,   xram_wstrb}),
-      .s_wlast_o   ({xbuf_wlast, xacc_wlast, xreg_wlast,   xram_wlast}),
-      .s_wvalid_o  ({xbuf_wvalid, xacc_wvalid, xreg_wvalid,  xram_wvalid}),
-      .s_wready_i  ({xbuf_wready, xacc_wready, xreg_wready,  xram_wready}),
-      .s_bresp_i   ({xbuf_bresp, xacc_bresp, xreg_bresp,   xram_bresp}),
-      .s_bvalid_i  ({xbuf_bvalid, xacc_bvalid, xreg_bvalid,  xram_bvalid}),
-      .s_bready_o  ({xbuf_bready, xacc_bready, xreg_bready,  xram_bready})
+      .s_araddr_o  (xs_araddr),
+      .s_arlen_o   (xs_arlen),
+      .s_arsize_o  (xs_arsize),
+      .s_arburst_o (xs_arburst),
+      .s_arvalid_o (xs_arvalid),
+      .s_arready_i (xs_arready),
+      .s_rdata_i   (xs_rdata),
+      .s_rresp_i   (xs_rresp),
+      .s_rlast_i   (xs_rlast),
+      .s_rvalid_i  (xs_rvalid),
+      .s_rready_o  (xs_rready),
+      .s_awaddr_o  (xs_awaddr),
+      .s_awlen_o   (xs_awlen),
+      .s_awsize_o  (xs_awsize),
+      .s_awburst_o (xs_awburst),
+      .s_awvalid_o (xs_awvalid),
+      .s_awready_i (xs_awready),
+      .s_wdata_o   (xs_wdata),
+      .s_wstrb_o   (xs_wstrb),
+      .s_wlast_o   (xs_wlast),
+      .s_wvalid_o  (xs_wvalid),
+      .s_wready_i  (xs_wready),
+      .s_bresp_i   (xs_bresp),
+      .s_bvalid_i  (xs_bvalid),
+      .s_bready_o  (xs_bready)
   );
   /* verilator lint_on PINCONNECTEMPTY */
+
+  // slots 0-3, the four slaves every build has
+  assign {xbuf_araddr, xacc_araddr, xreg_araddr, xram_araddr} = xs_araddr[3:0];
+  assign {xbuf_arlen, xacc_arlen, xreg_arlen, xram_arlen} = xs_arlen[3:0];
+  assign {xbuf_arsize, xacc_arsize, xreg_arsize, xram_arsize} = xs_arsize[3:0];
+  assign {xbuf_arburst, xacc_arburst, xreg_arburst, xram_arburst} = xs_arburst[3:0];
+  assign {xbuf_arvalid, xacc_arvalid, xreg_arvalid, xram_arvalid} = xs_arvalid[3:0];
+  assign xs_arready[3:0] = {xbuf_arready, xacc_arready, xreg_arready, xram_arready};
+  assign xs_rdata[3:0] = {xbuf_rdata, xacc_rdata, xreg_rdata, xram_rdata};
+  assign xs_rresp[3:0] = {xbuf_rresp, xacc_rresp, xreg_rresp, xram_rresp};
+  assign xs_rlast[3:0] = {xbuf_rlast, xacc_rlast, xreg_rlast, xram_rlast};
+  assign xs_rvalid[3:0] = {xbuf_rvalid, xacc_rvalid, xreg_rvalid, xram_rvalid};
+  assign {xbuf_rready, xacc_rready, xreg_rready, xram_rready} = xs_rready[3:0];
+  assign {xbuf_awaddr, xacc_awaddr, xreg_awaddr, xram_awaddr} = xs_awaddr[3:0];
+  assign {xbuf_awlen, xacc_awlen, xreg_awlen, xram_awlen} = xs_awlen[3:0];
+  assign {xbuf_awsize, xacc_awsize, xreg_awsize, xram_awsize} = xs_awsize[3:0];
+  assign {xbuf_awburst, xacc_awburst, xreg_awburst, xram_awburst} = xs_awburst[3:0];
+  assign {xbuf_awvalid, xacc_awvalid, xreg_awvalid, xram_awvalid} = xs_awvalid[3:0];
+  assign xs_awready[3:0] = {xbuf_awready, xacc_awready, xreg_awready, xram_awready};
+  assign {xbuf_wdata, xacc_wdata, xreg_wdata, xram_wdata} = xs_wdata[3:0];
+  assign {xbuf_wstrb, xacc_wstrb, xreg_wstrb, xram_wstrb} = xs_wstrb[3:0];
+  assign {xbuf_wlast, xacc_wlast, xreg_wlast, xram_wlast} = xs_wlast[3:0];
+  assign {xbuf_wvalid, xacc_wvalid, xreg_wvalid, xram_wvalid} = xs_wvalid[3:0];
+  assign xs_wready[3:0] = {xbuf_wready, xacc_wready, xreg_wready, xram_wready};
+  assign xs_bresp[3:0] = {xbuf_bresp, xacc_bresp, xreg_bresp, xram_bresp};
+  assign xs_bvalid[3:0] = {xbuf_bvalid, xacc_bvalid, xreg_bvalid, xram_bvalid};
+  assign {xbuf_bready, xacc_bready, xreg_bready, xram_bready} = xs_bready[3:0];
 
   assign lite_arready = xm_arready[0];
   assign lite_awready = xm_awready[0];
@@ -502,6 +575,15 @@ module soc #(
   axi_to_axil u_reg_conv (
       .clk_i       (clk_i),
       .rst_i       (rst_i),
+`ifdef FORMAL
+      // formal-only, for tb/formal/axi_to_axil_formal.sv
+      /* verilator lint_off PINCONNECTEMPTY */
+      .f_state_o   (),
+      .f_left_o    (),
+      .f_aw_done_o (),
+      .f_w_done_o  (),
+      /* verilator lint_on PINCONNECTEMPTY */
+`endif
       .s_araddr_i  (xreg_araddr),
       .s_arlen_i   (xreg_arlen),
       .s_arsize_i  (xreg_arsize),
@@ -613,6 +695,15 @@ module soc #(
   axi_to_axil u_acc_conv (
       .clk_i       (clk_i),
       .rst_i       (rst_i),
+`ifdef FORMAL
+      // formal-only, for tb/formal/axi_to_axil_formal.sv
+      /* verilator lint_off PINCONNECTEMPTY */
+      .f_state_o   (),
+      .f_left_o    (),
+      .f_aw_done_o (),
+      .f_w_done_o  (),
+      /* verilator lint_on PINCONNECTEMPTY */
+`endif
       .s_araddr_i  (xacc_araddr),
       .s_arlen_i   (xacc_arlen),
       .s_arsize_i  (xacc_arsize),
@@ -759,6 +850,87 @@ module soc #(
 
   logic unused_acc;
   assign unused_acc = ^{acc_awaddr[31:ACC_OFF_W], acc_araddr[31:ACC_OFF_W]};
+
+  // slave 4 (EXT_EN): the external window, AXI4-Lite on the ext_* ports,
+  // the address its offset ([11:0]; the crossbar decoded the rest)
+  if (EXT_EN) begin : g_ext
+    logic [31:0] ext_awaddr, ext_araddr;
+
+    axi_to_axil u_ext_conv (
+        .clk_i       (clk_i),
+        .rst_i       (rst_i),
+`ifdef FORMAL
+        // formal-only, for tb/formal/axi_to_axil_formal.sv
+        /* verilator lint_off PINCONNECTEMPTY */
+        .f_state_o   (),
+        .f_left_o    (),
+        .f_aw_done_o (),
+        .f_w_done_o  (),
+        /* verilator lint_on PINCONNECTEMPTY */
+`endif
+        .s_araddr_i  (xs_araddr[XM-1]),
+        .s_arlen_i   (xs_arlen[XM-1]),
+        .s_arsize_i  (xs_arsize[XM-1]),
+        .s_arburst_i (xs_arburst[XM-1]),
+        .s_arvalid_i (xs_arvalid[XM-1]),
+        .s_arready_o (xs_arready[XM-1]),
+        .s_rdata_o   (xs_rdata[XM-1]),
+        .s_rresp_o   (xs_rresp[XM-1]),
+        .s_rlast_o   (xs_rlast[XM-1]),
+        .s_rvalid_o  (xs_rvalid[XM-1]),
+        .s_rready_i  (xs_rready[XM-1]),
+        .s_awaddr_i  (xs_awaddr[XM-1]),
+        .s_awlen_i   (xs_awlen[XM-1]),
+        .s_awsize_i  (xs_awsize[XM-1]),
+        .s_awburst_i (xs_awburst[XM-1]),
+        .s_awvalid_i (xs_awvalid[XM-1]),
+        .s_awready_o (xs_awready[XM-1]),
+        .s_wdata_i   (xs_wdata[XM-1]),
+        .s_wstrb_i   (xs_wstrb[XM-1]),
+        .s_wlast_i   (xs_wlast[XM-1]),
+        .s_wvalid_i  (xs_wvalid[XM-1]),
+        .s_wready_o  (xs_wready[XM-1]),
+        .s_bresp_o   (xs_bresp[XM-1]),
+        .s_bvalid_o  (xs_bvalid[XM-1]),
+        .s_bready_i  (xs_bready[XM-1]),
+        .m_awaddr_o  (ext_awaddr),
+        .m_awvalid_o (ext_awvalid_o),
+        .m_awready_i (ext_awready_i),
+        .m_wdata_o   (ext_wdata_o),
+        .m_wstrb_o   (ext_wstrb_o),
+        .m_wvalid_o  (ext_wvalid_o),
+        .m_wready_i  (ext_wready_i),
+        .m_bresp_i   (ext_bresp_i),
+        .m_bvalid_i  (ext_bvalid_i),
+        .m_bready_o  (ext_bready_o),
+        .m_araddr_o  (ext_araddr),
+        .m_arvalid_o (ext_arvalid_o),
+        .m_arready_i (ext_arready_i),
+        .m_rdata_i   (ext_rdata_i),
+        .m_rresp_i   (ext_rresp_i),
+        .m_rvalid_i  (ext_rvalid_i),
+        .m_rready_o  (ext_rready_o)
+    );
+    assign ext_awaddr_o = ext_awaddr[EXT_OFF_W-1:0];
+    assign ext_araddr_o = ext_araddr[EXT_OFF_W-1:0];
+
+    logic unused_ext;
+    assign unused_ext = ^{ext_awaddr[31:EXT_OFF_W], ext_araddr[31:EXT_OFF_W]};
+  end else begin : g_ext_none
+    assign ext_awaddr_o  = '0;
+    assign ext_awvalid_o = 1'b0;
+    assign ext_wdata_o   = '0;
+    assign ext_wstrb_o   = '0;
+    assign ext_wvalid_o  = 1'b0;
+    assign ext_bready_o  = 1'b0;
+    assign ext_araddr_o  = '0;
+    assign ext_arvalid_o = 1'b0;
+    assign ext_rready_o  = 1'b0;
+
+    logic unused_ext;
+    assign unused_ext = ^{ext_awready_i, ext_wready_i, ext_bresp_i, ext_bvalid_i,
+                          ext_arready_i, ext_rdata_i, ext_rresp_i, ext_rvalid_i};
+  end
 
   // the DMA's way into RAM: port B when the core leaves it free
   logic              core_port_busy, dma_ram_en;

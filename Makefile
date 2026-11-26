@@ -67,6 +67,8 @@ lint:
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -GARRAY_CDC=1 $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -GARRAY_CDC=1 -GTMR=1 -GM_EXT=1 -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -GM_EXT=1 -GRAM_WORDS=98304 $(RTL) $(XILINX_MODELS)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -GEXT_EN=1 $(RTL) $(XILINX_MODELS)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -GEXT_EN=1 -GTMR=1 -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr -DRISCV_FORMAL -DFORMAL $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core -GMEM_WAIT=1 $(RTL)
@@ -308,6 +310,14 @@ apps: $(FW_BUILD)/boot_dma_sim.hex
 # self-test saved, reached with r.
 $(FW_BUILD)/boot_dma_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/dmatest.bin scripts/mkimage.py
 	python3 scripts/mkimage.py $(FW_BUILD)/boot.bin $(FW_BUILD)/apps/dmatest.bin $@
+
+# For simulation (tb/cocotb/test_ext.py): the bootloader with the external
+# window's self-test (sw/apps/exttest.c; soc EXT_EN, fpga-coord 0014) saved,
+# reached with r.
+apps: $(FW_BUILD)/boot_ext_sim.hex
+
+$(FW_BUILD)/boot_ext_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/exttest.bin scripts/mkimage.py
+	python3 scripts/mkimage.py $(FW_BUILD)/boot.bin $(FW_BUILD)/apps/exttest.bin $@
 
 # The GEMM accelerator self-test (sw/apps/gemmtest.c) with its driver
 # (sw/lib/gemm.c), which moves the matrices with the DMA driver, and the
@@ -633,8 +643,11 @@ BIT := syn/build/board/arty_a7_top.bit
 # sw/build/coremark_m.hex for RV32IM CoreMark. CDC=1 puts the systolic array
 # on its own clock from a second MMCM (ARRAY_CDC, Phase H), reports
 # *_board[_tmr][_m]_cdc.*. LLM=1 gives the RAM 384 KiB for the tiny-LLM
-# demo (sw/llm/; with M=1), its own bootloader, reports *_llm.*.
+# demo (sw/llm/; with M=1), its own bootloader, reports *_llm.*. EXT=1 adds
+# the SoC's external window (EXT_EN, fpga-coord 0014) with a 16-word register
+# file on it, reports *_ext.*.
 LLM      ?= 0
+EXT      ?= 0
 FW_IMAGE ?= $(FW_BUILD)/$(if $(filter 1,$(LLM)),boot_llm,boot).hex
 ILA      ?= 0
 TMR      ?= 0
@@ -642,7 +655,7 @@ CDC      ?= 0
 
 impl: $(FW_IMAGE)
 	$(VIVADO) -mode batch -nojournal -notrace \
-		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA) $(TMR) $(M) $(CDC) $(LLM)
+		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA) $(TMR) $(M) $(CDC) $(LLM) $(EXT)
 
 # Two routes, picked per session (docs/vivado-setup.md section 6). If the Arty
 # is attached to WSL with usbipd-win (FTDI 0403:6010 visible here), program it
