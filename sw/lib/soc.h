@@ -34,7 +34,9 @@
 /* RAM layout, shared with sw/boot/link.ld and sw/app/link.ld. The last words
  * below BOOT_END hold the last good image's length and CRC, so RESET can
  * rerun it; nothing else touches them. */
+#ifndef RAM_END                      /* the LLM build passes 0x60000u */
 #define RAM_END     0x8000u
+#endif
 #define BOOT_END    0x1000u
 #define APP_BASE    BOOT_END
 #define APP_MAX     (RAM_END - APP_BASE)

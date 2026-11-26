@@ -40,7 +40,8 @@ module arty_a7_top #(
     parameter bit    ILA       = 1'b0,
     parameter bit    TMR       = 1'b0,    // three voted cores: soc.sv, make impl TMR=1
     parameter bit    M_EXT     = 1'b0,    // RV32IM core(s): make impl M=1
-    parameter bit    ARRAY_CDC = 1'b0     // the array on clk_array: make impl CDC=1
+    parameter bit    ARRAY_CDC = 1'b0,    // the array on clk_array: make impl CDC=1
+    parameter int unsigned RAM_WORDS = 8192 // 32 KiB; 98304 (384 KiB): make impl LLM=1
 ) (
     input  logic       clk100_i,     // CLK100MHZ, E3
     input  logic       rst_ni,       // ck_rst, the RESET button, C2
@@ -156,7 +157,8 @@ module arty_a7_top #(
       .INIT_FILE (INIT_FILE),
       .TMR       (TMR),
       .M_EXT     (M_EXT),
-      .ARRAY_CDC (ARRAY_CDC)
+      .ARRAY_CDC (ARRAY_CDC),
+      .RAM_WORDS (RAM_WORDS)
   ) u_soc (
       .clk_i                   (clk),
       .rst_i                   (rst),

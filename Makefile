@@ -66,6 +66,7 @@ lint:
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -GARRAY_CDC=1 $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -GARRAY_CDC=1 -GTMR=1 -GM_EXT=1 -DRISCV_FORMAL -DFORMAL $(RTL) $(XILINX_MODELS)
+	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module arty_a7_top -GM_EXT=1 -GRAM_WORDS=98304 $(RTL) $(XILINX_MODELS)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core_tmr -DRISCV_FORMAL -DFORMAL $(RTL)
 	verilator --lint-only -Wall $(LINT_WAIVERS) --top-module riscv_core -GMEM_WAIT=1 $(RTL)
@@ -95,7 +96,7 @@ lint:
 
 # --- simulation ------------------------------------------------------------
 .PHONY: sim
-sim: gemm-model dma-model accel-model
+sim: gemm-model dma-model accel-model llm-model llm-host
 	$(MAKE) -C tb/cocotb
 
 # The systolic array's golden model (sw/model/gemm_model.py) checks itself
@@ -332,6 +333,67 @@ $(FW_BUILD)/apps/matbench_m.elf: $(MATBENCH_DEPS)
 	$(RISCV_PREFIX)gcc $(subst -march=rv32i ,-march=rv32im ,$(APP_CFLAGS)) -I$(DMA_INC) -o $@ $(MATBENCH_SRCS) -lgcc
 
 apps: $(FW_BUILD)/apps/matbench_m.bin
+
+# The tiny-LLM demo (Phase H; sw/llm/, golden model sw/model/llm_model.py):
+# llama2.c's stories260K, integer only. The weights are fetched once from
+# Karpathy's tinyllamas (MIT) into sw/build/llm/ and checked by SHA-256 in
+# the model; `llm_model.py export` turns them into the blob the firmware
+# links, its header, and the vectors it must reproduce.
+#   make llm-model  the integer model against float (and float against
+#                   llama2.c's run.c, by its recorded tokens)
+#   make llm-host   sw/llm/llm.c built natively, bit-exact with the model
+#   make llm        the board program (sw/build/llm/llm.bin, for the LLM
+#                   build: make impl M=1 LLM=1) and its simulation image
+LLM_DIR  := $(FW_BUILD)/llm
+LLM_URL  := https://huggingface.co/karpathy/tinyllamas/resolve/main/stories260K
+LLM_GEN  := $(LLM_DIR)/llm_blob.bin $(LLM_DIR)/llm_blob.h $(LLM_DIR)/llm_vectors.txt
+LLM_SRCS := sw/app/crt0.S sw/lib/io.c sw/lib/dma.c sw/lib/gemm.c sw/llm/llm.c \
+            sw/llm/llm_app.c sw/llm/llm_blob.S
+LLM_DEPS := $(LLM_SRCS) sw/llm/llm.h sw/llm/link.ld sw/lib/gemm.h sw/lib/dma.h \
+            sw/lib/io.h sw/lib/soc.h $(DMA_INC)/dmaeng_regs.h $(LLM_GEN)
+LLM_CFLAGS := $(subst -march=rv32i ,-march=rv32im ,$(filter-out -Tsw/app/link.ld,$(APP_CFLAGS))) \
+              -Tsw/llm/link.ld -Isw/llm -I$(LLM_DIR) -Wa,-I$(LLM_DIR) -I$(DMA_INC)
+# The LLM build's RAM: 384 KiB, RAM_WORDS 98304 (make impl LLM=1).
+LLM_RAM_END := 0x60000u
+
+$(LLM_DIR)/stories260K.bin $(LLM_DIR)/tok512.bin:
+	@mkdir -p $(@D)
+	curl -fsSL -o $@ $(LLM_URL)/$(@F)
+
+$(LLM_GEN) &: sw/model/llm_model.py $(LLM_DIR)/stories260K.bin $(LLM_DIR)/tok512.bin
+	$(GEMM_PY) sw/model/llm_model.py export $(LLM_DIR) $(LLM_DIR)
+
+.PHONY: llm-model llm-host llm
+llm-model: $(LLM_DIR)/stories260K.bin $(LLM_DIR)/tok512.bin
+	$(GEMM_PY) sw/model/llm_model.py check $(LLM_DIR)
+
+$(LLM_DIR)/llm_host: sw/llm/llm_host.c sw/llm/llm.c sw/llm/llm.h sw/llm/llm_blob.S $(LLM_GEN)
+	$(CC) -O2 -Wall -Wextra -Werror -Isw/llm -I$(LLM_DIR) -Wa,-I$(LLM_DIR) -o $@ sw/llm/llm_host.c sw/llm/llm_blob.S
+
+llm-host: $(LLM_DIR)/llm_host
+	$(LLM_DIR)/llm_host > $(LLM_DIR)/llm_host.txt
+	grep -v '^#' $(LLM_DIR)/llm_vectors.txt | diff - $(LLM_DIR)/llm_host.txt
+	@echo "llm-host: bit-exact with the golden model"
+
+llm: $(LLM_DIR)/llm.bin $(FW_BUILD)/boot_llm.hex $(FW_BUILD)/boot_llm_sim.hex
+
+$(LLM_DIR)/llm.elf: $(LLM_DEPS)
+	$(RISCV_PREFIX)gcc $(LLM_CFLAGS) -o $@ $(LLM_SRCS) -lgcc
+
+# For simulation (tb/cocotb/test_llm.py): three positions per run.
+$(LLM_DIR)/llm_sim.elf: $(LLM_DEPS)
+	$(RISCV_PREFIX)gcc $(LLM_CFLAGS) -DLLM_RUN_POS=3 -o $@ $(LLM_SRCS) -lgcc
+
+$(LLM_DIR)/%.bin: $(LLM_DIR)/%.elf
+	$(RISCV_PREFIX)objcopy -O binary $< $@
+
+# The bootloader for the LLM build: the same source, told the RAM's size.
+$(FW_BUILD)/boot_llm.elf: sw/boot/boot.c sw/boot/crt0.S sw/boot/link.ld sw/lib/soc.h
+	@mkdir -p $(FW_BUILD)
+	$(RISCV_PREFIX)gcc $(BOOT_CFLAGS) -DRAM_END=$(LLM_RAM_END) -o $@ sw/boot/crt0.S sw/boot/boot.c
+
+$(FW_BUILD)/boot_llm_sim.hex: $(FW_BUILD)/boot_llm.hex $(LLM_DIR)/llm_sim.bin scripts/mkimage.py
+	python3 scripts/mkimage.py $(FW_BUILD)/boot_llm.bin $(LLM_DIR)/llm_sim.bin $@
 
 # For simulation (tb/cocotb/test_gemm.py): the bootloader with gemmtest saved.
 $(FW_BUILD)/boot_gemm_sim.hex: $(FW_BUILD)/boot.hex $(FW_BUILD)/apps/gemmtest.bin scripts/mkimage.py
@@ -570,15 +632,17 @@ BIT := syn/build/board/arty_a7_top.bit
 # builds RV32IM core(s), reports *_board[_tmr]_m.*: with FW_IMAGE=
 # sw/build/coremark_m.hex for RV32IM CoreMark. CDC=1 puts the systolic array
 # on its own clock from a second MMCM (ARRAY_CDC, Phase H), reports
-# *_board[_tmr][_m]_cdc.*.
-FW_IMAGE ?= $(FW_BUILD)/boot.hex
+# *_board[_tmr][_m]_cdc.*. LLM=1 gives the RAM 384 KiB for the tiny-LLM
+# demo (sw/llm/; with M=1), its own bootloader, reports *_llm.*.
+LLM      ?= 0
+FW_IMAGE ?= $(FW_BUILD)/$(if $(filter 1,$(LLM)),boot_llm,boot).hex
 ILA      ?= 0
 TMR      ?= 0
 CDC      ?= 0
 
 impl: $(FW_IMAGE)
 	$(VIVADO) -mode batch -nojournal -notrace \
-		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA) $(TMR) $(M) $(CDC)
+		-source syn/impl_arty.tcl -tclargs $(PART) $(FW_IMAGE) $(ILA) $(TMR) $(M) $(CDC) $(LLM)
 
 # Two routes, picked per session (docs/vivado-setup.md section 6). If the Arty
 # is attached to WSL with usbipd-win (FTDI 0403:6010 visible here), program it

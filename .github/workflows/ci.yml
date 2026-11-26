@@ -70,6 +70,18 @@ jobs:
       - name: Lint RTL
         run: make lint
 
+      # The tiny-LLM demo's weights (stories260K, 1 MB, from Hugging Face),
+      # fetched by `make llm` on a miss. sw/model/llm_model.py checks them by
+      # SHA-256 on every use, so a stale restore fails loudly.
+      - name: Cache LLM weights
+        uses: actions/cache@v4
+        with:
+          path: |
+            sw/build/llm/stories260K.bin
+            sw/build/llm/tok512.bin
+          key: llm-weights-${{ hashFiles('sw/model/llm_model.py') }}
+          restore-keys: llm-weights-
+
       - name: Run regression
         run: make sim
 

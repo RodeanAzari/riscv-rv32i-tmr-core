@@ -1,6 +1,6 @@
 # Board-level synthesis, implementation and bitstream for the Arty A7-100T.
 #
-#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila] [tmr] [m] [cdc]
+#   vivado -mode batch -source syn/impl_arty.tcl -tclargs <part> <hex> [ila] [tmr] [m] [cdc] [llm]
 #
 # Top: rtl/top/arty_a7_top.sv, pins in constr/arty_a7.xdc, the RAM loaded
 # from <hex> (sw/build/hello.hex, from `make fw`). Unlike synth_ooc.tcl this
@@ -36,6 +36,11 @@ if {$m} { set sfx "${sfx}_m" }
 # or there is no bitstream.
 set cdc  [expr {[lindex $argv 5] eq "1"}]
 if {$cdc} { set sfx "${sfx}_cdc" }
+# llm = 1: 384 KiB of RAM (RAM_WORDS 98304) for the tiny-LLM demo (Phase H,
+# sw/llm/), reports *_board[_tmr][_m][_cdc]_llm.*
+set llm  [expr {[lindex $argv 6] eq "1"}]
+if {$llm} { set sfx "${sfx}_llm" }
+set ram_words [expr {$llm ? 98304 : 8192}]
 if {$part eq ""} { set part xc7a100tcsg324-1 }
 
 set top     arty_a7_top
@@ -76,7 +81,8 @@ read_verilog -sv $sv
 read_xdc [file join $repo constr arty_a7.xdc]
 
 synth_design -top $top -part $part -generic "INIT_FILE=\"$hex\"" -generic "ILA=$ila" \
-    -generic "TMR=$tmr" -generic "M_EXT=$m" -generic "ARRAY_CDC=$cdc"
+    -generic "TMR=$tmr" -generic "M_EXT=$m" -generic "ARRAY_CDC=$cdc" \
+    -generic "RAM_WORDS=$ram_words"
 if {$cdc} {
     # names synthesized cells, so after synthesis (implementation uses it)
     read_xdc [file join $repo constr accel_cdc.xdc]
@@ -124,6 +130,13 @@ write_checkpoint -force [file join $rundir post_synth.dcp]
 opt_design
 place_design
 route_design
+# Only when routing leaves setup slack negative (first needed by the LLM
+# build: -0.005 ns in the DMA engine's burst arithmetic with 89% of the BRAM
+# used). A build that meets timing runs exactly the steps it always did.
+set post_route_phys_opt [expr {[get_property SLACK [get_timing_paths -max_paths 1 -setup]] < 0}]
+if {$post_route_phys_opt} {
+    phys_opt_design
+}
 write_checkpoint -force [file join $rundir post_route.dcp]
 
 report_utilization    -file [file join $reports utilization$sfx.rpt]
@@ -182,7 +195,7 @@ foreach {label group total} [list \
 set fh [open [file join $reports summary$sfx.txt] w]
 foreach out [list stdout $fh] {
     puts $out ""
-    puts $out "=== arty_a7_top ([expr {$tmr ? "TMR core" : "core"}] + 32 KiB RAM + LED + UART[expr {$ila ? " + ILA" : ""}]), board-level, post-route ==="
+    puts $out "=== arty_a7_top ([expr {$tmr ? "TMR core" : "core"}] + [expr {$ram_words * 4 / 1024}] KiB RAM + LED + UART[expr {$ila ? " + ILA" : ""}]), board-level, post-route ==="
     puts $out [format "part            %s" $part]
     puts $out [format "core clock      %s, %.3f ns (%.1f MHz), MMCM from 100 MHz" \
                [get_property NAME $clk] $period [expr {1000.0/$period}]]
@@ -191,6 +204,9 @@ foreach out [list stdout $fh] {
     puts $out [format "Fmax (core clk) %.1f MHz" $fmax]
     puts $out [format "worst setup     %.3f ns (all clocks)" $worst]
     puts $out [format "worst hold      %.3f ns (all clocks)" $hold]
+    if {$post_route_phys_opt} {
+        puts $out "post-route      phys_opt_design (route alone left setup slack negative)"
+    }
     if {$cdc} {
         puts $out [format "array clock     %s, %.3f ns, its own MMCM from 100 MHz" \
                    [get_property NAME $aclk] [get_property PERIOD $aclk]]
