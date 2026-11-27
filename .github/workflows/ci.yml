@@ -14,7 +14,7 @@ env:
   OSS_CAD_SUITE_DATE: 2026-10-07
 
 jobs:
-  # The regression in three parallel shards (tb/cocotb/Makefile, SHARD):
+  # The regression in four parallel shards (tb/cocotb/Makefile, SHARD):
   # as one job it ran 2-4 h against GitHub's 6 h job limit. fail-fast off so
   # one shard's failure never cancels the others' results.
   verilate:
@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     name: verilate (shard ${{ matrix.shard }})
     steps:
       # The official test suite is a submodule pinned to one commit.
@@ -75,9 +75,9 @@ jobs:
       - name: Install cocotb
         run: pip install -r tb/cocotb/requirements.txt
 
-      # Once, on the shortest shard.
+      # Once, in the lightest shard.
       - name: Lint RTL
-        if: matrix.shard == 2
+        if: matrix.shard == 4
         run: make lint
 
       # The tiny-LLM demo's weights (stories260K, 1 MB, from Hugging Face),

@@ -298,22 +298,25 @@ ifdef TEST_ONE
   include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim
 else
 
-# SHARD=1|2|3 runs one part of TESTS, so CI can run the three in parallel
-# jobs (one job ran 2-4 h against GitHub's 6 h limit). Split by measured run
-# time (desktop, 2026-11-26): shard 1 ~88 min, 2 ~66 min, 3 ~75 min. Shard 3
-# is everything not in 1 or 2, so a new entry is never left out of CI.
+# SHARD=1..4 runs one part of TESTS, so CI can run the four in parallel
+# jobs (one job ran 2-4 h against GitHub's 6 h limit). Split by measured
+# wall time per entry in CI, Verilator build included (run 46034758950,
+# 2026-11-27): about 50, 50, 45 and 42 min. Shard 3 is everything not in
+# 1, 2 or 4, so a new entry is never left out of CI.
 SHARD_1 := soc_cdc:test_demo
-SHARD_2 := soc:test_demo soc_llm:test_llm
-SHARD_3 := $(filter-out $(SHARD_1) $(SHARD_2),$(TESTS))
-ifneq ($(filter-out $(TESTS),$(SHARD_1) $(SHARD_2)),)
-  $(error SHARD_1/SHARD_2 name entries not in TESTS: $(filter-out $(TESTS),$(SHARD_1) $(SHARD_2)))
+SHARD_2 := soc:test_demo soc_llm:test_llm soc_cdc:test_boot soc_cdc:test_coremark
+SHARD_4 := soc_tmr:test_demo soc_tmr:test_boot soc_tmr_cdc:test_gemm soc:test_boot \
+           soc_cdc:test_gemm
+SHARD_3 := $(filter-out $(SHARD_1) $(SHARD_2) $(SHARD_4),$(TESTS))
+ifneq ($(filter-out $(TESTS),$(SHARD_1) $(SHARD_2) $(SHARD_4)),)
+  $(error SHARD_1/2/4 name entries not in TESTS: $(filter-out $(TESTS),$(SHARD_1) $(SHARD_2) $(SHARD_4)))
 endif
 ifeq ($(SHARD),)
   RUN_TESTS := $(TESTS)
-else ifneq ($(filter $(SHARD),1 2 3),)
+else ifneq ($(filter $(SHARD),1 2 3 4),)
   RUN_TESTS := $(SHARD_$(SHARD))
 else
-  $(error SHARD must be 1, 2 or 3, not '$(SHARD)')
+  $(error SHARD must be 1, 2, 3 or 4, not '$(SHARD)')
 endif
 
 # Run every entry even if an earlier one fails, then fail if any did -- a
