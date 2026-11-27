@@ -298,6 +298,24 @@ ifdef TEST_ONE
   include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim
 else
 
+# SHARD=1|2|3 runs one part of TESTS, so CI can run the three in parallel
+# jobs (one job ran 2-4 h against GitHub's 6 h limit). Split by measured run
+# time (desktop, 2026-11-26): shard 1 ~88 min, 2 ~66 min, 3 ~75 min. Shard 3
+# is everything not in 1 or 2, so a new entry is never left out of CI.
+SHARD_1 := soc_cdc:test_demo
+SHARD_2 := soc:test_demo soc_llm:test_llm
+SHARD_3 := $(filter-out $(SHARD_1) $(SHARD_2),$(TESTS))
+ifneq ($(filter-out $(TESTS),$(SHARD_1) $(SHARD_2)),)
+  $(error SHARD_1/SHARD_2 name entries not in TESTS: $(filter-out $(TESTS),$(SHARD_1) $(SHARD_2)))
+endif
+ifeq ($(SHARD),)
+  RUN_TESTS := $(TESTS)
+else ifneq ($(filter $(SHARD),1 2 3),)
+  RUN_TESTS := $(SHARD_$(SHARD))
+else
+  $(error SHARD must be 1, 2 or 3, not '$(SHARD)')
+endif
+
 # Run every entry even if an earlier one fails, then fail if any did -- a
 # regression should report all the broken things in one pass, not just the
 # first.
@@ -305,7 +323,7 @@ else
 all:
 	$(MAKE) --no-print-directory -C $(REPO) fw bench boot apps llm
 	@rc=0; \
-	for t in $(TESTS); do \
+	for t in $(RUN_TESTS); do \
 	  echo "=== $$t ==="; \
 	  $(MAKE) --no-print-directory TEST_ONE=$$t || rc=1; \
 	done; \

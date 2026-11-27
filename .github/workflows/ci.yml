@@ -14,8 +14,16 @@ env:
   OSS_CAD_SUITE_DATE: 2026-10-07
 
 jobs:
+  # The regression in three parallel shards (tb/cocotb/Makefile, SHARD):
+  # as one job it ran 2-4 h against GitHub's 6 h job limit. fail-fast off so
+  # one shard's failure never cancels the others' results.
   verilate:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    name: verilate (shard ${{ matrix.shard }})
     steps:
       # The official test suite is a submodule pinned to one commit.
       - uses: actions/checkout@v4
@@ -67,7 +75,9 @@ jobs:
       - name: Install cocotb
         run: pip install -r tb/cocotb/requirements.txt
 
+      # Once, on the shortest shard.
       - name: Lint RTL
+        if: matrix.shard == 2
         run: make lint
 
       # The tiny-LLM demo's weights (stories260K, 1 MB, from Hugging Face),
@@ -82,8 +92,8 @@ jobs:
           key: llm-weights-${{ hashFiles('sw/model/llm_model.py') }}
           restore-keys: llm-weights-
 
-      - name: Run regression
-        run: make sim
+      - name: Run regression (shard ${{ matrix.shard }})
+        run: make sim SHARD=${{ matrix.shard }}
 
   # Formal runs as its own job, in parallel with lint + sim, so a failure in
   # one never hides the other's result. yosys and SymbiYosys install in about
